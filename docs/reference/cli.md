@@ -103,8 +103,10 @@ cosm view <node_id> [-u <universe>]
 ### 9. `cosm ship`
 Executes the Go shipping sidecar: runs `terraform fmt` and `terraform validate`, compiles Go services, packages composite artifacts, and launches an ephemeral local preview sandbox.
 ```bash
-cosm ship [-u <universe>]
+cosm ship [-u <universe>] [-t <target_profile>]
 ```
+- `-u <universe>`: Target universe to hydrate and compile (defaults to `universe-main`).
+- `-t <target_profile>`: Packaging target profile (`target:cosm`, `target:local-preview`, `target:cloud-run`, etc.). Defaults to `target:cosm`.
 
 ---
 

@@ -76,6 +76,19 @@ func DefaultLocalServiceTarget(name string, components []string) *TargetSpec {
 	}
 }
 
+// DefaultCosmTarget returns the target spec for building the Cosm CLI binary itself (dogfooding target).
+func DefaultCosmTarget() *TargetSpec {
+	return &TargetSpec{
+		Name:           "target:cosm",
+		Kind:           TargetLocalService,
+		Description:    "Cosm AI-Native AST SCM CLI binary",
+		ComponentNames: []string{"cmd/cosm", "pkg"},
+		BuildCommand:   "go build -o bin/cosm ./cmd/cosm",
+		OutputDir:      "bin",
+		ArtifactName:   "cosm",
+	}
+}
+
 // DefaultCloudRunTarget returns standard target spec for GCP Cloud Run container services.
 func DefaultCloudRunTarget(name string, components []string) *TargetSpec {
 	if name == "" {

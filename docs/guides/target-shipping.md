@@ -65,14 +65,23 @@ Target environments are defined in `.cosm/config.json`:
 
 ### Execute Full Shipping Workflow
 ```bash
+# Ship default target profile (target:cosm for self-hosting or target:local-preview)
 cosm ship -u universe-main
+
+# Ship specific compilation target (e.g. target:cosm CLI binary)
+cosm ship -u universe-main -t target:cosm
+
+# Ship Cloud Run serverless container bundle
+cosm ship -u universe-main -t target:cloud-run
 ```
 **Output:**
 ```
-🚀 Executing Cosm Shipping Sidecar against universe 'universe-main'...
-   • Validating Terraform HCL definitions... [PASS]
-   • Compiling Go backend services...       [PASS]
-   • Packaging composite artifact (2.4 KB)...[PASS]
+🚀 Shipping Sidecar Execution Succeeded!
+   • Package Size: 6999866 bytes (Artifact: 8a82a5d6c38da76b)
+   • Artifact Path: dist/cosm.tar.gz
+   • Preview URL:  http://127.0.0.1:51204
+   • Health:       true
+```
    • Launching ephemeral preview sandbox...  [PASS]
 
 ✨ Live Preview Ready!

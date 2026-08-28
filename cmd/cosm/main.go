@@ -608,6 +608,7 @@ func runView(args []string) {
 func runShip(args []string) {
 	fs := flag.NewFlagSet("ship", flag.ExitOnError)
 	universeID := fs.String("u", "universe-main", "Universe ID")
+	targetName := fs.String("t", "target:cosm", "Target name or profile (e.g. target:cosm, target:local-preview, target:cloud-run)")
 	_ = fs.Parse(args)
 
 	blobStore, graphEngine, err := openStorage()
@@ -632,25 +633,37 @@ func runShip(args []string) {
 		return
 	}
 
+	var targetSpec *shipping.TargetSpec
+	switch *targetName {
+	case "cosm", "target:cosm":
+		targetSpec = shipping.DefaultCosmTarget()
+	case "cloud-run", "target:cloud-run":
+		targetSpec = shipping.DefaultCloudRunTarget(*targetName, nil)
+	default:
+		targetSpec = shipping.DefaultLocalServiceTarget(*targetName, nil)
+	}
+
 	packager := shipping.NewPackager(nil)
-	targetSpec := shipping.DefaultLocalServiceTarget("target:local-preview", nil)
 	art, err := packager.BuildAndPackageTarget(targetSpec, files, "dist")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Packaging target: %v\n", err)
 		return
 	}
 
-	sandbox := target.NewPreviewSandbox()
-	inst, err := sandbox.Start(targetSpec, files)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Launching preview sandbox: %v\n", err)
-		return
-	}
-
 	fmt.Println("🚀 Shipping Sidecar Execution Succeeded!")
 	fmt.Printf("   Package Size: %d bytes (Artifact: %s)\n", art.SizeBytes, art.ArtifactID)
-	fmt.Printf("   Preview URL:  %s\n", inst.URL)
-	fmt.Printf("   Health:       %v\n", inst.HealthCheck())
+	fmt.Printf("   Artifact Path: %s\n", art.ArtifactPath)
+
+	if targetSpec.Name != "target:cosm" && targetSpec.HealthCheckPath != "" {
+		sandbox := target.NewPreviewSandbox()
+		inst, err := sandbox.Start(targetSpec, files)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Launching preview sandbox: %v\n", err)
+			return
+		}
+		fmt.Printf("   Preview URL:  %s\n", inst.URL)
+		fmt.Printf("   Health:       %v\n", inst.HealthCheck())
+	}
 }
 
 func runUniverse(args []string) {

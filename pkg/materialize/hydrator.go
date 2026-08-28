@@ -179,7 +179,8 @@ func (h *Hydrator) hydrateGoSymbol(node *core.ASTSymbolNode) (string, error) {
 		if err := json.Unmarshal(node.ASTPayload, &route); err != nil {
 			return "", fmt.Errorf("failed to unmarshal GoRouteBinding: %w", err)
 		}
-		return fmt.Sprintf("// Route Binding: %s %s -> %s\n", route.Method, route.Path, route.HandlerName), nil
+		handlerName := strings.ReplaceAll(route.HandlerName, "\n", " ")
+		return fmt.Sprintf("// Route Binding: %s %s -> %s\n", route.Method, route.Path, handlerName), nil
 
 	default:
 		return string(node.ASTPayload), nil

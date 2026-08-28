@@ -471,7 +471,11 @@ func (p *GoParser) extractRoutes(fileNode *ast.File) []GoRouteBinding {
 
 					var handlerName string
 					if len(call.Args) >= 2 {
-						handlerName = p.exprToString(call.Args[1])
+						if _, isFuncLit := call.Args[1].(*ast.FuncLit); isFuncLit {
+							handlerName = "inline_handler"
+						} else {
+							handlerName = p.exprToString(call.Args[1])
+						}
 					}
 
 					line := p.fset.Position(call.Pos()).Line

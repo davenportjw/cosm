@@ -69,25 +69,54 @@ func (c *Compiler) CompileGo(workspace *StagingWorkspace, outBinaryName string) 
 	hasGoToolchain := (err == nil)
 
 	if hasGoToolchain {
-		// Run go build in workspace
-		res, err := workspace.ExecuteCommand("go", "build", "-o", outPath, "./...")
-		if err == nil && res.Successful {
-			stat, statErr := os.Stat(outPath)
-			size := int64(0)
-			if statErr == nil {
-				size = stat.Size()
+		// 1. Check if Target has a specific build command
+		if workspace.Target != nil && workspace.Target.BuildCommand != "" {
+			cmdParts := strings.Fields(workspace.Target.BuildCommand)
+			if len(cmdParts) > 0 {
+				res, err := workspace.ExecuteCommand(cmdParts[0], cmdParts[1:]...)
+				if err == nil && res.Successful {
+					stat, statErr := os.Stat(outPath)
+					size := int64(0)
+					if statErr == nil {
+						size = stat.Size()
+					}
+					content, _ := os.ReadFile(outPath)
+					sum := sha256.Sum256(content)
+					return &BuildResult{
+						TargetName:      workspace.Target.Name,
+						Successful:      true,
+						ArtifactPath:    outPath,
+						OutputLogs:      res.Stdout + res.Stderr,
+						Duration:        time.Since(start),
+						BinarySizeBytes: size,
+						SHA256Checksum:  hex.EncodeToString(sum[:]),
+					}, nil
+				}
 			}
-			content, _ := os.ReadFile(outPath)
-			sum := sha256.Sum256(content)
-			return &BuildResult{
-				TargetName:      workspace.Target.Name,
-				Successful:      true,
-				ArtifactPath:    outPath,
-				OutputLogs:      res.Stdout + res.Stderr,
-				Duration:        time.Since(start),
-				BinarySizeBytes: size,
-				SHA256Checksum:  hex.EncodeToString(sum[:]),
-			}, nil
+		}
+
+		// 2. Try entrypoint or known paths
+		buildTargets := []string{"./cmd/cosm", ".", "./services/..."}
+		for _, bt := range buildTargets {
+			res, err := workspace.ExecuteCommand("go", "build", "-o", outPath, bt)
+			if err == nil && res.Successful {
+				stat, statErr := os.Stat(outPath)
+				size := int64(0)
+				if statErr == nil {
+					size = stat.Size()
+				}
+				content, _ := os.ReadFile(outPath)
+				sum := sha256.Sum256(content)
+				return &BuildResult{
+					TargetName:      workspace.Target.Name,
+					Successful:      true,
+					ArtifactPath:    outPath,
+					OutputLogs:      res.Stdout + res.Stderr,
+					Duration:        time.Since(start),
+					BinarySizeBytes: size,
+					SHA256Checksum:  hex.EncodeToString(sum[:]),
+				}, nil
+			}
 		}
 	}
 
@@ -119,7 +148,7 @@ func (c *Compiler) CompileGo(workspace *StagingWorkspace, outBinaryName string) 
 			OutputLogs:   strings.Join(parseErrors, "\n"),
 			Duration:     time.Since(start),
 			Errors:       parseErrors,
-		}, fmt.Errorf("Go compilation failed with %d syntax error(s)", len(parseErrors))
+		}, fmt.Errorf("Go compilation failed with %d syntax error(s):\n%s", len(parseErrors), strings.Join(parseErrors, "\n"))
 	}
 
 	// Write standalone executable payload artifact
