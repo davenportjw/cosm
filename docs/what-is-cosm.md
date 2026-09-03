@@ -16,6 +16,41 @@ Instead of tracking software as raw, unstructured text files and line-by-line di
 
 ---
 
+## Cosm vs. Topocosm Architecture Division
+
+Cosm splits software source control and distribution into two distinct, decoupled systems:
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│               TOPOCOSM (The Decentralized Hub / Mesh)                  │
+│               Standalone Repo: github.com/cosmscm/topocosm             │
+│                                                                        │
+│  • Agent Discovery (/.well-known/cosm-agent.json)                      │
+│  • Multi-Repo Catalog & Registry (/api/v1/cosms/)                      │
+│  • Distributed Blackboard Domain Leases (Parallel Swarm Locks)         │
+│  • Sparse Subgraph Distribution & CAS Object Replication               │
+│  • Multi-Peer CRDT Proposal Convergence (COBs)                         │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+               Wire Protocol & DTOs (pkg/api)
+                                    │
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                  COSM (The Local Core Engine / CLI)                    │
+│                  Local Monorepo: github.com/cosmscm/cosm               │
+│                                                                        │
+│  • Polyglot AST Codecs (Go, TS, Py, HCL, Rust, Protobuf, SQL)          │
+│  • Content-Addressed Blobstore (.cosm/objects/)                        │
+│  • Pure-Go SQLite WAL Graph Engine (.cosm/graph.db)                    │
+│  • Declarative AST Surgery (9 Geometric Verbs)                         │
+│  • AST-to-Source Hydration & Local Git CLI Shim                        │
+│  • Jujutsu-Style Stacked Proposals & Auto-Evolution                    │
+│  • Embedded Target Shipping Sidecar (Sub-second local preview)         │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## Core Problems Solved & Direct Benefits
 
 ### 1. Eliminates Silent Semantic Collisions
@@ -38,6 +73,30 @@ Instead of tracking software as raw, unstructured text files and line-by-line di
 
 ---
 
+## Human Mental Models for Cosm
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. THE GOOGLE DOCS ANALOGY                                                  │
+│    Git is like emailing Word documents back and forth. Cosm is like Google  │
+│    Docs with track-changes: everyone has a local copy, and edits merge      │
+│    together smoothly in the background using mathematical CRDTs.            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ 2. THE AST SYMBOL vs. LINE ADJACENCY ANALOGY                                │
+│    Git panics if you and a teammate edit adjacent lines in the same file.   │
+│    Cosm knows you changed function 'login()' and they changed 'logout()'.   │
+│    Because they are distinct AST symbols, there is zero merge conflict.    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ 3. THE 3-STORY HOUSE (STACKING) ANALOGY                                     │
+│    Building a feature is like building a 3-story house:                     │
+│    Floor 1 (DB Schema) -> Floor 2 (API Route) -> Floor 3 (Frontend UI).     │
+│    In Git, modifying Floor 1 collapses upper floors (rebase hell).          │
+│    In Cosm, modifying Floor 1 automatically adjusts the floors above it.    │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## Comparison: Git vs. GitHub vs. Jujutsu vs. Radicle vs. Cosm
 
 | Capability | Traditional Git | GitHub.com | Jujutsu (`jj`) | Radicle | Cosm (`cosm`) |
@@ -53,7 +112,7 @@ Instead of tracking software as raw, unstructured text files and line-by-line di
 
 ---
 
-## High-Level Architecture
+## High-Level Storage Layout
 
 Cosm stores all repository state under `.cosm/`:
 

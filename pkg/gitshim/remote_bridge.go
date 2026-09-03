@@ -10,19 +10,19 @@ import (
 
 // GitRemoteConfig defines remote repository connection settings.
 type GitRemoteConfig struct {
-	Name     string `json:"name"` // e.g. "origin"
-	URL      string `json:"url"`  // e.g. "git@github.com:user/repo.git"
-	Branch   string `json:"branch"` // e.g. "main"
+	Name     string `json:"name"`      // e.g. "origin"
+	URL      string `json:"url"`       // e.g. "git@github.com:user/repo.git"
+	Branch   string `json:"branch"`    // e.g. "main"
 	AuthType string `json:"auth_type"` // "ssh", "token", "none"
 }
 
 // PushResult contains results of pushing AST state to a Git remote.
 type PushResult struct {
-	RemoteName string `json:"remote_name"`
-	Branch     string `json:"branch"`
-	CommitHash string `json:"commit_hash"`
-	FilesPushed int   `json:"files_pushed"`
-	Success    bool   `json:"success"`
+	RemoteName  string `json:"remote_name"`
+	Branch      string `json:"branch"`
+	CommitHash  string `json:"commit_hash"`
+	FilesPushed int    `json:"files_pushed"`
+	Success     bool   `json:"success"`
 }
 
 // PullResult contains results of importing a remote Git commit into an AST Universe.

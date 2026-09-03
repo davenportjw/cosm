@@ -12,24 +12,24 @@ import (
 
 // StackedProposal represents an individual PR/Proposal in a change chain (Stack).
 type StackedProposal struct {
-	ChangeID        string               `json:"change_id"`         // Stable ID (e.g., "c/auth-v2", "c/billing-api")
-	ProposalID      string               `json:"proposal_id"`       // COB ID or proposal handle
-	Title           string               `json:"title"`
-	ParentChangeID  string               `json:"parent_change_id"`  // Direct parent in stack or "root" / base branch
-	UniverseID      string               `json:"universe_id"`       // Working micro-universe for this change
-	ManifestHash    string               `json:"manifest_hash"`     // Current Merkle root hash
-	AuthorDID       string               `json:"author_did"`
-	OrderIndex      int                  `json:"order_index"`       // Position in stack (0 = base, 1 = first child, ...)
-	Lineage         core.LineageEnvelope `json:"lineage"`
-	CreatedAt       time.Time            `json:"created_at"`
-	UpdatedAt       time.Time            `json:"updated_at"`
+	ChangeID       string               `json:"change_id"`   // Stable ID (e.g., "c/auth-v2", "c/billing-api")
+	ProposalID     string               `json:"proposal_id"` // COB ID or proposal handle
+	Title          string               `json:"title"`
+	ParentChangeID string               `json:"parent_change_id"` // Direct parent in stack or "root" / base branch
+	UniverseID     string               `json:"universe_id"`      // Working micro-universe for this change
+	ManifestHash   string               `json:"manifest_hash"`    // Current Merkle root hash
+	AuthorDID      string               `json:"author_did"`
+	OrderIndex     int                  `json:"order_index"` // Position in stack (0 = base, 1 = first child, ...)
+	Lineage        core.LineageEnvelope `json:"lineage"`
+	CreatedAt      time.Time            `json:"created_at"`
+	UpdatedAt      time.Time            `json:"updated_at"`
 }
 
 // StackEvolutionResult reports which descendant changes were automatically rebased.
 type StackEvolutionResult struct {
-	TriggerChangeID string   `json:"trigger_change_id"`
-	EvolvedChanges  []string `json:"evolved_changes"` // ChangeIDs updated
-	NewRoots        map[string]string `json:"new_roots"` // ChangeID -> New Manifest Root Hash
+	TriggerChangeID string            `json:"trigger_change_id"`
+	EvolvedChanges  []string          `json:"evolved_changes"` // ChangeIDs updated
+	NewRoots        map[string]string `json:"new_roots"`       // ChangeID -> New Manifest Root Hash
 }
 
 // StackManager coordinates stacked pull requests, parent-child change chains, and automatic evolution.

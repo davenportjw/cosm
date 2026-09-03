@@ -11,15 +11,15 @@ import (
 
 // UniverseCandidate represents an explored parallel micro-universe in MCTS tree.
 type UniverseCandidate struct {
-	UniverseID     string   `json:"universe_id"`
-	AgentID        string   `json:"agent_id"`
-	PromptIntent   string   `json:"prompt_intent"`
-	TestPassRate   float64  `json:"test_pass_rate"`   // 0.0 to 1.0
-	LatencyMs      int64    `json:"latency_ms"`       // Benchmark execution time
-	TokenCost      int      `json:"token_cost"`       // Tokens consumed
-	SecurityScore  float64  `json:"security_score"`   // 0.0 to 1.0
-	CompositeScore float64  `json:"composite_score"`  // Weighted overall fitness
-	Selected       bool     `json:"selected"`
+	UniverseID     string  `json:"universe_id"`
+	AgentID        string  `json:"agent_id"`
+	PromptIntent   string  `json:"prompt_intent"`
+	TestPassRate   float64 `json:"test_pass_rate"`  // 0.0 to 1.0
+	LatencyMs      int64   `json:"latency_ms"`      // Benchmark execution time
+	TokenCost      int     `json:"token_cost"`      // Tokens consumed
+	SecurityScore  float64 `json:"security_score"`  // 0.0 to 1.0
+	CompositeScore float64 `json:"composite_score"` // Weighted overall fitness
+	Selected       bool    `json:"selected"`
 }
 
 // MultiUniverseEvaluator benchmarks candidate micro-universes and auto-collapses to the winner.

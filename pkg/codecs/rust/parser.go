@@ -62,21 +62,21 @@ type RustParam struct {
 
 // RustFunction represents an extracted Rust function or method definition.
 type RustFunction struct {
-	Name         string      `json:"name"`
-	Visibility   string      `json:"visibility,omitempty"` // pub, pub(crate), private
-	IsAsync      bool        `json:"is_async"`
-	IsConst      bool        `json:"is_const"`
-	IsUnsafe     bool        `json:"is_unsafe"`
-	Generics     string      `json:"generics,omitempty"`
-	Params       []RustParam `json:"params"`
-	ReturnType   string      `json:"return_type,omitempty"`
-	Doc          string      `json:"doc,omitempty"`
-	Attributes   []string    `json:"attributes,omitempty"`
-	RouteMethod  string      `json:"route_method,omitempty"` // GET, POST, etc.
-	RoutePath    string      `json:"route_path,omitempty"`   // /api/v1/users
-	SQLxQueries  []string    `json:"sqlx_queries,omitempty"` // Extracted SQL statements from sqlx::query!
-	BodySource   string      `json:"body_source,omitempty"`
-	CalledFuncs  []string    `json:"called_funcs,omitempty"`
+	Name        string      `json:"name"`
+	Visibility  string      `json:"visibility,omitempty"` // pub, pub(crate), private
+	IsAsync     bool        `json:"is_async"`
+	IsConst     bool        `json:"is_const"`
+	IsUnsafe    bool        `json:"is_unsafe"`
+	Generics    string      `json:"generics,omitempty"`
+	Params      []RustParam `json:"params"`
+	ReturnType  string      `json:"return_type,omitempty"`
+	Doc         string      `json:"doc,omitempty"`
+	Attributes  []string    `json:"attributes,omitempty"`
+	RouteMethod string      `json:"route_method,omitempty"` // GET, POST, etc.
+	RoutePath   string      `json:"route_path,omitempty"`   // /api/v1/users
+	SQLxQueries []string    `json:"sqlx_queries,omitempty"` // Extracted SQL statements from sqlx::query!
+	BodySource  string      `json:"body_source,omitempty"`
+	CalledFuncs []string    `json:"called_funcs,omitempty"`
 }
 
 // RustTraitMethod represents a method inside a trait definition.
@@ -126,17 +126,17 @@ type RustRouteBinding struct {
 
 // RustFileResult contains all extracted symbols and metadata from a Rust source file.
 type RustFileResult struct {
-	FilePath    string              `json:"file_path"`
-	PackageName string              `json:"package_name"`
-	Structs     []RustStruct        `json:"structs"`
-	Enums       []RustEnum          `json:"enums"`
-	Traits      []RustTrait         `json:"traits"`
-	Impls       []RustImpl          `json:"impls"`
-	Functions   []RustFunction      `json:"functions"`
-	Macros      []RustMacro         `json:"macros"`
-	Routes      []RustRouteBinding  `json:"routes"`
-	SQLxQueries []string            `json:"sqlx_queries"`
-	Imports     []string            `json:"imports"`
+	FilePath    string                `json:"file_path"`
+	PackageName string                `json:"package_name"`
+	Structs     []RustStruct          `json:"structs"`
+	Enums       []RustEnum            `json:"enums"`
+	Traits      []RustTrait           `json:"traits"`
+	Impls       []RustImpl            `json:"impls"`
+	Functions   []RustFunction        `json:"functions"`
+	Macros      []RustMacro           `json:"macros"`
+	Routes      []RustRouteBinding    `json:"routes"`
+	SQLxQueries []string              `json:"sqlx_queries"`
+	Imports     []string              `json:"imports"`
 	AllSymbols  []*core.ASTSymbolNode `json:"all_symbols"`
 }
 
@@ -1243,13 +1243,13 @@ func MacroToASTSymbolNode(m RustMacro, pkgName string, lineage core.LineageEnvel
 	}
 
 	node := &core.ASTSymbolNode{
-		Language:    core.LangRust,
-		NodeType:    "MacroDef",
-		Identifier:  fmt.Sprintf("%s::%s!", pkgName, m.Name),
-		Signature:   fmt.Sprintf("macro_rules! %s", m.Name),
-		Docstring:   m.Doc,
-		ASTPayload:  payload,
-		Lineage:     lineage,
+		Language:   core.LangRust,
+		NodeType:   "MacroDef",
+		Identifier: fmt.Sprintf("%s::%s!", pkgName, m.Name),
+		Signature:  fmt.Sprintf("macro_rules! %s", m.Name),
+		Docstring:  m.Doc,
+		ASTPayload: payload,
+		Lineage:    lineage,
 	}
 
 	nodeID, err := core.HashASTSymbolNode(node)
@@ -1307,12 +1307,12 @@ func (p *RustParser) BuildComponentNode(
 	}
 
 	metadata := map[string]string{
-		"file_path":     res.FilePath,
-		"package_name":  res.PackageName,
-		"symbol_count":  fmt.Sprintf("%d", len(res.AllSymbols)),
-		"route_count":   fmt.Sprintf("%d", len(res.Routes)),
-		"struct_count":  fmt.Sprintf("%d", len(res.Structs)),
-		"func_count":    fmt.Sprintf("%d", len(res.Functions)),
+		"file_path":    res.FilePath,
+		"package_name": res.PackageName,
+		"symbol_count": fmt.Sprintf("%d", len(res.AllSymbols)),
+		"route_count":  fmt.Sprintf("%d", len(res.Routes)),
+		"struct_count": fmt.Sprintf("%d", len(res.Structs)),
+		"func_count":   fmt.Sprintf("%d", len(res.Functions)),
 	}
 
 	comp := &core.ComponentNode{

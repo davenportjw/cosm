@@ -1,9 +1,12 @@
 package materialize
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -153,4 +156,71 @@ func (e *Exporter) ExportComponent(
 	}
 
 	return e.ExportToDisk(targetDir, fileMap, overwrite)
+}
+
+// ExportToTarStream streams a map of files directly as a compressed tarball (.tar.gz) into an io.Writer.
+func (e *Exporter) ExportToTarStream(w io.Writer, files map[string][]byte) (*ExportReport, error) {
+	start := time.Now()
+	gw := gzip.NewWriter(w)
+	defer gw.Close()
+	tw := tar.NewWriter(gw)
+	defer tw.Close()
+
+	report := &ExportReport{
+		TargetDirectory: "<stream:tar.gz>",
+		Timestamp:       time.Now().UTC(),
+	}
+
+	var paths []string
+	for p := range files {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+
+	for _, relPath := range paths {
+		content := files[relPath]
+		hdr := &tar.Header{
+			Name:    filepath.ToSlash(relPath),
+			Mode:    0644,
+			Size:    int64(len(content)),
+			ModTime: time.Now().UTC(),
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return nil, fmt.Errorf("failed writing tar header for %s: %w", relPath, err)
+		}
+		if _, err := tw.Write(content); err != nil {
+			return nil, fmt.Errorf("failed writing tar body for %s: %w", relPath, err)
+		}
+
+		sum := sha256.Sum256(content)
+		hash := hex.EncodeToString(sum[:])
+
+		report.Files = append(report.Files, ExportedFileInfo{
+			RelativePath: relPath,
+			SizeBytes:    int64(len(content)),
+			SHA256:       hash,
+			IsNew:        true,
+			Modified:     false,
+		})
+		report.FilesWritten++
+		report.TotalBytes += int64(len(content))
+	}
+
+	report.DurationMs = time.Since(start).Milliseconds()
+	return report, nil
+}
+
+// ExportWorkspaceToTarStream materializes an entire WorkspaceManifestNode to a tar.gz stream.
+func (e *Exporter) ExportWorkspaceToTarStream(
+	w io.Writer,
+	manifest *core.WorkspaceManifestNode,
+	compMap map[string]*core.ComponentNode,
+	symbolMap map[string]*core.ASTSymbolNode,
+) (*ExportReport, error) {
+	fileMap, err := e.hydrator.HydrateWorkspace(manifest, compMap, symbolMap)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hydrate workspace for tar stream: %w", err)
+	}
+
+	return e.ExportToTarStream(w, fileMap)
 }

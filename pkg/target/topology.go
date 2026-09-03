@@ -9,12 +9,12 @@ import (
 
 // TopologyNode represents a node in the rendered multi-tier topology graph.
 type TopologyNode struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	Tier      string          `json:"tier"`     // "Frontend", "API/Backend", "Cloud Infra"
-	Language  core.Language   `json:"language"` // typescript, go, hcl
-	Type      string          `json:"type"`     // ReactComponent, RouteBinding, ResourceBlock
-	Outgoing  []TopologyEdge  `json:"outgoing"`
+	ID       string         `json:"id"`
+	Name     string         `json:"name"`
+	Tier     string         `json:"tier"`     // "Frontend", "API/Backend", "Cloud Infra"
+	Language core.Language  `json:"language"` // typescript, go, hcl
+	Type     string         `json:"type"`     // ReactComponent, RouteBinding, ResourceBlock
+	Outgoing []TopologyEdge `json:"outgoing"`
 }
 
 // TopologyEdge represents a semantic cross-domain link between nodes.
@@ -26,11 +26,11 @@ type TopologyEdge struct {
 
 // FullTopologyGraph holds the entire cross-domain architecture graph.
 type FullTopologyGraph struct {
-	FrontendNodes []*TopologyNode  `json:"frontend_nodes"`
-	BackendNodes  []*TopologyNode  `json:"backend_nodes"`
-	InfraNodes    []*TopologyNode  `json:"infra_nodes"`
-	TotalNodes    int              `json:"total_nodes"`
-	TotalEdges    int              `json:"total_edges"`
+	FrontendNodes []*TopologyNode `json:"frontend_nodes"`
+	BackendNodes  []*TopologyNode `json:"backend_nodes"`
+	InfraNodes    []*TopologyNode `json:"infra_nodes"`
+	TotalNodes    int             `json:"total_nodes"`
+	TotalEdges    int             `json:"total_edges"`
 }
 
 // TopologyVisualizer builds and formats cross-domain system topology views.

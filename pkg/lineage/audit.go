@@ -39,13 +39,13 @@ type BlastRadiusReport struct {
 
 // AgentAuditSummary aggregates overall contributions and footprint of a single agent.
 type AgentAuditSummary struct {
-	AgentID              string          `json:"agent_id"`
-	TotalNodesCreated    int             `json:"total_nodes_created"`
-	LanguagesTouched     []core.Language `json:"languages_touched"`
-	AssociatedSessions   []string        `json:"associated_sessions"`
-	AssociatedLLMModels  []string        `json:"associated_llm_models"`
-	FirstSeen            time.Time       `json:"first_seen"`
-	LastSeen             time.Time       `json:"last_seen"`
+	AgentID             string          `json:"agent_id"`
+	TotalNodesCreated   int             `json:"total_nodes_created"`
+	LanguagesTouched    []core.Language `json:"languages_touched"`
+	AssociatedSessions  []string        `json:"associated_sessions"`
+	AssociatedLLMModels []string        `json:"associated_llm_models"`
+	FirstSeen           time.Time       `json:"first_seen"`
+	LastSeen            time.Time       `json:"last_seen"`
 }
 
 // ModelAuditSummary aggregates overall contributions from an LLM model version.

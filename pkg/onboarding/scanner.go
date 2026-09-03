@@ -31,13 +31,13 @@ func NewDirectoryScanner() *DirectoryScanner {
 			".git":          true,
 			".cosm":         true,
 			".fg":           true,
-			"node_modules": true,
-			"vendor":       true,
-			".terraform":   true,
-			"__pycache__":  true,
+			"node_modules":  true,
+			"vendor":        true,
+			".terraform":    true,
+			"__pycache__":   true,
 			".pytest_cache": true,
-			"dist":         true,
-			"build":        true,
+			"dist":          true,
+			"build":         true,
 		},
 	}
 }
@@ -67,9 +67,19 @@ func (s *DirectoryScanner) ScanDirectory(rootDir string) ([]string, []string, er
 			return nil
 		}
 
+		base := filepath.Base(path)
 		ext := strings.ToLower(filepath.Ext(path))
+		if base == "Dockerfile" || base == "Containerfile" || strings.HasPrefix(base, "Dockerfile.") {
+			codeFiles = append(codeFiles, path)
+			return nil
+		}
+
 		switch ext {
-		case ".go", ".tf", ".ts", ".tsx", ".py":
+		case ".go", ".tf", ".hcl", ".ts", ".tsx", ".js", ".jsx", ".py",
+			".rs", ".java", ".cpp", ".cc", ".cxx", ".c", ".h", ".hpp",
+			".sql", ".proto", ".swift", ".kt", ".kts", ".cs",
+			".wat", ".wasm", ".wit", ".zig", ".graphql", ".gql",
+			".rb", ".php", ".ex", ".exs":
 			codeFiles = append(codeFiles, path)
 		default:
 			rawFiles = append(rawFiles, path)
@@ -106,6 +116,34 @@ func (s *DirectoryScanner) DetectManifests(dirPath string) ProjectManifestInfo {
 		info.HasPyproject = true
 		info.ComponentType = core.CompService
 		info.PrimaryLanguage = core.LangPython
+	}
+	if _, err := os.Stat(filepath.Join(dirPath, "Cargo.toml")); err == nil {
+		info.ComponentType = core.CompService
+		info.PrimaryLanguage = core.LangRust
+	}
+	if _, err := os.Stat(filepath.Join(dirPath, "Package.swift")); err == nil {
+		info.ComponentType = core.CompService
+		info.PrimaryLanguage = core.LangSwift
+	}
+	if _, err := os.Stat(filepath.Join(dirPath, "build.gradle.kts")); err == nil {
+		info.ComponentType = core.CompService
+		info.PrimaryLanguage = core.LangKotlin
+	}
+	if _, err := os.Stat(filepath.Join(dirPath, "build.zig")); err == nil {
+		info.ComponentType = core.CompService
+		info.PrimaryLanguage = core.LangZig
+	}
+	if _, err := os.Stat(filepath.Join(dirPath, "Gemfile")); err == nil {
+		info.ComponentType = core.CompService
+		info.PrimaryLanguage = core.LangRuby
+	}
+	if _, err := os.Stat(filepath.Join(dirPath, "composer.json")); err == nil {
+		info.ComponentType = core.CompService
+		info.PrimaryLanguage = core.LangPHP
+	}
+	if _, err := os.Stat(filepath.Join(dirPath, "mix.exs")); err == nil {
+		info.ComponentType = core.CompService
+		info.PrimaryLanguage = core.LangElixir
 	}
 
 	// Check for any .tf files

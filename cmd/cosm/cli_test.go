@@ -57,8 +57,23 @@ def health():
 	// 3. Test add
 	runAdd([]string{"-u", "universe-test", "-a", "test-agent", "-p", "add health endpoints and license", "-i", "feat: health and license", goFile, pyFile, licenseFile})
 
-	// 4. Test commit
-	runCommit([]string{"-u", "universe-test", "-i", "Initial test commit", "-a", "test-agent"})
+	// 4. Test commit with full telemetry & lineage
+	runCommit([]string{
+		"-u", "universe-test",
+		"-i", "Initial test commit",
+		"-a", "test-agent",
+		"-p", "Add initial health endpoints",
+		"--session-id", "sess-test-123",
+		"--orchestrator-id", "orch-main",
+		"-m", "gemini-3.7-flash",
+		"--prompt-tokens", "1050",
+		"--completion-tokens", "210",
+		"--reasoning-tokens", "400",
+		"--cost-usd", "0.0012",
+		"--latency-ms", "520",
+		"--trace-id", "4bf92f3577b34da6a3ce929d0e0e4736",
+		"--span-id", "00f067aa0ba902b7",
+	})
 
 	// 5. Test status
 	runStatus([]string{"-u", "universe-test"})

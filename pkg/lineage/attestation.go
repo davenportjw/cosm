@@ -16,7 +16,7 @@ import (
 
 const (
 	InTotoStatementV1       = "https://in-toto.io/Statement/v1"
-	ProvenancePredicateType = "https://future-of-git.dev/attestation/provenance/v1"
+	ProvenancePredicateType = "https://cosm.dev/attestation/provenance/v1"
 )
 
 // ProvenanceSubject identifies the artifact being attested.
@@ -51,10 +51,10 @@ type ProvenanceMetadata struct {
 
 // ProvenancePredicate constitutes the predicate payload of the attestation statement.
 type ProvenancePredicate struct {
-	Builder   ProvenanceBuilder   `json:"builder"`
-	Recipe    ProvenanceRecipe    `json:"recipe"`
-	Materials []string            `json:"materials,omitempty"` // Local dependencies / hashes
-	Metadata  ProvenanceMetadata  `json:"metadata"`
+	Builder   ProvenanceBuilder  `json:"builder"`
+	Recipe    ProvenanceRecipe   `json:"recipe"`
+	Materials []string           `json:"materials,omitempty"` // Local dependencies / hashes
+	Metadata  ProvenanceMetadata `json:"metadata"`
 }
 
 // AttestationSignature records the Ed25519 signature over the canonical JSON statement.

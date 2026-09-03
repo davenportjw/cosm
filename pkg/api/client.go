@@ -219,3 +219,51 @@ func (c *AgentClient) ResolveSymbol(universeID, target string) (*mutation.Resolv
 	}
 	return &res, nil
 }
+
+// CommitWorkspace commits the current workspace state to a universe with full lineage & token telemetry.
+func (c *AgentClient) CommitWorkspace(req *CommitWorkspaceRequest) (*CommitWorkspaceResponse, error) {
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal commit request: %w", err)
+	}
+
+	if c.handler != nil {
+		httpReq, _ := http.NewRequest(http.MethodPost, "/api/v1/commit", bytes.NewReader(data))
+		httpReq.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		c.handler.ServeHTTP(rec, httpReq)
+
+		if rec.Code != http.StatusOK {
+			return nil, fmt.Errorf("in-process commit failed (%d): %s", rec.Code, rec.Body.String())
+		}
+
+		var resp CommitWorkspaceResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			return nil, fmt.Errorf("failed to decode commit response: %w", err)
+		}
+		return &resp, nil
+	}
+
+	url := fmt.Sprintf("%s/api/v1/commit", c.baseURL)
+	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create http request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("http request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("server returned non-200 code: %d", resp.StatusCode)
+	}
+
+	var res CommitWorkspaceResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, fmt.Errorf("failed to decode commit response: %w", err)
+	}
+	return &res, nil
+}

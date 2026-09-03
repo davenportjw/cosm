@@ -28,18 +28,20 @@ const (
 
 // CosmRepository represents a published Cosm hosted on topocosm.dev.
 type CosmRepository struct {
-	OrgSlug         string                      `json:"org_slug"`         // e.g. "acme-corp"
-	CosmName        string                      `json:"cosm_name"`        // e.g. "cloud-billing"
-	Description     string                      `json:"description"`
-	Visibility      Visibility                  `json:"visibility"`
-	DefaultUniverse string                      `json:"default_universe"` // e.g. "universe-main"
-	OwnerDID        string                      `json:"owner_did"`        // did:key:z6M...
-	MerkleRootHash  string                      `json:"merkle_root_hash"` // Current head Merkle root hash
-	Tags            []string                    `json:"tags,omitempty"`
-	StarCount       int                         `json:"star_count"`
-	CreatedAt       time.Time                   `json:"created_at"`
-	UpdatedAt       time.Time                   `json:"updated_at"`
-	Manifest        *core.WorkspaceManifestNode `json:"manifest,omitempty"`
+	OrgSlug         string                         `json:"org_slug"`  // e.g. "acme-corp"
+	CosmName        string                         `json:"cosm_name"` // e.g. "cloud-billing"
+	Description     string                         `json:"description"`
+	Visibility      Visibility                     `json:"visibility"`
+	DefaultUniverse string                         `json:"default_universe"` // e.g. "universe-main"
+	OwnerDID        string                         `json:"owner_did"`        // did:key:z6M...
+	MerkleRootHash  string                         `json:"merkle_root_hash"` // Current head Merkle root hash
+	Tags            []string                       `json:"tags,omitempty"`
+	StarCount       int                            `json:"star_count"`
+	CreatedAt       time.Time                      `json:"created_at"`
+	UpdatedAt       time.Time                      `json:"updated_at"`
+	Manifest        *core.WorkspaceManifestNode    `json:"manifest,omitempty"`
+	Components      map[string]*core.ComponentNode `json:"components,omitempty"`
+	Symbols         map[string]*core.ASTSymbolNode `json:"symbols,omitempty"`
 }
 
 // FullSlug returns "org/cosm" identifier.
@@ -49,8 +51,8 @@ func (c *CosmRepository) FullSlug() string {
 
 // UserAccount represents a registered human user on topocosm.dev.
 type UserAccount struct {
-	UserDID     string    `json:"user_did"`    // did:key:z6Mku...
-	Username    string    `json:"username"`    // e.g. "jason"
+	UserDID     string    `json:"user_did"` // did:key:z6Mku...
+	Username    string    `json:"username"` // e.g. "jason"
 	Email       string    `json:"email"`
 	DisplayName string    `json:"display_name"`
 	PublicKeys  []string  `json:"public_keys"` // Ed25519 hex/base64 public keys
@@ -62,10 +64,10 @@ type UserAccount struct {
 // Organization represents a shared workspace / company namespace.
 type Organization struct {
 	OrgID         string          `json:"org_id"`
-	Slug          string          `json:"slug"`         // e.g. "acme-corp"
+	Slug          string          `json:"slug"` // e.g. "acme-corp"
 	DisplayName   string          `json:"display_name"`
-	PlanType      string          `json:"plan_type"`    // "free", "team", "enterprise"
-	Members       map[string]Role `json:"members"`      // DID -> Role
+	PlanType      string          `json:"plan_type"`      // "free", "team", "enterprise"
+	Members       map[string]Role `json:"members"`        // DID -> Role
 	ComputeBudget int             `json:"compute_budget"` // Sandbox seconds / month
 	CreatedAt     time.Time       `json:"created_at"`
 }

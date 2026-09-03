@@ -1,6 +1,10 @@
 package materialize
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -194,6 +198,82 @@ func TestHydrator_ComponentAndWorkspace(t *testing.T) {
 	}
 }
 
+func TestHydrator_PolyglotImportsAndPathPreservation(t *testing.T) {
+	hydrator := NewHydrator()
+	lineage := core.LineageEnvelope{
+		UserPrompt: "Test polyglot hydration",
+		Timestamp:  time.Now().UTC(),
+	}
+
+	// 1. Go with explicit file_path and custom imports
+	goSym := &core.ASTSymbolNode{
+		NodeID:     "sym:go:1",
+		Language:   core.LangGo,
+		NodeType:   "FunctionDecl",
+		Identifier: "Run",
+		ASTPayload: []byte(`{"name":"Run","body_source":"func Run() {\n\tfmt.Println(time.Now())\n}"}`),
+		Lineage:    lineage,
+	}
+	compGo := &core.ComponentNode{
+		ComponentID: "comp-go-1",
+		Name:        "cmd/api/main.go",
+		Type:        core.CompService,
+		Language:    core.LangGo,
+		SymbolNodes: []string{"sym:go:1"},
+		Metadata: map[string]string{
+			"file_path":    "cmd/api/main.go",
+			"package_name": "main",
+			"imports":      "fmt,time",
+		},
+		Lineage: lineage,
+	}
+	symMap := map[string]*core.ASTSymbolNode{"sym:go:1": goSym}
+	files, err := hydrator.HydrateComponent(compGo, symMap)
+	if err != nil {
+		t.Fatalf("HydrateComponent Go failed: %v", err)
+	}
+	goCode, ok := files["cmd/api/main.go"]
+	if !ok {
+		t.Fatalf("Expected cmd/api/main.go in hydrated files, got: %v", files)
+	}
+	if !strings.Contains(string(goCode), "\"fmt\"") || !strings.Contains(string(goCode), "\"time\"") {
+		t.Errorf("Expected fmt and time imports in Go output: %s", string(goCode))
+	}
+
+	// 2. Python with FastAPI
+	pySym := &core.ASTSymbolNode{
+		NodeID:     "sym:py:1",
+		Language:   core.LangPython,
+		NodeType:   "Route",
+		Identifier: "get_users",
+		ASTPayload: []byte("@app.get(\"/users\")\ndef get_users():\n    return []"),
+		Lineage:    lineage,
+	}
+	compPy := &core.ComponentNode{
+		ComponentID: "comp-py-1",
+		Name:        "users-api",
+		Type:        core.CompService,
+		Language:    core.LangPython,
+		SymbolNodes: []string{"sym:py:1"},
+		Metadata: map[string]string{
+			"file_path": "services/users/main.py",
+		},
+		Lineage: lineage,
+	}
+	pyMap := map[string]*core.ASTSymbolNode{"sym:py:1": pySym}
+	pyFiles, err := hydrator.HydrateComponent(compPy, pyMap)
+	if err != nil {
+		t.Fatalf("HydrateComponent Python failed: %v", err)
+	}
+	pyCode, ok := pyFiles["services/users/main.py"]
+	if !ok {
+		t.Fatalf("Expected services/users/main.py in hydrated files")
+	}
+	if !strings.Contains(string(pyCode), "from fastapi import FastAPI") {
+		t.Errorf("Expected FastAPI import in python output: %s", string(pyCode))
+	}
+}
+
 func TestMemoryVFS_Operations(t *testing.T) {
 	vfs := NewMemoryVFS()
 
@@ -256,6 +336,55 @@ func TestExporter_ExportToDisk(t *testing.T) {
 	serverPath := filepath.Join(tmpDir, "server", "main.go")
 	if _, err := os.Stat(serverPath); err != nil {
 		t.Fatalf("expected server/main.go to exist on disk: %v", err)
+	}
+}
+
+func TestExporter_TarStream(t *testing.T) {
+	files := map[string][]byte{
+		"server/main.go": []byte("package main\nfunc main() {}\n"),
+		"infra/main.tf":  []byte("resource \"aws_s3_bucket\" \"b\" {}\n"),
+	}
+
+	var buf bytes.Buffer
+	exporter := NewExporter()
+	report, err := exporter.ExportToTarStream(&buf, files)
+	if err != nil {
+		t.Fatalf("ExportToTarStream failed: %v", err)
+	}
+
+	if report.FilesWritten != 2 {
+		t.Fatalf("expected 2 files written, got %d", report.FilesWritten)
+	}
+
+	// Decompress and verify tar entries
+	gr, err := gzip.NewReader(&buf)
+	if err != nil {
+		t.Fatalf("failed to create gzip reader: %v", err)
+	}
+	defer gr.Close()
+
+	tr := tar.NewReader(gr)
+	readEntries := make(map[string][]byte)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("failed to read tar entry: %v", err)
+		}
+		content, err := io.ReadAll(tr)
+		if err != nil {
+			t.Fatalf("failed to read tar entry content: %v", err)
+		}
+		readEntries[hdr.Name] = content
+	}
+
+	if len(readEntries) != 2 {
+		t.Fatalf("expected 2 tar entries, got %d", len(readEntries))
+	}
+	if string(readEntries["server/main.go"]) != "package main\nfunc main() {}\n" {
+		t.Fatalf("mismatched content for server/main.go: %s", string(readEntries["server/main.go"]))
 	}
 }
 

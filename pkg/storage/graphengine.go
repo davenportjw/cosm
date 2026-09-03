@@ -20,9 +20,9 @@ import (
 
 // WAL Record Type constants
 const (
-	walRecordTxBegin  uint8 = 1
-	walRecordMutation uint8 = 2
-	walRecordTxCommit uint8 = 3
+	walRecordTxBegin  uint8  = 1
+	walRecordMutation uint8  = 2
+	walRecordTxCommit uint8  = 3
 	walMagicHeader    uint32 = 0x46475741 // "FGWA" - Future of Git WAL
 )
 
@@ -53,18 +53,20 @@ func (e EdgeRecord) EdgeKey() string {
 
 // LineageRecord stores full-spectrum provenance metadata.
 type LineageRecord struct {
-	RecordID            string    `json:"record_id"`
-	NodeID              string    `json:"node_id"`
-	UserID              string    `json:"user_id"`
-	UserPrompt          string    `json:"user_prompt"`
-	SessionID           string    `json:"session_id"`
-	OrchestratorAgentID string    `json:"orchestrator_agent_id"`
-	ExecutingAgentID    string    `json:"executing_agent_id"`
-	LLMVersion          string    `json:"llm_version"`
-	GenerationParams    string    `json:"generation_params"`
-	Intent              string    `json:"intent"`
-	Timestamp           time.Time `json:"timestamp"`
-	SignatureEd25519    []byte    `json:"signature_ed25519,omitempty"`
+	RecordID            string              `json:"record_id"`
+	NodeID              string              `json:"node_id"`
+	UserID              string              `json:"user_id"`
+	UserPrompt          string              `json:"user_prompt"`
+	SessionID           string              `json:"session_id"`
+	OrchestratorAgentID string              `json:"orchestrator_agent_id"`
+	ExecutingAgentID    string              `json:"executing_agent_id"`
+	LLMVersion          string              `json:"llm_version"`
+	GenerationParams    string              `json:"generation_params"`
+	Intent              string              `json:"intent"`
+	Timestamp           time.Time           `json:"timestamp"`
+	Tokens              core.TokenTelemetry `json:"tokens,omitempty"`
+	Trace               core.TraceCarrier   `json:"trace,omitempty"`
+	SignatureEd25519    []byte              `json:"signature_ed25519,omitempty"`
 }
 
 // UniverseHeadRecord stores branch and micro-universe heads.
@@ -79,20 +81,20 @@ type UniverseHeadRecord struct {
 
 // TraversalResult encapsulates the result of a recursive graph CTE traversal.
 type TraversalResult struct {
-	VisitedNodes []NodeRecord            `json:"visited_nodes"`
-	VisitedEdges []EdgeRecord            `json:"visited_edges"`
-	Depths       map[string]int          `json:"depths"` // node_id -> shortest depth
-	Paths        map[string][]string     `json:"paths"`  // node_id -> slice of node IDs in path
+	VisitedNodes []NodeRecord        `json:"visited_nodes"`
+	VisitedEdges []EdgeRecord        `json:"visited_edges"`
+	Depths       map[string]int      `json:"depths"` // node_id -> shortest depth
+	Paths        map[string][]string `json:"paths"`  // node_id -> slice of node IDs in path
 }
 
 // GraphEngine provides pure-Go SQLite WAL-mode graph database operations, ACID transactions,
 // crash resilience, recursive CTE traversal queries, and oplog integration.
 type GraphEngine struct {
-	dbPath    string
-	walPath   string
-	walFile   *os.File
-	mu        sync.RWMutex
-	inTx      bool
+	dbPath      string
+	walPath     string
+	walFile     *os.File
+	mu          sync.RWMutex
+	inTx        bool
 	txMutations []walMutationPayload
 
 	// Graph State Indexes

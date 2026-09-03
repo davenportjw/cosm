@@ -33,33 +33,33 @@ type CppParam struct {
 
 // CppFunction represents an extracted function or class method.
 type CppFunction struct {
-	Name         string     `json:"name"`
-	Namespace    string     `json:"namespace,omitempty"`
-	ClassName    string     `json:"class_name,omitempty"`
-	Visibility   string     `json:"visibility,omitempty"` // public, protected, private
-	ReturnType   string     `json:"return_type"`
-	Template     string     `json:"template,omitempty"` // template<typename T>
-	Params       []CppParam `json:"params"`
-	IsVirtual    bool       `json:"is_virtual"`
-	IsConst      bool       `json:"is_const"`
-	IsStatic     bool       `json:"is_static"`
-	IsInline     bool       `json:"is_inline"`
-	IsNoexcept   bool       `json:"is_noexcept"`
-	Doc          string     `json:"doc,omitempty"`
-	BodySource   string     `json:"body_source,omitempty"`
-	CalledFuncs  []string   `json:"called_funcs,omitempty"`
+	Name        string     `json:"name"`
+	Namespace   string     `json:"namespace,omitempty"`
+	ClassName   string     `json:"class_name,omitempty"`
+	Visibility  string     `json:"visibility,omitempty"` // public, protected, private
+	ReturnType  string     `json:"return_type"`
+	Template    string     `json:"template,omitempty"` // template<typename T>
+	Params      []CppParam `json:"params"`
+	IsVirtual   bool       `json:"is_virtual"`
+	IsConst     bool       `json:"is_const"`
+	IsStatic    bool       `json:"is_static"`
+	IsInline    bool       `json:"is_inline"`
+	IsNoexcept  bool       `json:"is_noexcept"`
+	Doc         string     `json:"doc,omitempty"`
+	BodySource  string     `json:"body_source,omitempty"`
+	CalledFuncs []string   `json:"called_funcs,omitempty"`
 }
 
 // CppClass represents an extracted class or struct.
 type CppClass struct {
-	Kind         string        `json:"kind"` // class, struct
-	Name         string        `json:"name"`
-	Namespace    string        `json:"namespace,omitempty"`
-	Template     string        `json:"template,omitempty"`
-	BaseClasses  []string      `json:"base_classes,omitempty"`
-	Doc          string        `json:"doc,omitempty"`
-	Fields       []CppField    `json:"fields"`
-	Methods      []CppFunction `json:"methods"`
+	Kind        string        `json:"kind"` // class, struct
+	Name        string        `json:"name"`
+	Namespace   string        `json:"namespace,omitempty"`
+	Template    string        `json:"template,omitempty"`
+	BaseClasses []string      `json:"base_classes,omitempty"`
+	Doc         string        `json:"doc,omitempty"`
+	Fields      []CppField    `json:"fields"`
+	Methods     []CppFunction `json:"methods"`
 }
 
 // CppEnumVal represents an enum value.
@@ -80,12 +80,12 @@ type CppEnum struct {
 
 // CppFileResult contains all extracted C/C++ symbols.
 type CppFileResult struct {
-	FilePath   string              `json:"file_path"`
-	Includes   []string            `json:"includes"`
-	Namespaces []string            `json:"namespaces"`
-	Classes    []CppClass          `json:"classes"`
-	Functions  []CppFunction       `json:"functions"`
-	Enums      []CppEnum           `json:"enums"`
+	FilePath   string                `json:"file_path"`
+	Includes   []string              `json:"includes"`
+	Namespaces []string              `json:"namespaces"`
+	Classes    []CppClass            `json:"classes"`
+	Functions  []CppFunction         `json:"functions"`
+	Enums      []CppEnum             `json:"enums"`
 	AllSymbols []*core.ASTSymbolNode `json:"all_symbols"`
 }
 

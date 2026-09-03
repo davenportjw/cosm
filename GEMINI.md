@@ -1,18 +1,21 @@
 # GEMINI.md - Antigravity AI Pair Programming Rules for Cosm (`cosm`)
 
-This file contains durable project rules and contextual memory for Antigravity pair programming sessions in the `future-of-git` (Cosm) codebase.
+This file contains durable project rules and contextual memory for Antigravity pair programming sessions in the `cosm` codebase.
 
 ---
 
 ## 1. Project Invariants
 
 - **Language & Runtime**: Cosm is written in pure Go (`go 1.22+`).
-- **Core APIs**: Pure Go backend and gRPC/in-process client SDKs. No Python for core SCM functionality.
+- **Core APIs**: Pure Go backend and gRPC/in-process client SDKs (`pkg/api`). No Python for core SCM functionality.
 - **Storage**:
   - Content-addressed immutable AST object storage under `.cosm/objects/` with SHA-256 hashes and atomic `fsync` persistence.
-  - Pure-Go SQLite (`modernc.org/sqlite`) in WAL mode (`.cosm/graph.db`) for semantic edges, universe heads, oplog events, and lineage records. Zero-CGO requirement.
-- **Local Autonomy**: All AST parsing, hydration, shipping, lineage tracking, and Git shims must run 100% offline without mandatory external cloud services.
-- **Distributed Collaboration**: Distributed synchronization is built on Radicle-style CRDT Collaborative Objects (COBs) and Jujutsu-style stacked proposals (`pkg/distributed/`).
+  - Pure-Go zero-dependency custom Write-Ahead Log (`WAL`) graph engine (`.cosm/graph.db`) with CRC32 checksums for semantic edges, universe heads, oplog events, and lineage records. Zero-CGO requirement.
+- **Local Autonomy vs. Topocosm Hub**:
+  - `cosm` is 100% offline, pure-Go local engine (codecs, AST surgery, local Git shim, target compilation).
+  - `topocosm` is the decentralized cloud hub and agent mesh (being spun off into `github.com/cosmscm/topocosm`).
+- **Distributed Collaboration & Stacking**:
+  - Radicle-style CRDT Collaborative Objects (COBs), Lamport logical clocks, and Jujutsu-style stacked proposals (`pkg/distributed/`).
 - **Human PR Compatibility**: Universe proposals present code changes, AST symbol diff cards, contract topology graphs, and build badges while maintaining intuitive human review semantics (`pkg/review/`).
 - **Test Agents**: Autonomous agent testing and scoring harnesses live in `test/agents/` and `cmd/cosm-agent-harness/`. Default LLM is `gemini-3.7-flash`.
 
@@ -29,7 +32,7 @@ This file contains durable project rules and contextual memory for Antigravity p
 4. **Containerization / Infrastructure**:
    - Docker is NOT installed on this machine. Use local services or Apple containers for infrastructure and preview shipping.
 5. **Continuous Documentation Updates & Direct Style**:
-   - ALWAYS update docs in `docs/` (`docs/reference/schema-and-storage.md`, `docs/reference/agent-api.md`, `docs/reference/codecs.md`, etc.) whenever data models, APIs, codecs, or CLI commands change.
+   - ALWAYS update docs in `docs/` (`docs/reference/schema-and-storage.md`, `docs/reference/federation-and-multi-repo.md`, `docs/reference/topocosm.md`, `docs/roadmaps/topocosm-spin-off-plan.md`, etc.) whenever data models, APIs, codecs, or CLI commands change.
    - Documentation style MUST be **very direct, precise, and concise** (zero fluff, exact type definitions, clear markdown tables, and explicit formulas).
 
 ---

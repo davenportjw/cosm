@@ -1,0 +1,43 @@
+# ==============================================================================
+# Google Cloud Run Dockerfile for Google ADK Agent + WebUI + Cloud SQL
+# ==============================================================================
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PORT=8080 \
+    HOST=0.0.0.0
+
+WORKDIR /app
+
+# Install system runtime dependencies for PostgreSQL client and SSL
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    libpq-dev \
+    gcc \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy project definition and application source code
+COPY pyproject.toml README.md ./
+COPY app/ ./app/
+
+# Install dependencies and local application package
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir .
+
+# Create non-root system user for Cloud Run security compliance
+RUN useradd -u 1001 -m -s /bin/bash appuser && \
+    chown -R appuser:appuser /app
+USER 1001
+
+# Cloud Run dynamic port exposure
+EXPOSE 8080
+
+# Health probe check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:${PORT}/healthz || exit 1
+
+# Launch production ASGI server
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]

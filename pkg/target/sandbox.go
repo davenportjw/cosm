@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"time"
 
@@ -122,16 +123,6 @@ func (s *PreviewSandbox) Start(target *shipping.TargetSpec, files map[string][]b
 		fmt.Fprintf(w, `{"status":"ok","target":"%s","time":"%s"}`, target.Name, time.Now().UTC().Format(time.RFC3339))
 	})
 
-	// Serve hydrated static assets and endpoints
-	for filePath, content := range files {
-		capturedContent := content
-		routePath := "/" + filePath
-		mux.HandleFunc(routePath, func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(capturedContent)
-		})
-	}
-
 	// Target info endpoint
 	infoHandler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -139,6 +130,29 @@ func (s *PreviewSandbox) Start(target *shipping.TargetSpec, files map[string][]b
 	}
 	mux.HandleFunc("/_cosm/preview/info", infoHandler)
 	mux.HandleFunc("/_fg/preview/info", infoHandler)
+
+	// Catch-all file handler for hydrated files
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if content, exists := files[path]; exists {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(content)
+			return
+		}
+		if path == "" {
+			if content, exists := files["index.html"]; exists {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(content)
+				return
+			}
+			if content, exists := files["app/static/index.html"]; exists {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(content)
+				return
+			}
+		}
+		http.NotFound(w, r)
+	})
 
 	_, cancel := context.WithCancel(context.Background())
 	server := &http.Server{

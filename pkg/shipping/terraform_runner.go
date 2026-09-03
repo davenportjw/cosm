@@ -12,13 +12,13 @@ import (
 
 // TerraformCheckReport summarizes terraform fmt and terraform validate hook execution.
 type TerraformCheckReport struct {
-	Valid          bool            `json:"valid"`
-	Formatted      bool            `json:"formatted"`
-	CheckedFiles   []string        `json:"checked_files"`
-	FmtResult      *hcl.FmtResult  `json:"fmt_result,omitempty"`
+	Valid          bool                `json:"valid"`
+	Formatted      bool                `json:"formatted"`
+	CheckedFiles   []string            `json:"checked_files"`
+	FmtResult      *hcl.FmtResult      `json:"fmt_result,omitempty"`
 	ValidateResult *hcl.ValidateResult `json:"validate_result,omitempty"`
-	Diagnostics    []string        `json:"diagnostics,omitempty"`
-	DurationMs     int64           `json:"duration_ms"`
+	Diagnostics    []string            `json:"diagnostics,omitempty"`
+	DurationMs     int64               `json:"duration_ms"`
 }
 
 // TerraformRunner provides automated validation and formatting of Terraform AST subgraphs in ephemeral staging.
@@ -52,10 +52,10 @@ func (r *TerraformRunner) CheckFiles(hclFiles map[string][]byte) (*TerraformChec
 
 	if len(filtered) == 0 {
 		return &TerraformCheckReport{
-			Valid:        true,
-			Formatted:    true,
-			DurationMs:   time.Since(start).Milliseconds(),
-			Diagnostics:  []string{"No Terraform (.tf) files to validate."},
+			Valid:       true,
+			Formatted:   true,
+			DurationMs:  time.Since(start).Milliseconds(),
+			Diagnostics: []string{"No Terraform (.tf) files to validate."},
 		}, nil
 	}
 

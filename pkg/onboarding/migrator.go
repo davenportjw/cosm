@@ -10,10 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cosmscm/cosm/pkg/codecs/golang"
-	"github.com/cosmscm/cosm/pkg/codecs/hcl"
-	"github.com/cosmscm/cosm/pkg/codecs/python"
-	"github.com/cosmscm/cosm/pkg/codecs/typescript"
+	"github.com/cosmscm/cosm/pkg/codecs"
 	"github.com/cosmscm/cosm/pkg/core"
 	"github.com/cosmscm/cosm/pkg/storage"
 )
@@ -95,61 +92,39 @@ func (m *RepositoryMigrator) ImportRepositorySnapshot(
 			continue
 		}
 		relPath, _ := filepath.Rel(repoPath, file)
-		ext := strings.ToLower(filepath.Ext(file))
 
 		var comp *core.ComponentNode
 		fileSyms := make(map[string]*core.ASTSymbolNode)
 
-		switch ext {
-		case ".go":
-			parser := golang.NewGoParser()
-			pkgRes, pErr := parser.ParseSource(relPath, content, lineageEnv)
-			if pErr != nil {
-				continue
+		parsed, pErr := codecs.ParseSourceFile(relPath, content, lineageEnv)
+		if pErr == nil && parsed != nil && parsed.Component != nil {
+			comp = parsed.Component
+			fileSyms = parsed.Symbols
+		} else {
+			// Fallback to raw preservation so no scanned file is dropped
+			rawSymID := fmt.Sprintf("raw:%s", sanitizeID(relPath))
+			rawSym := &core.ASTSymbolNode{
+				NodeID:            rawSymID,
+				Language:          "raw",
+				NodeType:          "RawBlobNode",
+				Identifier:        relPath,
+				ASTPayload:        content,
+				LocalDependencies: []string{},
+				Lineage:           lineageEnv,
 			}
-			comp, err = golang.BuildComponentNode(relPath, core.CompService, pkgRes, lineageEnv)
-			for _, s := range pkgRes.AllSymbols {
-				fileSyms[s.NodeID] = s
-			}
-
-		case ".py":
-			parser := python.NewPythonParser()
-			res, pErr := parser.ParseSource(relPath, content, lineageEnv)
-			if pErr != nil {
-				continue
-			}
-			var symList []*core.ASTSymbolNode
-			comp, symList, err = parser.BuildComponentNode(res, relPath, lineageEnv)
-			for _, s := range symList {
-				fileSyms[s.NodeID] = s
-			}
-
-		case ".tf", ".hcl":
-			parser := hcl.NewHCLParser()
-			doc, pErr := parser.ParseSource(relPath, content)
-			if pErr != nil {
-				continue
-			}
-			var symList []*core.ASTSymbolNode
-			comp, symList, err = parser.BuildComponentNode(doc, relPath, lineageEnv)
-			for _, s := range symList {
-				fileSyms[s.NodeID] = s
-			}
-
-		case ".ts", ".tsx", ".js", ".jsx":
-			parser := typescript.NewTSParser()
-			res, pErr := parser.ParseSource(relPath, content, lineageEnv)
-			if pErr != nil {
-				continue
-			}
-			var symList []*core.ASTSymbolNode
-			comp, symList, err = parser.BuildComponentNode(res, relPath, lineageEnv)
-			for _, s := range symList {
-				fileSyms[s.NodeID] = s
+			fileSyms[rawSymID] = rawSym
+			comp = &core.ComponentNode{
+				ComponentID: fmt.Sprintf("comp-raw-%s", sanitizeID(relPath)),
+				Name:        relPath,
+				Type:        core.CompService,
+				Language:    "raw",
+				SymbolNodes: []string{rawSymID},
+				Metadata:    map[string]string{"file_path": relPath},
+				Lineage:     lineageEnv,
 			}
 		}
 
-		if err != nil || comp == nil {
+		if comp == nil {
 			continue
 		}
 

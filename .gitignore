@@ -1,19 +1,163 @@
-# Binaries & build artifacts (root binaries)
+# ==============================================================================
+# Cosm (.gitignore)
+# ==============================================================================
+
+# Cosm local storage engines and runtime scratch
+.cosm/
+.fg/
+scratch/
+
+# ------------------------------------------------------------------------------
+# Go
+# ------------------------------------------------------------------------------
 /cosm
 /cosm-agent-harness
-dist/
-bin/
 *.exe
+*.exe~
 *.dll
 *.so
 *.dylib
 *.out
+go.work
+go.work.sum
+*.coverprofile
+coverage.out
+coverage.html
+test.log
 
-# Cosm local storage engines (database and content-addressed blobs)
-.cosm/
-.fg/
+# ------------------------------------------------------------------------------
+# Python
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+.uv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.pytype/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+.tox/
+.nox/
 
-# Operating System files
+# ------------------------------------------------------------------------------
+# Terraform / OpenTofu
+# ------------------------------------------------------------------------------
+**/.terraform/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# ------------------------------------------------------------------------------
+# Environment, Credentials & Secrets
+# ------------------------------------------------------------------------------
+.env
+.env.*
+*.env
+!.env.example
+!.env.sample
+!.env.template
+*.pem
+*.key
+*.keystore
+*.crt
+*.cer
+*.p12
+*.pfx
+
+# ------------------------------------------------------------------------------
+# SQLite & Local Databases
+# ------------------------------------------------------------------------------
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# ------------------------------------------------------------------------------
+# Node / TypeScript / Web
+# ------------------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.next/
+.nuxt/
+*.tsbuildinfo
+.eslintcache
+
+# ------------------------------------------------------------------------------
+# Rust
+# ------------------------------------------------------------------------------
+target/
+**/*.rs.bk
+
+# ------------------------------------------------------------------------------
+# Java / Kotlin / Gradle / Maven
+# ------------------------------------------------------------------------------
+*.class
+*.jar
+*.war
+*.ear
+.gradle/
+
+# ------------------------------------------------------------------------------
+# C / C++ / Swift / Objective-C / .NET
+# ------------------------------------------------------------------------------
+*.o
+*.obj
+*.a
+*.lib
+*.dSYM/
+.build/
+bin/
+obj/
+
+# ------------------------------------------------------------------------------
+# Operating System & IDE
+# ------------------------------------------------------------------------------
 .DS_Store
 .DS_Store?
 ._*
@@ -21,8 +165,6 @@ bin/
 .Trashes
 ehthumbs.db
 Thumbs.db
-
-# IDE & Editor files
 .idea/
 .vscode/
 *.swp
@@ -30,9 +172,3 @@ Thumbs.db
 *~
 *.sublime-project
 *.sublime-workspace
-
-# Test and coverage artifacts
-*.coverprofile
-coverage.out
-test.log
-scratch/

@@ -296,7 +296,7 @@ graph TD
 
 ### Epic 5: Go Build & Shipping Sidecar Engine (`cosm ship`)
 - [x] **T5.1: Build Target Specification Model**
-  - Schema declaring targets (e.g., `target:local-service`, `target:cloud-run`, `target:static-web`).
+  - Schema declaring targets (e.g., `target:local-service`, `target:cloud-run`, `target:static-web`, `target:python-service`, `target:rust-service`, `target:java-service`, `target:cpp-service`, `target:terraform-infra`).
   - Output: `pkg/shipping/targetspec.go`
 - [x] **T5.2: Ephemeral Toolchain Staging Runner**
   - Staging manager executing builds in isolated RAM/temp directories without touching the repo.
@@ -304,8 +304,19 @@ graph TD
 - [x] **T5.3: Terraform Validation & Planning Runner**
   - Automates `terraform fmt -check` and `terraform validate` during pre-commit and shipping runs.
   - Output: `pkg/shipping/terraform_runner.go`
-- [x] **T5.4: Go & Frontend Incremental Compiler**
-  - Runs in-memory SSA interpretation or incremental `go build` and frontend bundlers for affected subgraphs.
+- [x] **T5.4: Polyglot Target Compiler Matrix (`pkg/shipping/compiler.go`)**
+  - Handles all 22 supported languages in Cosm with language-specific toolchain preferences:
+    - **Go**: `go build` / `go test` with `go/parser` syntax verification.
+    - **TypeScript / JavaScript**: `tsc`, `esbuild`, `bun`, or ESTree component bundle.
+    - **Python**: Strict preference for `uv` (`uv run python -m py_compile`, `uv run pytest`), fallback to `python3 -m py_compile`.
+    - **HCL / Terraform**: `terraform fmt` and `terraform validate` via `TerraformRunner`.
+    - **Rust**: `cargo build --release` / `rustc`.
+    - **Java**: `javac -d bin` / `mvn compile` / `gradle build`.
+    - **C++ / C**: `clang++ -O3` / `g++` and `clang -O3` / `gcc`.
+    - **SQL**: DDL statement validation and SQLite schema staging.
+    - **Protobuf**: `protoc --descriptor_set_out` proto3 verification.
+    - **GraphQL & OpenAPI**: Schema and specification validation.
+    - **Swift, Kotlin, C#, Wasm, Zig, Ruby, PHP, Elixir, Dockerfile, Raw**: Native toolchains with hermetic pure-Go synthetic fallbacks.
   - Output: `pkg/shipping/compiler.go`
 - [x] **T5.5: Composite Service Packager & Shipper**
   - Packages compiled binaries, static assets, and cloud infra configs into runnable local services.
@@ -406,7 +417,7 @@ Key automated test suites:
 
 ## 6. Pull Request & Proposal Model (Git Compatibility & Agent Workflows)
 
-Comprehensive developer and agent how-to guides are documented in [`docs/HOW_TO_PR_AND_COLLABORATION.md`](file:///Users/jasondavenport/GitHub/future-of-git/docs/HOW_TO_PR_AND_COLLABORATION.md).
+Comprehensive developer and agent how-to guides are documented in [`docs/HOW_TO_PR_AND_COLLABORATION.md`](file:///Users/jasondavenport/GitHub/cosm/docs/HOW_TO_PR_AND_COLLABORATION.md).
 
 ### 6.1 Universe Proposals vs. Traditional Git PRs
 - **Semantic Delta**: In `cosm`, a Pull Request is represented as a **Universe Proposal** containing AST symbol additions/modifications, cross-boundary contract edges, and cryptographic lineage envelopes rather than line-by-line text diffs.
@@ -505,4 +516,15 @@ Comprehensive developer and agent how-to guides are documented in [`docs/HOW_TO_
 | **`TestReview_ProposalCardRenderer`** | `pkg/review` | Render AST proposal cards with topology delta, syntax highlighting, and live build badges. |
 | **`TestReview_AgentCritiqueProtocol`** | `pkg/review` | Agent evaluates a proposal with intentional contract drift $\rightarrow$ asserts structured `REQUEST_CHANGES` critique and auto-remediation prompt. |
 | **`TestStorage_CrashResilienceDuringImport`** | `pkg/onboarding` | Interrupt onboarding midway; verify SQLite WAL rolls back cleanly with zero database corruption. |
+
+---
+
+## 10. Topocosm Standalone Distribution Hub (`topocosm`)
+
+Topocosm (`topocosm.dev`) is decoupled into its own independent cloud repository (`github.com/cosmscm/topocosm`), providing:
+- **Cloud-Native Distribution**: Decentralized CRDT proposal mesh, agent registry, and AST Merkle-DAG distribution hub.
+- **Machine Discovery**: Agent capabilities and attestation policies published at `/.well-known/cosm-agent.json`.
+- **Zero-Cloud Local Development**: Standalone daemon (`topocosm start`) using pure-Go SQLite WAL and CAS storage for offline testing and autonomous agent swarm simulation.
+- **Cosm Local Separation**: `cosm` remains the 100% offline developer CLI and local AST machine runtime, interacting with `topocosm` over standard HTTP/REST and gRPC protocols (`pkg/api`, `pkg/client`).
+
 

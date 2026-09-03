@@ -24,11 +24,11 @@ type CommandResult struct {
 
 // StagingWorkspace represents an isolated ephemeral filesystem environment for running toolchain builds.
 type StagingWorkspace struct {
-	Target       *TargetSpec
-	Directory    string
-	CreatedAt    time.Time
-	mu           sync.RWMutex
-	cleanedUp    bool
+	Target    *TargetSpec
+	Directory string
+	CreatedAt time.Time
+	mu        sync.RWMutex
+	cleanedUp bool
 }
 
 // WriteFiles writes a map of relative file paths and file bytes into the staging directory.

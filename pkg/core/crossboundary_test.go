@@ -228,8 +228,8 @@ func TestCrossBoundaryLinker_PythonFastAPIAndTerraform(t *testing.T) {
 
 func TestCrossBoundaryLinker_PolyglotDBAndRPC(t *testing.T) {
 	lineage := LineageEnvelope{
-		UserID:     "polyglot-architect",
-		Timestamp:  time.Now().UTC(),
+		UserID:    "polyglot-architect",
+		Timestamp: time.Now().UTC(),
 	}
 
 	// 1. SQL Table

@@ -54,15 +54,15 @@ func (a *TestAgent) RunScenario(ctx context.Context, scenario Scenario, opts ...
 		scenario.Name, scenario.Description, scenario.Prompt))
 
 	registry := framework.NewToolRegistry()
-	RegisterAllFGTools(registry, a.WorkDir, a.AgentID)
+	RegisterAllCosmTools(registry, a.WorkDir, a.AgentID)
 
 	loopOpts := framework.DefaultLoopOptions()
 	if len(opts) > 0 {
 		loopOpts = opts[0]
 	}
 	loopOpts.SystemInstruction = fmt.Sprintf(
-		"You are an autonomous Test and Evaluation Agent for Future of Git (fg). "+
-			"Execute the required fg tools (fg_init, fg_add, fg_commit, fg_ship, etc.) to successfully stage, "+
+		"You are an autonomous Test and Evaluation Agent for Cosm (cosm). "+
+			"Execute the required cosm tools (cosm_init, cosm_add, cosm_commit, cosm_ship, etc., or legacy fg_* aliases) to successfully stage, "+
 			"link cross-boundary AST contracts, and verify the workspace for scenario %q.", scenario.Name)
 
 	return framework.ExecuteLoop(ctx, session, a.Provider, registry, loopOpts)
@@ -78,7 +78,7 @@ func (a *TestAgent) RunPrompt(ctx context.Context, prompt string, opts ...framew
 	session.AppendUserMessage(prompt)
 
 	registry := framework.NewToolRegistry()
-	RegisterAllFGTools(registry, a.WorkDir, a.AgentID)
+	RegisterAllCosmTools(registry, a.WorkDir, a.AgentID)
 
 	loopOpts := framework.DefaultLoopOptions()
 	if len(opts) > 0 {

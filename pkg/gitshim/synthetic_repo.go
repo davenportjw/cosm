@@ -44,8 +44,8 @@ type SyntheticGitCommit struct {
 
 // SyntheticGitTreeEntry represents a single file or directory inside a synthetic tree.
 type SyntheticGitTreeEntry struct {
-	Mode     string `json:"mode"`     // "100644" for file, "040000" for dir
-	Path     string `json:"path"`     // Relative path
+	Mode     string `json:"mode"`      // "100644" for file, "040000" for dir
+	Path     string `json:"path"`      // Relative path
 	BlobHash string `json:"blob_hash"` // Synthetic Git blob hash
 }
 

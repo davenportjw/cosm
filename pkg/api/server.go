@@ -27,6 +27,22 @@ type MutateNodeResponse struct {
 	Message    string `json:"message"`
 }
 
+// CommitWorkspaceRequest represents a structured request for an agent to commit workspace changes.
+type CommitWorkspaceRequest struct {
+	UniverseID string               `json:"universe_id"`
+	Intent     string               `json:"intent"`
+	Lineage    core.LineageEnvelope `json:"lineage"`
+}
+
+// CommitWorkspaceResponse returned after committing a workspace manifest.
+type CommitWorkspaceResponse struct {
+	UniverseID     string `json:"universe_id"`
+	MerkleRootHash string `json:"merkle_root_hash"`
+	ComponentCount int    `json:"component_count"`
+	Success        bool   `json:"success"`
+	Message        string `json:"message"`
+}
+
 // QueryUniverseResponse holds current active universe status.
 type QueryUniverseResponse struct {
 	UniverseID     string   `json:"universe_id"`
@@ -115,12 +131,117 @@ func (s *AgentAPIServer) Handler() http.Handler {
 		}
 		req.SymbolNode.NodeID = blobHash
 
+		// Persist LineageRecord if lineage information is supplied
+		lin := req.SymbolNode.Lineage
+		if lin.ExecutingAgentID != "" || lin.UserPrompt != "" || lin.Intent != "" || lin.SessionID != "" {
+			_ = s.graphEngine.PutLineage(storage.LineageRecord{
+				NodeID:              blobHash,
+				UserID:              lin.UserID,
+				UserPrompt:          lin.UserPrompt,
+				SessionID:           lin.SessionID,
+				OrchestratorAgentID: lin.OrchestratorAgentID,
+				ExecutingAgentID:    lin.ExecutingAgentID,
+				LLMVersion:          lin.LLMVersion,
+				GenerationParams:    lin.GenerationParams,
+				Intent:              lin.Intent,
+				Timestamp:           lin.Timestamp,
+				Tokens:              lin.Tokens,
+				Trace:               lin.Trace,
+				SignatureEd25519:    lin.SignatureEd25519,
+			})
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(MutateNodeResponse{
 			NodeID:     blobHash,
 			UniverseID: req.UniverseID,
 			Success:    true,
 			Message:    "AST node successfully persisted in object store",
+		})
+	})
+
+	// POST /api/v1/commit commits workspace state to a universe with full lineage & token telemetry
+	mux.HandleFunc("/api/v1/commit", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req CommitWorkspaceRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"invalid commit payload: %s"}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+
+		if req.UniverseID == "" {
+			req.UniverseID = "universe-main"
+		}
+
+		nodes := s.graphEngine.ListNodes("", "")
+		var compIDs []string
+		symbolMap := make(map[string]*core.ASTSymbolNode)
+		var components []*core.ComponentNode
+
+		for _, n := range nodes {
+			if n.NodeType == "service" || n.NodeType == "infra" || n.NodeType == "frontend" || n.NodeType == "library" || n.NodeType == "contract" {
+				compIDs = append(compIDs, n.NodeID)
+				data, err := s.blobStore.Get(n.MerkleHash)
+				if err == nil {
+					var c core.ComponentNode
+					if e := json.Unmarshal(data, &c); e == nil {
+						components = append(components, &c)
+					}
+				}
+			} else {
+				data, err := s.blobStore.Get(n.MerkleHash)
+				if err == nil {
+					var sym core.ASTSymbolNode
+					if e := json.Unmarshal(data, &sym); e == nil {
+						symbolMap[sym.NodeID] = &sym
+					}
+				}
+			}
+		}
+
+		linker := core.NewCrossBoundaryLinker()
+		edges, _ := linker.LinkWorkspace(components, symbolMap)
+
+		if req.Lineage.Timestamp.IsZero() {
+			req.Lineage.Timestamp = time.Now().UTC()
+		}
+		if req.Lineage.Intent == "" && req.Intent != "" {
+			req.Lineage.Intent = req.Intent
+		}
+
+		manifest := &core.WorkspaceManifestNode{
+			WorkspaceID: "ws-" + req.UniverseID,
+			UniverseID:  req.UniverseID,
+			Components:  compIDs,
+			CrossEdges:  edges,
+			Lineage:     req.Lineage,
+			CreatedAt:   time.Now().UTC(),
+		}
+
+		manifestHash, err := core.HashWorkspaceManifest(manifest)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"manifest hashing failed: %s"}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+		manifest.MerkleRootHash = manifestHash
+
+		_, err = s.universeMgr.CommitManifest(req.UniverseID, manifest)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"commit failed: %s"}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(CommitWorkspaceResponse{
+			UniverseID:     req.UniverseID,
+			MerkleRootHash: manifestHash,
+			ComponentCount: len(compIDs),
+			Success:        true,
+			Message:        "Successfully committed workspace manifest to universe",
 		})
 	})
 

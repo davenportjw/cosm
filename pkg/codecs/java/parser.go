@@ -53,23 +53,23 @@ type JavaMethod struct {
 
 // JavaClass represents an extracted Java class, interface, enum, or record.
 type JavaClass struct {
-	Kind           string       `json:"kind"`                 // class, interface, enum, record
-	Name           string       `json:"name"`
-	PackageName    string       `json:"package_name"`
-	Visibility     string       `json:"visibility,omitempty"` // public, private, protected, package-private
-	IsAbstract     bool         `json:"is_abstract"`
-	IsFinal        bool         `json:"is_final"`
-	IsStatic       bool         `json:"is_static"`
-	Extends        string       `json:"extends,omitempty"`
-	Implements     []string     `json:"implements,omitempty"`
-	Annotations    []string     `json:"annotations,omitempty"` // e.g. @RestController, @Entity, @Table(name="users")
-	Doc            string       `json:"doc,omitempty"`
-	Fields         []JavaField  `json:"fields"`
-	Methods        []JavaMethod `json:"methods"`
-	IsController   bool         `json:"is_controller"`
-	BasePath       string       `json:"base_path,omitempty"`  // from @RequestMapping
-	IsEntity       bool         `json:"is_entity"`
-	TableName      string       `json:"table_name,omitempty"` // from @Table(name="...")
+	Kind         string       `json:"kind"` // class, interface, enum, record
+	Name         string       `json:"name"`
+	PackageName  string       `json:"package_name"`
+	Visibility   string       `json:"visibility,omitempty"` // public, private, protected, package-private
+	IsAbstract   bool         `json:"is_abstract"`
+	IsFinal      bool         `json:"is_final"`
+	IsStatic     bool         `json:"is_static"`
+	Extends      string       `json:"extends,omitempty"`
+	Implements   []string     `json:"implements,omitempty"`
+	Annotations  []string     `json:"annotations,omitempty"` // e.g. @RestController, @Entity, @Table(name="users")
+	Doc          string       `json:"doc,omitempty"`
+	Fields       []JavaField  `json:"fields"`
+	Methods      []JavaMethod `json:"methods"`
+	IsController bool         `json:"is_controller"`
+	BasePath     string       `json:"base_path,omitempty"` // from @RequestMapping
+	IsEntity     bool         `json:"is_entity"`
+	TableName    string       `json:"table_name,omitempty"` // from @Table(name="...")
 }
 
 // JavaRouteBinding represents a Spring Boot or JAX-RS REST route.
@@ -83,11 +83,11 @@ type JavaRouteBinding struct {
 
 // JavaFileResult contains all extracted symbols and metadata from a Java source file.
 type JavaFileResult struct {
-	FilePath    string              `json:"file_path"`
-	PackageName string              `json:"package_name"`
-	Imports     []string            `json:"imports"`
-	Classes     []JavaClass         `json:"classes"`
-	Routes      []JavaRouteBinding  `json:"routes"`
+	FilePath    string                `json:"file_path"`
+	PackageName string                `json:"package_name"`
+	Imports     []string              `json:"imports"`
+	Classes     []JavaClass           `json:"classes"`
+	Routes      []JavaRouteBinding    `json:"routes"`
 	AllSymbols  []*core.ASTSymbolNode `json:"all_symbols"`
 }
 

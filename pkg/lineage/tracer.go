@@ -26,15 +26,15 @@ type AncestryHop struct {
 
 // AncestryChain represents the full backward causal chain from an AST node to its root prompt.
 type AncestryChain struct {
-	TargetNodeID        string        `json:"target_node_id"`
-	Hops                []AncestryHop `json:"hops"`
-	RootPrompt          string        `json:"root_prompt"`
-	RootSessionID       string        `json:"root_session_id"`
-	RootOrchestratorID  string        `json:"root_orchestrator_id"`
-	PrimaryExecutorID   string        `json:"primary_executor_id"`
-	LLMVersion          string        `json:"llm_version"`
-	IntactChain         bool          `json:"intact_chain"`
-	TotalHops           int           `json:"total_hops"`
+	TargetNodeID       string        `json:"target_node_id"`
+	Hops               []AncestryHop `json:"hops"`
+	RootPrompt         string        `json:"root_prompt"`
+	RootSessionID      string        `json:"root_session_id"`
+	RootOrchestratorID string        `json:"root_orchestrator_id"`
+	PrimaryExecutorID  string        `json:"primary_executor_id"`
+	LLMVersion         string        `json:"llm_version"`
+	IntactChain        bool          `json:"intact_chain"`
+	TotalHops          int           `json:"total_hops"`
 }
 
 // LineageTracer resolves full-stack ancestry graphs connecting AST nodes back to user prompts and agent sessions.
@@ -83,6 +83,8 @@ func (t *LineageTracer) TraceNodeAncestry(nodeID string) (*AncestryChain, error)
 			GenerationParams:    r.GenerationParams,
 			Intent:              r.Intent,
 			Timestamp:           r.Timestamp,
+			Tokens:              r.Tokens,
+			Trace:               r.Trace,
 			SignatureEd25519:    r.SignatureEd25519,
 		}
 

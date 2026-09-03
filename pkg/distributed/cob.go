@@ -25,23 +25,23 @@ const (
 type ReviewStatus string
 
 const (
-	StatusOpen            ReviewStatus = "OPEN"
-	StatusUnderReview     ReviewStatus = "UNDER_REVIEW"
+	StatusOpen             ReviewStatus = "OPEN"
+	StatusUnderReview      ReviewStatus = "UNDER_REVIEW"
 	StatusChangesRequested ReviewStatus = "CHANGES_REQUESTED"
-	StatusApproved        ReviewStatus = "APPROVED"
-	StatusMerged          ReviewStatus = "MERGED"
-	StatusClosed          ReviewStatus = "CLOSED"
+	StatusApproved         ReviewStatus = "APPROVED"
+	StatusMerged           ReviewStatus = "MERGED"
+	StatusClosed           ReviewStatus = "CLOSED"
 )
 
 // ReviewComment represents a human or AI critic comment on a proposal or specific AST symbol.
 type ReviewComment struct {
-	CommentID   string    `json:"comment_id"`
-	AuthorDID   string    `json:"author_did"` // Decentralized Identifier (e.g. did:key:z6Mku...)
-	SymbolID    string    `json:"symbol_id,omitempty"` // Target AST symbol if targeted comment
-	Body        string    `json:"body"`
-	Severity    string    `json:"severity,omitempty"` // "INFO", "WARNING", "BLOCKER"
-	Timestamp   time.Time `json:"timestamp"`
-	Signature   []byte    `json:"signature,omitempty"`
+	CommentID string    `json:"comment_id"`
+	AuthorDID string    `json:"author_did"`          // Decentralized Identifier (e.g. did:key:z6Mku...)
+	SymbolID  string    `json:"symbol_id,omitempty"` // Target AST symbol if targeted comment
+	Body      string    `json:"body"`
+	Severity  string    `json:"severity,omitempty"` // "INFO", "WARNING", "BLOCKER"
+	Timestamp time.Time `json:"timestamp"`
+	Signature []byte    `json:"signature,omitempty"`
 }
 
 // ProposalRevision represents an immutable snapshot/revision in the proposal's history.
@@ -56,19 +56,20 @@ type ProposalRevision struct {
 
 // ProposalCOB is a Conflict-Free Replicated Data Type (CRDT) representing a Pull Request / Universe Proposal.
 type ProposalCOB struct {
-	ID             string              `json:"id"` // Stable Change / Proposal ID (e.g. prop-auth-v1)
-	Type           COBType             `json:"type"`
-	Title          string              `json:"title"`
-	TargetUniverse string              `json:"target_universe"` // Base branch (e.g. universe-main)
-	AuthorDID      string              `json:"author_did"`
-	Status         ReviewStatus        `json:"status"`
-	CreatedAt      time.Time           `json:"created_at"`
-	Revisions      []ProposalRevision  `json:"revisions"`
-	Comments       []ReviewComment     `json:"comments"`
-	Approvals      map[string]bool     `json:"approvals"` // DID -> Approved (true/false)
-	FitnessScore   float64             `json:"fitness_score"`
+	ID             string               `json:"id"` // Stable Change / Proposal ID (e.g. prop-auth-v1)
+	Type           COBType              `json:"type"`
+	Title          string               `json:"title"`
+	TargetUniverse string               `json:"target_universe"` // Base branch (e.g. universe-main)
+	AuthorDID      string               `json:"author_did"`
+	Status         ReviewStatus         `json:"status"`
+	CreatedAt      time.Time            `json:"created_at"`
+	Revisions      []ProposalRevision   `json:"revisions"`
+	Comments       []ReviewComment      `json:"comments"`
+	Approvals      map[string]bool      `json:"approvals"` // DID -> Approved (true/false)
+	FitnessScore   float64              `json:"fitness_score"`
+	Annotations    map[string]string    `json:"annotations,omitempty"` // Key-value metadata (e.g. build badges, preview URLs)
 	Lineage        core.LineageEnvelope `json:"lineage"`
-	LamportClock   uint64              `json:"lamport_clock"`
+	LamportClock   uint64               `json:"lamport_clock"`
 	mu             sync.RWMutex
 }
 
@@ -102,6 +103,7 @@ func NewProposalCOB(
 		Comments:     make([]ReviewComment, 0),
 		Approvals:    make(map[string]bool),
 		FitnessScore: 1.0,
+		Annotations:  make(map[string]string),
 		Lineage:      lineage,
 		LamportClock: 1,
 	}
@@ -237,11 +239,11 @@ func (p *ProposalCOB) MergeCRDT(other *ProposalCOB) {
 
 // ClaimRecord represents an active domain lease held by an agent.
 type ClaimRecord struct {
-	Domain      string    `json:"domain"`
-	AgentDID    string    `json:"agent_did"`
-	Goal        string    `json:"goal"`
-	ClaimedAt   time.Time `json:"claimed_at"`
-	ExpiresAt   time.Time `json:"expires_at,omitempty"`
+	Domain    string    `json:"domain"`
+	AgentDID  string    `json:"agent_did"`
+	Goal      string    `json:"goal"`
+	ClaimedAt time.Time `json:"claimed_at"`
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
 }
 
 // BlackboardCOB provides real-time shared memory coordination across autonomous agents.

@@ -13,16 +13,22 @@ import (
 	"github.com/cosmscm/cosm/pkg/storage"
 )
 
+type eventSubscriber struct {
+	id      uint64
+	handler func(topic string, payload []byte)
+}
+
 // LocalEventStream provides an in-process, zero-dependency event bus.
 type LocalEventStream struct {
-	subscribers map[string][]func(topic string, payload []byte)
+	subscribers map[string][]eventSubscriber
+	nextID      uint64
 	mu          sync.RWMutex
 }
 
 // NewLocalEventStream creates a new LocalEventStream.
 func NewLocalEventStream() *LocalEventStream {
 	return &LocalEventStream{
-		subscribers: make(map[string][]func(topic string, payload []byte)),
+		subscribers: make(map[string][]eventSubscriber),
 	}
 }
 
@@ -31,14 +37,12 @@ func (e *LocalEventStream) Publish(ctx context.Context, topic string, payload []
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	handlers := e.subscribers[topic]
-	for _, h := range handlers {
-		go h(topic, payload)
+	for _, sub := range e.subscribers[topic] {
+		go sub.handler(topic, payload)
 	}
 	// Also trigger wildcard subscribers
-	wildcardHandlers := e.subscribers["*"]
-	for _, h := range wildcardHandlers {
-		go h(topic, payload)
+	for _, sub := range e.subscribers["*"] {
+		go sub.handler(topic, payload)
 	}
 	return nil
 }
@@ -48,14 +52,19 @@ func (e *LocalEventStream) Subscribe(ctx context.Context, topic string, handler 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	e.subscribers[topic] = append(e.subscribers[topic], handler)
+	e.nextID++
+	subID := e.nextID
+	e.subscribers[topic] = append(e.subscribers[topic], eventSubscriber{
+		id:      subID,
+		handler: handler,
+	})
+
 	unsubscribe := func() {
 		e.mu.Lock()
 		defer e.mu.Unlock()
 		handlers := e.subscribers[topic]
-		for i, h := range handlers {
-			// Compare function pointers
-			if fmt.Sprintf("%p", h) == fmt.Sprintf("%p", handler) {
+		for i, sub := range handlers {
+			if sub.id == subID {
 				e.subscribers[topic] = append(handlers[:i], handlers[i+1:]...)
 				break
 			}
@@ -68,7 +77,7 @@ func (e *LocalEventStream) Subscribe(ctx context.Context, topic string, handler 
 func (e *LocalEventStream) Close() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.subscribers = make(map[string][]func(topic string, payload []byte))
+	e.subscribers = make(map[string][]eventSubscriber)
 	return nil
 }
 

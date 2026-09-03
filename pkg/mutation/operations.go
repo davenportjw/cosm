@@ -119,7 +119,13 @@ func (e *SurgeryEngine) ResolveSymbol(universeID string, target string) (*Resolv
 	}
 
 	for cIdx, compID := range manifest.Components {
-		compBytes, err := e.blobStore.Get(compID)
+		compMerkle := compID
+		if len(compMerkle) != 64 {
+			if nodeRec, nErr := e.graphEngine.GetNode(compID); nErr == nil && nodeRec != nil && nodeRec.MerkleHash != "" {
+				compMerkle = nodeRec.MerkleHash
+			}
+		}
+		compBytes, err := e.blobStore.Get(compMerkle)
 		if err != nil {
 			continue
 		}
@@ -138,7 +144,13 @@ func (e *SurgeryEngine) ResolveSymbol(universeID string, target string) (*Resolv
 		}
 
 		for sIdx, sID := range comp.SymbolNodes {
-			symBytes, err := e.blobStore.Get(sID)
+			symMerkle := sID
+			if len(symMerkle) != 64 {
+				if nodeRec, nErr := e.graphEngine.GetNode(sID); nErr == nil && nodeRec != nil && nodeRec.MerkleHash != "" {
+					symMerkle = nodeRec.MerkleHash
+				}
+			}
+			symBytes, err := e.blobStore.Get(symMerkle)
 			if err != nil {
 				continue
 			}

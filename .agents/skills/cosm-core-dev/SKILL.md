@@ -22,12 +22,14 @@ Use this skill when modifying, extending, or debugging the core Cosm Go codebase
    - `vectorindex.go`: Intent and natural language search index.
 
 2. **Core Domain Primitives (`pkg/core/`)**:
-   - `schema.go`: `ASTSymbolNode`, `ComponentNode`, `WorkspaceManifestNode`, `LineageEnvelope`, `CrossBoundaryEdge`.
+   - `schema.go`: `ASTSymbolNode`, `ComponentNode`, `WorkspaceManifestNode`, `LineageEnvelope`, `TokenTelemetry`, `TraceCarrier`, `CrossBoundaryEdge`.
    - `hasher.go`: Deterministic SHA-256 Merkle root computation.
    - `crossboundary.go`: Inference engine linking frontend, backend, and cloud infrastructure symbols (`CONSUMES_API`, `DEPLOYS_TO`, `BINDS_ENV`).
 
-3. **Developer CLI (`cmd/cosm/`)**:
-   - Implements Cobra-based CLI commands: `init`, `add`, `commit`, `status`, `view`, `topology`, `lineage`, `blast-radius`, `universe`, `proposal`, `ship`, `git`, `dashboard`.
+3. **Developer CLI (`cmd/cosm/`) & Agent Commit Contract**:
+   - Implements CLI commands: `init`, `add`, `commit`, `status`, `view`, `topology`, `lineage`, `blast-radius`, `universe`, `proposal`, `ship`, `git`, `dashboard`, `ast edit`, `ast resolve`.
+   - Telemetry flags for agents: `--prompt`, `--session-id`, `--orchestrator-id`, `--model`, `--prompt-tokens`, `--completion-tokens`, `--reasoning-tokens`, `--cost-usd`, `--latency-ms`, `--trace-id`, `--span-id`.
+   - Complete agent contract reference: `docs/reference/agent-commit-contract.md`.
 
 ---
 

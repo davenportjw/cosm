@@ -101,6 +101,65 @@ Submits an in-memory AST symbol mutation to be stored in the content-addressed i
 
 ---
 
+### `POST /api/v1/commit`
+Commits current workspace state into an immutable Merkle root manifest on the specified universe, recording full multi-tier causal lineage, OpenTelemetry W3C trace context, and token consumption metrics.
+
+- **Request**:
+  ```http
+  POST /api/v1/commit HTTP/1.1
+  Host: localhost:9090
+  Content-Type: application/json
+
+  {
+    "universe_id": "universe-main",
+    "intent": "Implement RS256 token verification",
+    "lineage": {
+      "user_id": "user-123",
+      "user_prompt": "Add RS256 token validation with error propagation",
+      "session_id": "sess-4491-a8b2-c103",
+      "orchestrator_agent_id": "orch-orchestrator-alpha",
+      "executing_agent_id": "cosm-worker-auth-1",
+      "llm_version": "gemini-3.7-flash",
+      "generation_params": "{\"temperature\": 0.2, \"seed\": 42}",
+      "intent": "Implement RS256 token verification",
+      "tokens": {
+        "prompt_tokens": 1420,
+        "completion_tokens": 312,
+        "reasoning_tokens": 850,
+        "cached_tokens": 128,
+        "total_tokens": 2582,
+        "cost_usd": 0.00184,
+        "latency_ms": 640
+      },
+      "trace": {
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "00f067aa0ba902b7",
+        "trace_flags": "01",
+        "attributes": {
+          "gen_ai.system": "gemini",
+          "agent.role": "auth-engineer"
+        }
+      }
+    }
+  }
+  ```
+- **Response `200 OK`** (`CommitWorkspaceResponse`):
+  ```json
+  {
+    "universe_id": "universe-main",
+    "merkle_root_hash": "658a10ba9570fa1f188f09dfd2af5c1b5a743240c2c6c659aef3e3c9719cab50",
+    "component_count": 3,
+    "success": true,
+    "message": "Successfully committed workspace manifest to universe"
+  }
+  ```
+- **Error Responses**:
+  - `400 Bad Request`: `{"error":"invalid commit payload: ..."}`
+  - `405 Method Not Allowed`: `{"error":"method not allowed"}`
+  - `500 Internal Server Error`: `{"error":"commit failed: ..."}`
+
+---
+
 ### `POST /api/v1/ast/edit`
 Applies an atomic batch of declarative AST mutations (`replace_function_body`, `replace_function`, `add_method`, `add_before`, `add_after`, `delete`, `add_import`, `replace_imports`, `replace_global`) directly to AST Merkle DAG nodes.
 
@@ -312,4 +371,4 @@ pullResp, err := client.SparsePullCosm(ctx, &topocosm.SparsePullRequest{
 claimed, err := client.ClaimDomain(ctx, "demo-org", "cloud-platform", "services/billing", "Refactoring Stripe handler", 300)
 ```
 
-See [Topocosm Reference Manual](file:///Users/jasondavenport/GitHub/future-of-git/docs/reference/topocosm.md) for full endpoint specifications.
+See [Topocosm Reference Manual](file:///Users/jasondavenport/GitHub/cosm/docs/reference/topocosm.md) for full endpoint specifications.

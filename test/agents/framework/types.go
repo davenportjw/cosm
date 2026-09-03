@@ -30,14 +30,14 @@ const (
 
 // StepTrace captures fine-grained telemetry for a single reasoning & tool execution turn.
 type StepTrace struct {
-	StepIndex    int          `json:"step_index"`
-	Timestamp    time.Time    `json:"timestamp"`
-	InputSummary string       `json:"input_summary"`
-	ResponseText string       `json:"response_text,omitempty"`
-	ToolCalls    []ToolCall   `json:"tool_calls,omitempty"`
-	ToolResults  []ToolResult `json:"tool_results,omitempty"`
-	Reflection   string       `json:"reflection,omitempty"`
-	TokensUsed   TokenUsage   `json:"tokens_used"`
+	StepIndex    int           `json:"step_index"`
+	Timestamp    time.Time     `json:"timestamp"`
+	InputSummary string        `json:"input_summary"`
+	ResponseText string        `json:"response_text,omitempty"`
+	ToolCalls    []ToolCall    `json:"tool_calls,omitempty"`
+	ToolResults  []ToolResult  `json:"tool_results,omitempty"`
+	Reflection   string        `json:"reflection,omitempty"`
+	TokensUsed   TokenUsage    `json:"tokens_used"`
 	Duration     time.Duration `json:"duration"`
 }
 

@@ -11,19 +11,19 @@ import (
 
 // SparseFilter specifies which components, languages, or contracts an agent needs to download.
 type SparseFilter struct {
-	ComponentNames   []string        `json:"component_names,omitempty"`   // e.g. ["services/billing"]
-	Languages        []core.Language `json:"languages,omitempty"`         // e.g. [LangGo, LangHCL]
-	IncludeContracts bool            `json:"include_contracts"`          // Whether to pull cross-boundary contract nodes
+	ComponentNames   []string        `json:"component_names,omitempty"` // e.g. ["services/billing"]
+	Languages        []core.Language `json:"languages,omitempty"`       // e.g. [LangGo, LangHCL]
+	IncludeContracts bool            `json:"include_contracts"`         // Whether to pull cross-boundary contract nodes
 }
 
 // SparseSyncPayload contains only the necessary AST blobs and manifest subgraph for an agent task.
 type SparseSyncPayload struct {
-	Manifest        *core.WorkspaceManifestNode  `json:"manifest"`
+	Manifest        *core.WorkspaceManifestNode    `json:"manifest"`
 	Components      map[string]*core.ComponentNode `json:"components"`
 	Symbols         map[string]*core.ASTSymbolNode `json:"symbols"`
-	FilteredBlobs   map[string][]byte            `json:"filtered_blobs"` // Hash -> Raw payload
-	TotalBlobsCount int                          `json:"total_blobs_count"`
-	SavingsPercent  float64                      `json:"savings_percent"`
+	FilteredBlobs   map[string][]byte              `json:"filtered_blobs"` // Hash -> Raw payload
+	TotalBlobsCount int                            `json:"total_blobs_count"`
+	SavingsPercent  float64                        `json:"savings_percent"`
 }
 
 // SparseSyncEngine extracts minimal content-addressed AST subgraphs for lightweight agent replication.

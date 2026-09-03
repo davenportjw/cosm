@@ -87,12 +87,12 @@ type GoFileSymbols struct {
 
 // GoPackageResult contains aggregated symbols across all files in a Go package.
 type GoPackageResult struct {
-	PackageName string                   `json:"package_name"`
-	DirPath     string                   `json:"dir_path"`
+	PackageName string                    `json:"package_name"`
+	DirPath     string                    `json:"dir_path"`
 	Files       map[string]*GoFileSymbols `json:"files"`
-	AllSymbols  []*core.ASTSymbolNode    `json:"all_symbols"`
-	AllRoutes   []GoRouteBinding         `json:"all_routes"`
-	AllImports  []GoImport               `json:"all_imports"`
+	AllSymbols  []*core.ASTSymbolNode     `json:"all_symbols"`
+	AllRoutes   []GoRouteBinding          `json:"all_routes"`
+	AllImports  []GoImport                `json:"all_imports"`
 }
 
 // StructToASTSymbolNode converts a GoStructSymbol to a core.ASTSymbolNode.
@@ -233,6 +233,20 @@ func BuildComponentNode(compName string, compType core.ComponentType, pkgResult 
 		"dir_path":     pkgResult.DirPath,
 		"symbol_count": fmt.Sprintf("%d", len(pkgResult.AllSymbols)),
 		"route_count":  fmt.Sprintf("%d", len(pkgResult.AllRoutes)),
+	}
+	if len(pkgResult.AllImports) > 0 {
+		var imps []string
+		for _, imp := range pkgResult.AllImports {
+			if imp.Alias != "" {
+				imps = append(imps, fmt.Sprintf("%s %s", imp.Alias, imp.Path))
+			} else {
+				imps = append(imps, imp.Path)
+			}
+		}
+		metadata["imports"] = strings.Join(imps, ",")
+	}
+	if strings.HasSuffix(compName, ".go") {
+		metadata["file_path"] = compName
 	}
 
 	comp := &core.ComponentNode{

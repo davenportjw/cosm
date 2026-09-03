@@ -12,24 +12,24 @@ import (
 
 // SwarmSimulationConfig configures parameters for multi-agent concurrency testing.
 type SwarmSimulationConfig struct {
-	NumAgents    int           `json:"num_agents"`
-	Concurrency  int           `json:"concurrency"`
-	Duration     time.Duration `json:"duration"`
-	OrgSlug      string        `json:"org_slug"`
-	CosmName     string        `json:"cosm_name"`
+	NumAgents   int           `json:"num_agents"`
+	Concurrency int           `json:"concurrency"`
+	Duration    time.Duration `json:"duration"`
+	OrgSlug     string        `json:"org_slug"`
+	CosmName    string        `json:"cosm_name"`
 }
 
 // SwarmSimulationResult collects metrics from the simulation run.
 type SwarmSimulationResult struct {
-	TotalOperations   int64         `json:"total_operations"`
-	SparsePulls       int64         `json:"sparse_pulls"`
-	ClaimsAcquired    int64         `json:"claims_acquired"`
-	ClaimsContested   int64         `json:"claims_contested"`
-	ProposalsCreated  int64         `json:"proposals_created"`
-	ProposalsMerged   int64         `json:"proposals_merged"`
-	ErrorsCount       int64         `json:"errors_count"`
-	Duration          time.Duration `json:"duration"`
-	OpsPerSecond      float64       `json:"ops_per_second"`
+	TotalOperations  int64         `json:"total_operations"`
+	SparsePulls      int64         `json:"sparse_pulls"`
+	ClaimsAcquired   int64         `json:"claims_acquired"`
+	ClaimsContested  int64         `json:"claims_contested"`
+	ProposalsCreated int64         `json:"proposals_created"`
+	ProposalsMerged  int64         `json:"proposals_merged"`
+	ErrorsCount      int64         `json:"errors_count"`
+	Duration         time.Duration `json:"duration"`
+	OpsPerSecond     float64       `json:"ops_per_second"`
 }
 
 // RunSwarmSimulation executes a multi-agent concurrent benchmark against a Topocosm Hub server.

@@ -16,7 +16,7 @@ terraform {
 }
 
 provider "google" {
-  project = "future-of-git-prod"
+  project = "cosm-prod"
   region  = "us-central1"
 }
 
@@ -37,7 +37,7 @@ resource "google_cloud_run_service" "auth_api" {
   template {
     spec {
       containers {
-        image = "gcr.io/future-of-git-prod/auth-service:v1"
+        image = "gcr.io/cosm-prod/auth-service:v1"
         env {
           name  = "PORT"
           value = var.port
@@ -81,8 +81,8 @@ func TestHCLParser_ParseSource(t *testing.T) {
 	if pBlock, ok := blockTypes["provider.google"]; !ok {
 		t.Errorf("missing provider.google block")
 	} else {
-		if pBlock.Attributes["project"].Value != `"future-of-git-prod"` {
-			t.Errorf("expected project attr future-of-git-prod, got %s", pBlock.Attributes["project"].Value)
+		if pBlock.Attributes["project"].Value != `"cosm-prod"` {
+			t.Errorf("expected project attr cosm-prod, got %s", pBlock.Attributes["project"].Value)
 		}
 	}
 
@@ -98,7 +98,7 @@ func TestHCLParser_ParseSource(t *testing.T) {
 	}
 
 	images := resBlock.ContainerImages()
-	if len(images) == 0 || images[0] != "gcr.io/future-of-git-prod/auth-service:v1" {
+	if len(images) == 0 || images[0] != "gcr.io/cosm-prod/auth-service:v1" {
 		t.Errorf("expected container image, got %v", images)
 	}
 

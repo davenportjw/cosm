@@ -184,3 +184,53 @@ def predict():
 		t.Errorf("Expected head manifest with components")
 	}
 }
+
+func TestRepositoryMigrator_AllPolyglotCodecs(t *testing.T) {
+	repoDir, err := os.MkdirTemp("", "repo_poly_*")
+	if err != nil {
+		t.Fatalf("TempDir error: %v", err)
+	}
+	defer os.RemoveAll(repoDir)
+
+	fgDir, err := os.MkdirTemp("", "fg_store_poly_*")
+	if err != nil {
+		t.Fatalf("TempDir error: %v", err)
+	}
+	defer os.RemoveAll(fgDir)
+
+	files := map[string]string{
+		"src/main.rs":       "pub fn run() -> bool { true }",
+		"src/App.java":      "public class App {\n    private int counter;\n}",
+		"src/native.cpp":    "int compute(int x) { return x * 2; }",
+		"db/schema.sql":     "CREATE TABLE items (id INT PRIMARY KEY);",
+		"proto/msg.proto":   "syntax = \"proto3\"; message Ping { string txt = 1; }",
+		"Dockerfile":        "FROM alpine:3.19\nCMD [\"echo\", \"ok\"]",
+	}
+
+	for path, content := range files {
+		fullPath := filepath.Join(repoDir, path)
+		_ = os.MkdirAll(filepath.Dir(fullPath), 0755)
+		_ = os.WriteFile(fullPath, []byte(content), 0644)
+	}
+
+	blobStore, _ := storage.NewBlobStore(filepath.Join(fgDir, "objects"))
+	graphEngine, _ := storage.NewGraphEngine(filepath.Join(fgDir, "graph.db"))
+	defer graphEngine.Close()
+
+	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
+	_, _ = universeMgr.CreateUniverse("universe-main", "")
+
+	migrator := NewRepositoryMigrator(blobStore, graphEngine, universeMgr)
+	report, err := migrator.ImportRepositorySnapshot(repoDir, "universe-main", "Onboard polyglot codecs", "agent-test")
+	if err != nil {
+		t.Fatalf("Import failed: %v", err)
+	}
+
+	if report.CodeFilesParsed != len(files) {
+		t.Errorf("Expected %d code files parsed, got %d", len(files), report.CodeFilesParsed)
+	}
+	if report.ComponentsCreated < len(files) {
+		t.Errorf("Expected at least %d components created, got %d", len(files), report.ComponentsCreated)
+	}
+}
+

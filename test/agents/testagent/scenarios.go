@@ -26,9 +26,9 @@ type Scenario struct {
 
 // ScenarioFastAPIReactTF is a full-stack Python FastAPI + TypeScript React + Terraform AWS/GCP template.
 var ScenarioFastAPIReactTF = Scenario{
-	Name:        "fastapi-react-tf",
-	Description: "Python FastAPI Backend, React TypeScript Frontend, and Terraform Cloud Infrastructure",
-	Prompt:      "Initialize fg repository, stage backend, frontend, and infra components, link cross-boundary contracts, and produce a committed Merkle root.",
+	Name:               "fastapi-react-tf",
+	Description:        "Python FastAPI Backend, React TypeScript Frontend, and Terraform Cloud Infrastructure",
+	Prompt:             "Initialize fg repository, stage backend, frontend, and infra components, link cross-boundary contracts, and produce a committed Merkle root.",
 	ExpectedComponents: []string{"backend", "frontend", "infra"},
 	TargetContracts: []CrossBoundaryContractSpec{
 		{
@@ -155,9 +155,9 @@ resource "google_cloud_run_service_iam_member" "invoker" {
 
 // ScenarioGoGinVueTF is a full-stack Go Gin + Vue 3 TypeScript + Terraform template.
 var ScenarioGoGinVueTF = Scenario{
-	Name:        "go-gin-vue-tf",
-	Description: "Go Gin REST Backend, Vue 3 TypeScript Frontend, and Terraform Cloud Run Infra",
-	Prompt:      "Initialize repository, ingest Go backend and Vue frontend, establish route linkage and commit universe head.",
+	Name:               "go-gin-vue-tf",
+	Description:        "Go Gin REST Backend, Vue 3 TypeScript Frontend, and Terraform Cloud Run Infra",
+	Prompt:             "Initialize repository, ingest Go backend and Vue frontend, establish route linkage and commit universe head.",
 	ExpectedComponents: []string{"backend", "frontend", "infra"},
 	TargetContracts: []CrossBoundaryContractSpec{
 		{
@@ -282,9 +282,9 @@ resource "google_cloud_run_v2_service" "inventory_service" {
 
 // ScenarioRustAxumReactPostgresTF is a multi-tier Rust Axum + React + SQL Postgres + Terraform template.
 var ScenarioRustAxumReactPostgresTF = Scenario{
-	Name:        "rust-axum-react-postgres-tf",
-	Description: "Rust Axum Backend, React TypeScript Frontend, SQL DDL Schema, and Terraform Infrastructure",
-	Prompt:      "Initialize repository, parse Rust Axum endpoints, link SQL table schema and React frontend, and build target.",
+	Name:               "rust-axum-react-postgres-tf",
+	Description:        "Rust Axum Backend, React TypeScript Frontend, SQL DDL Schema, and Terraform Infrastructure",
+	Prompt:             "Initialize repository, parse Rust Axum endpoints, link SQL table schema and React frontend, and build target.",
 	ExpectedComponents: []string{"backend", "frontend", "db", "infra"},
 	TargetContracts: []CrossBoundaryContractSpec{
 		{

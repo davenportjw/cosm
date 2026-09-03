@@ -20,22 +20,75 @@ Technical specification of Cosm's internal data structures, Merkle-DAG algorithm
 
 ---
 
-## 2. Core AST & Merkle-DAG Models (`pkg/core/schema.go`)
+## 2. Four Boundary Tiers in AST Version Control
+
+Cosm defines boundaries based on **semantic cohesion** and **compilation scopes** rather than directory trees:
+
+1. **Closed Compilation Boundary (Project Scope)**:
+   * Defined by language build manifests (`go.mod`, `package.json`, `Cargo.toml`, `main.tf`).
+   * Internal symbol references resolve via language AST parsers; no explicit wire schema required.
+2. **Architectural Component Boundary**:
+   * Cohesive symbol subgraphs within a project (`services/auth`, `frontend/ui`).
+   * Grouped into a `ComponentNode` with an individual Merkle root.
+3. **Cross-Domain Contract Boundary**:
+   * Crosses runtime, language, or network boundaries (REST APIs, gRPC RPCs, SQL DDL, Terraform variables).
+   * Backed by a content-addressed `ContractSchemaID`. Breaking changes are statically rejected at commit time.
+4. **Federated Multi-Repo Boundary**:
+   * Autonomous repositories owned by different teams or stored in separate forges.
+   * Bound together via URIs (`cosm://<org>/<repo>/<component>@<hash>`).
+
+---
+
+## 3. Core AST & Merkle-DAG Models (`pkg/core/schema.go`)
+
+### `TokenTelemetry`
+Captures granular LLM token consumption metrics, latency, and financial costs:
+```go
+type TokenTelemetry struct {
+    PromptTokens     int64   `json:"prompt_tokens,omitempty"`
+    CompletionTokens int64   `json:"completion_tokens,omitempty"`
+    ReasoningTokens  int64   `json:"reasoning_tokens,omitempty"`
+    CachedTokens     int64   `json:"cached_tokens,omitempty"`
+    TotalTokens      int64   `json:"total_tokens,omitempty"`
+    CostUSD          float64 `json:"cost_usd,omitempty"`
+    LatencyMs        int64   `json:"latency_ms,omitempty"`
+    TTFTMs           int64   `json:"ttft_ms,omitempty"`
+}
+```
+
+---
+
+### `TraceCarrier`
+Carries W3C distributed trace context and OpenTelemetry span correlation:
+```go
+type TraceCarrier struct {
+    TraceID      string            `json:"trace_id,omitempty"`
+    SpanID       string            `json:"span_id,omitempty"`
+    TraceFlags   string            `json:"trace_flags,omitempty"`
+    ParentSpanID string            `json:"parent_span_id,omitempty"`
+    TraceState   string            `json:"trace_state,omitempty"`
+    Attributes   map[string]string `json:"attributes,omitempty"`
+}
+```
+
+---
 
 ### `LineageEnvelope`
 Stores unbroken causal provenance metadata bound to every mutation:
 ```go
 type LineageEnvelope struct {
-    UserID              string    `json:"user_id,omitempty"`
-    UserPrompt          string    `json:"user_prompt,omitempty"`
-    SessionID           string    `json:"session_id,omitempty"`
-    OrchestratorAgentID string    `json:"orchestrator_agent_id,omitempty"`
-    ExecutingAgentID    string    `json:"executing_agent_id,omitempty"`
-    LLMVersion          string    `json:"llm_version,omitempty"`
-    GenerationParams    string    `json:"generation_params,omitempty"`
-    Intent              string    `json:"intent,omitempty"`
-    Timestamp           time.Time `json:"timestamp"`
-    SignatureEd25519    []byte    `json:"signature_ed25519,omitempty"`
+    UserID              string         `json:"user_id,omitempty"`
+    UserPrompt          string         `json:"user_prompt,omitempty"`
+    SessionID           string         `json:"session_id,omitempty"`
+    OrchestratorAgentID string         `json:"orchestrator_agent_id,omitempty"`
+    ExecutingAgentID    string         `json:"executing_agent_id,omitempty"`
+    LLMVersion          string         `json:"llm_version,omitempty"`
+    GenerationParams    string         `json:"generation_params,omitempty"`
+    Intent              string         `json:"intent,omitempty"`
+    Timestamp           time.Time      `json:"timestamp"`
+    Tokens              TokenTelemetry `json:"tokens,omitempty"`
+    Trace               TraceCarrier   `json:"trace,omitempty"`
+    SignatureEd25519    []byte         `json:"signature_ed25519,omitempty"`
 }
 ```
 
@@ -112,7 +165,41 @@ type WorkspaceManifestNode struct {
 
 ---
 
-## 3. Distributed CRDT & Collaboration Models (`pkg/distributed/`)
+## 4. Federated Multi-Repo Models (`pkg/core/schema.go`)
+
+```go
+// FederatedSymbolRef uniquely identifies an AST symbol across the global federation mesh.
+type FederatedSymbolRef struct {
+    OrgSlug        string `json:"org_slug"`        // e.g. "acme-corp"
+    CosmName       string `json:"cosm_name"`       // e.g. "payment-backend"
+    UniverseID     string `json:"universe_id"`     // e.g. "universe-main"
+    SymbolID       string `json:"symbol_id"`       // Content-addressed SHA-256
+    Identifier     string `json:"identifier"`      // e.g. "services/billing::ChargeCard"
+}
+
+// FederatedCrossBoundaryEdge defines typed dependencies linking distinct repositories.
+type FederatedCrossBoundaryEdge struct {
+    Source           FederatedSymbolRef `json:"source"`
+    Target           FederatedSymbolRef `json:"target"`
+    Type             EdgeType           `json:"type"`             // CONSUMES_API, IMPLEMENTS_RPC, etc.
+    ContractSchemaID string             `json:"contract_schema_id"` // SHA-256 hash of interface contract
+    Lineage          LineageEnvelope    `json:"lineage"`
+}
+
+// FederatedManifestNode represents a composite super-DAG snapshot linking multiple independent Cosms.
+type FederatedManifestNode struct {
+    FederationID   string                       `json:"federation_id"`
+    MerkleRootHash string                       `json:"merkle_root_hash"`
+    CosmHeads      map[string]string            `json:"cosm_heads"`      // "org/repo" -> Manifest Hash
+    CrossEdges     []FederatedCrossBoundaryEdge `json:"cross_edges"`
+    CreatedAt      time.Time                    `json:"created_at"`
+    Lineage        LineageEnvelope              `json:"lineage"`
+}
+```
+
+---
+
+## 5. Distributed CRDT & Collaboration Models (`pkg/distributed/`)
 
 ### `ProposalCOB` (Collaborative Object)
 State-based CRDT representing decentralized proposals with Lamport clocks:
@@ -174,7 +261,7 @@ type StackedProposal struct {
 
 ---
 
-## 4. Deterministic Hashing & Merkle Mathematics (`pkg/core/hasher.go`)
+## 6. Deterministic Hashing & Merkle Mathematics (`pkg/core/hasher.go`)
 
 Cosm relies on a deterministic, collision-resistant **SHA-256** Merkle-DAG:
 
@@ -224,11 +311,11 @@ flowchart TD
 
 ---
 
-## 5. Storage Architecture & On-Disk Layout (`pkg/storage/`)
+## 7. Storage Architecture & On-Disk Layout (`pkg/storage/`)
 
 ### Directory Layout (`.cosm/`)
 ```text
-.cosm/ (or .fg/)
+.cosm/
 ├── objects/                     # Content-addressed immutable blob store
 │   ├── 0a/
 │   │   └── 0a8f9c2d1b...bin     # Atomic fsync + rename written blobs

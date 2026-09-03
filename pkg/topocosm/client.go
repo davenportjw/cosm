@@ -26,10 +26,11 @@ func (rt *inProcessRoundTripper) RoundTrip(req *http.Request) (*http.Response, e
 
 // HubClient provides client SDK bindings for interacting with topocosm.dev or a local hub server.
 type HubClient struct {
-	baseURL    string
-	callerDID  string
-	httpClient *http.Client
-	handler    http.Handler
+	baseURL     string
+	callerDID   string
+	bearerToken string
+	httpClient  *http.Client
+	handler     http.Handler
 }
 
 // NewHubClient creates a new HTTP network client connecting to a remote Topocosm Hub.
@@ -42,6 +43,16 @@ func NewHubClient(baseURL, callerDID string) *HubClient {
 		callerDID:  callerDID,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+// SetBearerToken sets the personal access token for Bearer authentication.
+func (c *HubClient) SetBearerToken(token string) {
+	c.bearerToken = token
+}
+
+// BearerToken returns the current token.
+func (c *HubClient) BearerToken() string {
+	return c.bearerToken
 }
 
 // NewInProcessHubClient creates a zero-latency in-process client against an HTTP handler.
@@ -84,6 +95,9 @@ func (c *HubClient) doRequest(ctx context.Context, method, path string, body any
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Cosm-DID", c.callerDID)
+	if c.bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.bearerToken)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -317,4 +331,66 @@ func (c *HubClient) GetBlackboard(ctx context.Context, orgSlug, cosmName string)
 		return nil, err
 	}
 	return res, nil
+}
+
+// CreatePAT generates a new personal access token on the hub.
+func (c *HubClient) CreatePAT(ctx context.Context, name string, scopes []string, ttlDays int) (map[string]any, error) {
+	req := map[string]any{
+		"token_name": name,
+		"scopes":     scopes,
+		"ttl_days":   ttlDays,
+	}
+	var res map[string]any
+	if err := c.doRequest(ctx, http.MethodPost, "/api/v1/user/tokens", req, &res); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// ListPATs retrieves all personal access tokens for the authenticated user.
+func (c *HubClient) ListPATs(ctx context.Context) ([]map[string]any, error) {
+	var res struct {
+		Tokens []map[string]any `json:"tokens"`
+	}
+	if err := c.doRequest(ctx, http.MethodGet, "/api/v1/user/tokens", nil, &res); err != nil {
+		return nil, err
+	}
+	return res.Tokens, nil
+}
+
+// RevokePAT revokes a personal access token by its SHA-256 hash.
+func (c *HubClient) RevokePAT(ctx context.Context, tokenHash string) error {
+	path := fmt.Sprintf("/api/v1/user/tokens/%s", tokenHash)
+	return c.doRequest(ctx, http.MethodDelete, path, nil, nil)
+}
+
+// GetUserPublicKey fetches recipient public key and DID for envelope encryption.
+func (c *HubClient) GetUserPublicKey(ctx context.Context, email string) (map[string]any, error) {
+	var res map[string]any
+	path := fmt.Sprintf("/api/v1/users/%s/pubkey", email)
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &res); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// ShareCosm registers a wrapped DEK grant for a collaborator.
+func (c *HubClient) ShareCosm(ctx context.Context, orgSlug, cosmName, recipientEmail, accessLevel string, encryptedDEK []byte) error {
+	req := map[string]any{
+		"recipient_email": recipientEmail,
+		"access_level":    accessLevel,
+		"encrypted_dek":   encryptedDEK,
+	}
+	path := fmt.Sprintf("/api/v1/cosms/%s/%s/share", orgSlug, cosmName)
+	return c.doRequest(ctx, http.MethodPost, path, req, nil)
+}
+
+// ListAccessGrants lists all access grants on a cosm.
+func (c *HubClient) ListAccessGrants(ctx context.Context, orgSlug, cosmName string) ([]map[string]any, error) {
+	var grants []map[string]any
+	path := fmt.Sprintf("/api/v1/cosms/%s/%s/grants", orgSlug, cosmName)
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &grants); err != nil {
+		return nil, err
+	}
+	return grants, nil
 }

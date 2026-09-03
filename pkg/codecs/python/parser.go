@@ -10,11 +10,11 @@ import (
 
 // PythonParser parses Python source code into AST symbol nodes.
 type PythonParser struct {
-	funcRegex    *regexp.Regexp
-	classRegex   *regexp.Regexp
-	routeRegex   *regexp.Regexp
-	envRegex     *regexp.Regexp
-	importRegex  *regexp.Regexp
+	funcRegex   *regexp.Regexp
+	classRegex  *regexp.Regexp
+	routeRegex  *regexp.Regexp
+	envRegex    *regexp.Regexp
+	importRegex *regexp.Regexp
 }
 
 // NewPythonParser constructs a new Python AST parser.
@@ -30,13 +30,13 @@ func NewPythonParser() *PythonParser {
 
 // PythonParseResult contains parsed symbols and metadata from a Python source file.
 type PythonParseResult struct {
-	Filename       string
-	Functions      []*core.ASTSymbolNode
-	Classes        []*core.ASTSymbolNode
-	Routes         []*core.ASTSymbolNode
-	Imports        []string
-	EnvVars        []string
-	AllSymbols     []*core.ASTSymbolNode
+	Filename   string
+	Functions  []*core.ASTSymbolNode
+	Classes    []*core.ASTSymbolNode
+	Routes     []*core.ASTSymbolNode
+	Imports    []string
+	EnvVars    []string
+	AllSymbols []*core.ASTSymbolNode
 }
 
 // ParseSource parses Python source bytes into symbol nodes with attached lineage.

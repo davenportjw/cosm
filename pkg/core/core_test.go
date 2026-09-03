@@ -152,6 +152,17 @@ func TestASTSymbolNodeDeterministicHashing(t *testing.T) {
 		t.Fatalf("expected different hashes for modified AST payload")
 	}
 
+	// Verify timestamp invariance (essential for sibling deduplication across commits)
+	node4 := *node1
+	node4.Lineage.Timestamp = time.Now().Add(24 * time.Hour)
+	hash4, err4 := core.HashASTSymbolNode(&node4)
+	if err4 != nil {
+		t.Fatalf("failed to hash node4: %v", err4)
+	}
+	if hash1 != hash4 {
+		t.Fatalf("expected identical AST symbol hashes despite different timestamps: %s vs %s", hash1, hash4)
+	}
+
 	// Validate method
 	if err := node1.Validate(); err != nil {
 		t.Fatalf("node1 should be valid: %v", err)

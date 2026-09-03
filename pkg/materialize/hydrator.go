@@ -7,38 +7,68 @@ import (
 	"strings"
 
 	"github.com/cosmscm/cosm/pkg/codecs/cpp"
+	"github.com/cosmscm/cosm/pkg/codecs/csharp"
+	"github.com/cosmscm/cosm/pkg/codecs/dockerfile"
+	"github.com/cosmscm/cosm/pkg/codecs/elixir"
 	"github.com/cosmscm/cosm/pkg/codecs/golang"
+	"github.com/cosmscm/cosm/pkg/codecs/graphql"
 	"github.com/cosmscm/cosm/pkg/codecs/hcl"
 	"github.com/cosmscm/cosm/pkg/codecs/java"
+	"github.com/cosmscm/cosm/pkg/codecs/kotlin"
+	"github.com/cosmscm/cosm/pkg/codecs/php"
 	"github.com/cosmscm/cosm/pkg/codecs/protobuf"
+	"github.com/cosmscm/cosm/pkg/codecs/ruby"
 	"github.com/cosmscm/cosm/pkg/codecs/rust"
 	"github.com/cosmscm/cosm/pkg/codecs/sql"
+	"github.com/cosmscm/cosm/pkg/codecs/swift"
 	"github.com/cosmscm/cosm/pkg/codecs/typescript"
+	"github.com/cosmscm/cosm/pkg/codecs/wasm"
+	"github.com/cosmscm/cosm/pkg/codecs/zig"
 	"github.com/cosmscm/cosm/pkg/core"
 )
 
 // Hydrator reconstitutes raw AST symbol nodes back into clean, formatted source text
 // for all supported polyglot languages.
 type Hydrator struct {
-	rustHydrator  *rust.RustHydrator
-	javaHydrator  *java.JavaHydrator
-	sqlHydrator   *sql.SQLHydrator
-	protoHydrator *protobuf.ProtobufHydrator
-	cppHydrator   *cpp.CppHydrator
+	rustHydrator       *rust.RustHydrator
+	javaHydrator       *java.JavaHydrator
+	sqlHydrator        *sql.SQLHydrator
+	protoHydrator      *protobuf.ProtobufHydrator
+	cppHydrator        *cpp.CppHydrator
+	swiftHydrator      *swift.SwiftHydrator
+	kotlinHydrator     *kotlin.KotlinHydrator
+	wasmHydrator       *wasm.WasmHydrator
+	zigHydrator        *zig.ZigHydrator
+	csharpHydrator     *csharp.CSharpHydrator
+	graphqlHydrator    *graphql.GraphQLHydrator
+	rubyHydrator       *ruby.RubyHydrator
+	phpHydrator        *php.PHPHydrator
+	elixirHydrator     *elixir.ElixirHydrator
+	dockerfileHydrator *dockerfile.DockerfileHydrator
 }
 
 // NewHydrator returns a new Hydrator instance.
 func NewHydrator() *Hydrator {
 	return &Hydrator{
-		rustHydrator:  rust.NewRustHydrator(),
-		javaHydrator:  java.NewJavaHydrator(),
-		sqlHydrator:   sql.NewSQLHydrator(),
-		protoHydrator: protobuf.NewProtobufHydrator(),
-		cppHydrator:   cpp.NewCppHydrator(),
+		rustHydrator:       rust.NewRustHydrator(),
+		javaHydrator:       java.NewJavaHydrator(),
+		sqlHydrator:        sql.NewSQLHydrator(),
+		protoHydrator:      protobuf.NewProtobufHydrator(),
+		cppHydrator:        cpp.NewCppHydrator(),
+		swiftHydrator:      swift.NewSwiftHydrator(),
+		kotlinHydrator:     kotlin.NewKotlinHydrator(),
+		wasmHydrator:       wasm.NewWasmHydrator(),
+		zigHydrator:        zig.NewZigHydrator(),
+		csharpHydrator:     csharp.NewCSharpHydrator(),
+		graphqlHydrator:    graphql.NewGraphQLHydrator(),
+		rubyHydrator:       ruby.NewRubyHydrator(),
+		phpHydrator:        php.NewPHPHydrator(),
+		elixirHydrator:     elixir.NewElixirHydrator(),
+		dockerfileHydrator: dockerfile.NewDockerfileHydrator(),
 	}
 }
 
-// HydrateSymbol reconstitutes a single ASTSymbolNode into source text across all 9+ languages.
+// HydrateSymbol reconstitutes a single ASTSymbolNode into source text across all supported languages.
 func (h *Hydrator) HydrateSymbol(node *core.ASTSymbolNode) (string, error) {
 	if node == nil {
 		return "", fmt.Errorf("node cannot be nil")
@@ -63,6 +93,26 @@ func (h *Hydrator) HydrateSymbol(node *core.ASTSymbolNode) (string, error) {
 		return h.protoHydrator.HydrateSymbol(node)
 	case core.LangCpp, core.LangC:
 		return h.cppHydrator.HydrateSymbol(node)
+	case core.LangSwift:
+		return h.swiftHydrator.HydrateSymbol(node)
+	case core.LangKotlin:
+		return h.kotlinHydrator.HydrateSymbol(node)
+	case core.LangWasm:
+		return h.wasmHydrator.HydrateSymbol(node)
+	case core.LangZig:
+		return h.zigHydrator.HydrateSymbol(node)
+	case core.LangCSharp:
+		return h.csharpHydrator.HydrateSymbol(node)
+	case core.LangGraphQL:
+		return h.graphqlHydrator.HydrateSymbol(node)
+	case core.LangRuby:
+		return h.rubyHydrator.HydrateSymbol(node)
+	case core.LangPHP:
+		return h.phpHydrator.HydrateSymbol(node)
+	case core.LangElixir:
+		return h.elixirHydrator.HydrateSymbol(node)
+	case core.LangDockerfile:
+		return h.dockerfileHydrator.HydrateSymbol(node)
 	default:
 		if len(node.ASTPayload) > 0 {
 			return string(node.ASTPayload), nil
@@ -329,11 +379,17 @@ func (h *Hydrator) HydrateComponent(comp *core.ComponentNode, symbolMap map[stri
 
 	switch comp.Language {
 	case core.LangGo:
-		filePath := comp.Metadata["dir_path"]
-		if filePath == "" {
-			filePath = fmt.Sprintf("services/%s", comp.Name)
+		mainFile := comp.Metadata["file_path"]
+		if mainFile == "" {
+			dirPath := comp.Metadata["dir_path"]
+			if dirPath == "" {
+				dirPath = fmt.Sprintf("services/%s", comp.Name)
+			}
+			mainFile = fmt.Sprintf("%s/main.go", strings.TrimSuffix(dirPath, "/"))
 		}
-		mainFile := fmt.Sprintf("%s/main.go", strings.TrimSuffix(filePath, "/"))
+		if !strings.HasSuffix(mainFile, ".go") {
+			mainFile = fmt.Sprintf("%s/main.go", strings.TrimSuffix(mainFile, "/"))
+		}
 		pkgName := comp.Metadata["package_name"]
 		if pkgName == "" {
 			pkgName = "main"
@@ -354,7 +410,19 @@ func (h *Hydrator) HydrateComponent(comp *core.ComponentNode, symbolMap map[stri
 		}
 
 		bodyStr := bodyBuilder.String()
-		var imports []string
+		importSet := make(map[string]bool)
+		if impStr, ok := comp.Metadata["imports"]; ok && impStr != "" {
+			for _, imp := range strings.Split(impStr, ",") {
+				imp = strings.TrimSpace(imp)
+				if imp != "" {
+					if !strings.HasPrefix(imp, "\"") {
+						imp = fmt.Sprintf("\"%s\"", imp)
+					}
+					importSet[imp] = true
+				}
+			}
+		}
+
 		candidates := map[string]string{
 			"context.": "\"context\"",
 			"json.":    "\"encoding/json\"",
@@ -362,11 +430,21 @@ func (h *Hydrator) HydrateComponent(comp *core.ComponentNode, symbolMap map[stri
 			"http.":    "\"net/http\"",
 			"os.":      "\"os\"",
 			"time.":    "\"time\"",
+			"io.":      "\"io\"",
+			"strings.": "\"strings\"",
+			"bytes.":   "\"bytes\"",
+			"sync.":    "\"sync\"",
+			"log.":     "\"log\"",
+			"errors.":  "\"errors\"",
 		}
 		for pattern, imp := range candidates {
 			if strings.Contains(bodyStr, pattern) {
-				imports = append(imports, imp)
+				importSet[imp] = true
 			}
+		}
+		var imports []string
+		for imp := range importSet {
+			imports = append(imports, imp)
 		}
 		sort.Strings(imports)
 
@@ -422,22 +500,29 @@ func (h *Hydrator) HydrateComponent(comp *core.ComponentNode, symbolMap map[stri
 			filePath = fmt.Sprintf("frontend/src/%s.tsx", comp.Name)
 		}
 
-		var sb strings.Builder
-		sb.WriteString("import React, { useState, useEffect } from 'react';\n\n")
-
+		var bodyBuilder strings.Builder
+		hasReact := false
 		for _, symID := range comp.SymbolNodes {
 			sym, ok := symbolMap[symID]
 			if !ok {
 				continue
 			}
+			if sym.NodeType == "ReactComponent" || strings.Contains(string(sym.ASTPayload), "React") {
+				hasReact = true
+			}
 			code, err := h.HydrateSymbol(sym)
 			if err != nil {
 				return nil, err
 			}
-			sb.WriteString(code)
-			sb.WriteString("\n")
+			bodyBuilder.WriteString(code)
+			bodyBuilder.WriteString("\n")
 		}
 
+		var sb strings.Builder
+		if hasReact {
+			sb.WriteString("import React, { useState, useEffect } from 'react';\n\n")
+		}
+		sb.WriteString(bodyBuilder.String())
 		files[filePath] = []byte(sb.String())
 
 	case core.LangPython:
@@ -449,10 +534,7 @@ func (h *Hydrator) HydrateComponent(comp *core.ComponentNode, symbolMap map[stri
 			filePath = fmt.Sprintf("%s/main.py", strings.TrimSuffix(filePath, "/"))
 		}
 
-		var sb strings.Builder
-		sb.WriteString("# Python Service\n")
-		sb.WriteString(fmt.Sprintf("# Component: %s\n\n", comp.Name))
-
+		var bodyBuilder strings.Builder
 		for _, symID := range comp.SymbolNodes {
 			sym, ok := symbolMap[symID]
 			if !ok {
@@ -462,9 +544,18 @@ func (h *Hydrator) HydrateComponent(comp *core.ComponentNode, symbolMap map[stri
 			if err != nil {
 				return nil, err
 			}
-			sb.WriteString(code)
-			sb.WriteString("\n\n")
+			bodyBuilder.WriteString(code)
+			bodyBuilder.WriteString("\n\n")
 		}
+		bodyStr := bodyBuilder.String()
+
+		var sb strings.Builder
+		sb.WriteString("# Python Service\n")
+		sb.WriteString(fmt.Sprintf("# Component: %s\n\n", comp.Name))
+		if (strings.Contains(bodyStr, "FastAPI") || strings.Contains(bodyStr, "@app.")) && !strings.Contains(bodyStr, "import FastAPI") {
+			sb.WriteString("from fastapi import FastAPI\napp = FastAPI()\n\n")
+		}
+		sb.WriteString(bodyStr)
 
 		files[filePath] = []byte(sb.String())
 
@@ -572,6 +663,211 @@ func (h *Hydrator) HydrateComponent(comp *core.ComponentNode, symbolMap map[stri
 			}
 			sb.WriteString(code)
 			sb.WriteString("\n")
+		}
+		files[filePath] = []byte(sb.String())
+
+	case core.LangSwift:
+		filePath := comp.Metadata["file_path"]
+		if filePath == "" {
+			filePath = fmt.Sprintf("Sources/%s.swift", comp.Name)
+		}
+
+		var sb strings.Builder
+		for _, symID := range comp.SymbolNodes {
+			sym, ok := symbolMap[symID]
+			if !ok {
+				continue
+			}
+			code, err := h.HydrateSymbol(sym)
+			if err != nil {
+				return nil, err
+			}
+			sb.WriteString(code)
+			sb.WriteString("\n")
+		}
+		files[filePath] = []byte(sb.String())
+
+	case core.LangKotlin:
+		filePath := comp.Metadata["file_path"]
+		if filePath == "" {
+			filePath = fmt.Sprintf("src/main/kotlin/%s.kt", comp.Name)
+		}
+
+		var sb strings.Builder
+		for _, symID := range comp.SymbolNodes {
+			sym, ok := symbolMap[symID]
+			if !ok {
+				continue
+			}
+			code, err := h.HydrateSymbol(sym)
+			if err != nil {
+				return nil, err
+			}
+			sb.WriteString(code)
+			sb.WriteString("\n")
+		}
+		files[filePath] = []byte(sb.String())
+
+	case core.LangRuby:
+		filePath := comp.Metadata["file_path"]
+		if filePath == "" {
+			filePath = fmt.Sprintf("lib/%s.rb", comp.Name)
+		}
+		var sb strings.Builder
+		for _, symID := range comp.SymbolNodes {
+			sym, ok := symbolMap[symID]
+			if !ok {
+				continue
+			}
+			code, err := h.HydrateSymbol(sym)
+			if err != nil {
+				return nil, err
+			}
+			sb.WriteString(code)
+			sb.WriteString("\n")
+		}
+		files[filePath] = []byte(sb.String())
+
+	case core.LangPHP:
+		filePath := comp.Metadata["file_path"]
+		if filePath == "" {
+			filePath = fmt.Sprintf("src/%s.php", comp.Name)
+		}
+		var sb strings.Builder
+		sb.WriteString("<?php\n\n")
+		if ns := comp.Metadata["namespace"]; ns != "" {
+			sb.WriteString(fmt.Sprintf("namespace %s;\n\n", ns))
+		}
+		for _, symID := range comp.SymbolNodes {
+			sym, ok := symbolMap[symID]
+			if !ok {
+				continue
+			}
+			code, err := h.HydrateSymbol(sym)
+			if err != nil {
+				return nil, err
+			}
+			sb.WriteString(code)
+			sb.WriteString("\n")
+		}
+		files[filePath] = []byte(sb.String())
+
+	case core.LangElixir:
+		filePath := comp.Metadata["file_path"]
+		if filePath == "" {
+			filePath = fmt.Sprintf("lib/%s.ex", comp.Name)
+		}
+		var sb strings.Builder
+		for _, symID := range comp.SymbolNodes {
+			sym, ok := symbolMap[symID]
+			if !ok {
+				continue
+			}
+			code, err := h.HydrateSymbol(sym)
+			if err != nil {
+				return nil, err
+			}
+			sb.WriteString(code)
+			sb.WriteString("\n")
+		}
+		files[filePath] = []byte(sb.String())
+
+	case core.LangCSharp:
+		filePath := comp.Metadata["file_path"]
+		if filePath == "" {
+			filePath = fmt.Sprintf("src/%s.cs", comp.Name)
+		}
+		var sb strings.Builder
+		for _, symID := range comp.SymbolNodes {
+			sym, ok := symbolMap[symID]
+			if !ok {
+				continue
+			}
+			code, err := h.HydrateSymbol(sym)
+			if err != nil {
+				return nil, err
+			}
+			sb.WriteString(code)
+			sb.WriteString("\n")
+		}
+		files[filePath] = []byte(sb.String())
+
+	case core.LangGraphQL:
+		filePath := comp.Metadata["file_path"]
+		if filePath == "" {
+			filePath = fmt.Sprintf("schema/%s.graphql", comp.Name)
+		}
+		var sb strings.Builder
+		for _, symID := range comp.SymbolNodes {
+			sym, ok := symbolMap[symID]
+			if !ok {
+				continue
+			}
+			code, err := h.HydrateSymbol(sym)
+			if err != nil {
+				return nil, err
+			}
+			sb.WriteString(code)
+			sb.WriteString("\n")
+		}
+		files[filePath] = []byte(sb.String())
+
+	case core.LangWasm:
+		filePath := comp.Metadata["file_path"]
+		if filePath == "" {
+			filePath = fmt.Sprintf("wasm/%s.wat", comp.Name)
+		}
+		var sb strings.Builder
+		for _, symID := range comp.SymbolNodes {
+			sym, ok := symbolMap[symID]
+			if !ok {
+				continue
+			}
+			code, err := h.HydrateSymbol(sym)
+			if err != nil {
+				return nil, err
+			}
+			sb.WriteString(code)
+			sb.WriteString("\n")
+		}
+		files[filePath] = []byte(sb.String())
+
+	case core.LangZig:
+		filePath := comp.Metadata["file_path"]
+		if filePath == "" {
+			filePath = fmt.Sprintf("src/%s.zig", comp.Name)
+		}
+		var sb strings.Builder
+		for _, symID := range comp.SymbolNodes {
+			sym, ok := symbolMap[symID]
+			if !ok {
+				continue
+			}
+			code, err := h.HydrateSymbol(sym)
+			if err != nil {
+				return nil, err
+			}
+			sb.WriteString(code)
+			sb.WriteString("\n")
+		}
+		files[filePath] = []byte(sb.String())
+
+	case core.LangDockerfile:
+		filePath := comp.Metadata["file_path"]
+		if filePath == "" {
+			filePath = "Dockerfile"
+		}
+		var sb strings.Builder
+		for _, symID := range comp.SymbolNodes {
+			sym, ok := symbolMap[symID]
+			if !ok {
+				continue
+			}
+			code, err := h.HydrateSymbol(sym)
+			if err != nil {
+				return nil, err
+			}
+			sb.WriteString(code)
 		}
 		files[filePath] = []byte(sb.String())
 

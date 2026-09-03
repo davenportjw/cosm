@@ -75,7 +75,7 @@ func (l *CrossBoundaryLinker) LinkWorkspace(components []*ComponentNode, symbolN
 
 	for _, node := range symbolNodes {
 		switch node.Language {
-		case LangGo, LangPython, LangRust, LangJava, LangCpp, LangC:
+		case LangGo, LangPython, LangRust, LangJava, LangCpp, LangC, LangKotlin, LangCSharp, LangRuby, LangPHP, LangElixir:
 			// Routes
 			if node.NodeType == "RouteBinding" || (node.ASTMetadata != nil && node.ASTMetadata["route_path"] != "") {
 				apiRoutes = append(apiRoutes, node)
@@ -92,8 +92,12 @@ func (l *CrossBoundaryLinker) LinkWorkspace(components []*ComponentNode, symbolN
 			if isRPCImplementor(node) {
 				rpcImplementors = append(rpcImplementors, node)
 			}
+			// API Clients in Kotlin
+			if node.NodeType == "ApiClientCall" {
+				apiConsumers = append(apiConsumers, node)
+			}
 
-		case LangTypeScript:
+		case LangTypeScript, LangSwift:
 			if node.NodeType == "ApiClientCall" {
 				apiConsumers = append(apiConsumers, node)
 			}
@@ -113,6 +117,18 @@ func (l *CrossBoundaryLinker) LinkWorkspace(components []*ComponentNode, symbolN
 				hclResources = append(hclResources, node)
 			} else if node.NodeType == "VariableBlock" {
 				hclVariables = append(hclVariables, node)
+			}
+
+		case LangDockerfile:
+			if node.NodeType == "EnvBinding" {
+				hclVariables = append(hclVariables, node)
+			} else if node.NodeType == "BaseImage" || node.NodeType == "PortExpose" {
+				hclResources = append(hclResources, node)
+			}
+
+		case LangGraphQL:
+			if node.NodeType == "FieldDefinition" || node.NodeType == "ObjectType" || node.NodeType == "Operation" {
+				apiRoutes = append(apiRoutes, node)
 			}
 		}
 	}

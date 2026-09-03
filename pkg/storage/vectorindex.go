@@ -20,18 +20,18 @@ const DefaultVectorDimension = 128
 
 // VectorEntry stores a semantic embedding vector alongside its intent, prompt, and AST node association.
 type VectorEntry struct {
-	ID         string          `json:"id"`
-	NodeID     string          `json:"node_id"`
-	Intent     string          `json:"intent"`
-	UserPrompt string          `json:"user_prompt,omitempty"`
-	Rationale  string          `json:"rationale,omitempty"`
-	Tags       []string        `json:"tags,omitempty"`
-	Language   core.Language   `json:"language,omitempty"`
-	NodeType   string          `json:"node_type,omitempty"`
-	AgentID    string          `json:"agent_id,omitempty"`
-	SessionID  string          `json:"session_id,omitempty"`
-	Vector     []float32       `json:"vector"`
-	CreatedAt  time.Time       `json:"created_at"`
+	ID         string        `json:"id"`
+	NodeID     string        `json:"node_id"`
+	Intent     string        `json:"intent"`
+	UserPrompt string        `json:"user_prompt,omitempty"`
+	Rationale  string        `json:"rationale,omitempty"`
+	Tags       []string      `json:"tags,omitempty"`
+	Language   core.Language `json:"language,omitempty"`
+	NodeType   string        `json:"node_type,omitempty"`
+	AgentID    string        `json:"agent_id,omitempty"`
+	SessionID  string        `json:"session_id,omitempty"`
+	Vector     []float32     `json:"vector"`
+	CreatedAt  time.Time     `json:"created_at"`
 }
 
 // VectorSearchResult holds a matched VectorEntry and its cosine similarity score.
@@ -126,8 +126,8 @@ type VectorIndex struct {
 	dimension int
 	embedder  EmbeddingProvider
 	mu        sync.RWMutex
-	entries   map[string]VectorEntry      // entry_id -> VectorEntry
-	byNodeID  map[string][]string         // node_id -> []entry_id
+	entries   map[string]VectorEntry // entry_id -> VectorEntry
+	byNodeID  map[string][]string    // node_id -> []entry_id
 }
 
 type vectorDBSnapshot struct {

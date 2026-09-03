@@ -25,13 +25,13 @@ type HCLAttribute struct {
 
 // HCLBlock represents an HCL block (e.g. resource "type" "name", variable "name", etc.).
 type HCLBlock struct {
-	BlockType   string                  `json:"block_type"` // e.g. "resource", "variable", "output", "provider", "module", "data", "terraform"
-	Labels      []string                `json:"labels"`     // e.g. ["google_cloud_run_service", "api"]
-	Attributes  map[string]HCLAttribute `json:"attributes"`
-	NestedBlocks []*HCLBlock            `json:"nested_blocks,omitempty"`
-	LineStart   int                     `json:"line_start"`
-	LineEnd     int                     `json:"line_end"`
-	RawSource   string                  `json:"raw_source,omitempty"`
+	BlockType    string                  `json:"block_type"` // e.g. "resource", "variable", "output", "provider", "module", "data", "terraform"
+	Labels       []string                `json:"labels"`     // e.g. ["google_cloud_run_service", "api"]
+	Attributes   map[string]HCLAttribute `json:"attributes"`
+	NestedBlocks []*HCLBlock             `json:"nested_blocks,omitempty"`
+	LineStart    int                     `json:"line_start"`
+	LineEnd      int                     `json:"line_end"`
+	RawSource    string                  `json:"raw_source,omitempty"`
 }
 
 // FullIdentifier returns canonical identifier e.g. "resource.google_cloud_run_service.api".
@@ -205,10 +205,10 @@ func (p *HCLParser) parseSingleBlock(lines []lineItem, startIdx, endIdx int) (*H
 	blockType, labels := p.extractBlockHeader(firstLine)
 
 	block := &HCLBlock{
-		BlockType:   blockType,
-		Labels:      labels,
-		Attributes:  make(map[string]HCLAttribute),
-		LineStart:   lines[startIdx].lineNum,
+		BlockType:  blockType,
+		Labels:     labels,
+		Attributes: make(map[string]HCLAttribute),
+		LineStart:  lines[startIdx].lineNum,
 	}
 
 	braceCount := 0

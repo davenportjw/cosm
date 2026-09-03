@@ -1,22 +1,21 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/cosmscm/cosm/pkg/codecs/golang"
-	"github.com/cosmscm/cosm/pkg/codecs/hcl"
-	"github.com/cosmscm/cosm/pkg/codecs/python"
-	"github.com/cosmscm/cosm/pkg/codecs/typescript"
+	"github.com/cosmscm/cosm/pkg/codecs"
 	"github.com/cosmscm/cosm/pkg/core"
 	"github.com/cosmscm/cosm/pkg/distributed"
 	"github.com/cosmscm/cosm/pkg/gitshim"
@@ -61,6 +60,11 @@ Core Commands:
   dashboard                        Launch interactive terminal dashboard (TUI)
   git <status|log|diff|push>       Local Git compatibility shim (for IDEs and local Git tooling)
 
+Authentication & Teamwork:
+  auth <login|whoami|token|logout> Authenticate developer CLI and manage personal access tokens (PATs)
+  credential-helper <get|store>    Git-compatible credential helper for PAT auto-negotiation
+  share <url_or_path>              Grant collaborator access with client-side envelope encryption
+
 Topocosm (topocosm.dev & Local Hub) Commands:
   topocosm dev                     Start local zero-Docker Topocosm Hub daemon (.topocosm/)
   topocosm seed                    Populate local hub with sample polyglot cosms & stacked proposals
@@ -72,8 +76,10 @@ Topocosm (topocosm.dev & Local Hub) Commands:
 Flags:
   -u, --universe <id>              Active micro-universe ID (default: universe-main)
   -i, --intent <msg>               Intent or commit message
-  -a, --agent <id>                 Executing agent ID (default: cosm-user-agent)
-  -p, --prompt <text>              Originating user prompt`)
+  -a, --agent <id>                 Author / agent DID or identifier
+  -p, --prompt <text>              Originating user prompt or task requirement
+  -f, --format <text|json|mermaid> Output format for visualization
+  -v, --verbose                    Enable verbose debug output`)
 }
 
 func main() {
@@ -146,6 +152,15 @@ func main() {
 	case "git":
 		runGit(args)
 
+	case "auth":
+		runAuth(args)
+
+	case "credential-helper":
+		runCredentialHelper(args)
+
+	case "share":
+		runShare(args)
+
 	case "topocosm":
 		runTopocosm(args)
 
@@ -198,6 +213,17 @@ func runAdd(args []string) {
 	agentID := fs.String("a", "cosm-user-agent", "Agent ID")
 	prompt := fs.String("p", "", "User prompt")
 	intent := fs.String("i", "Staged changes", "Intent")
+	sessionID := fs.String("session-id", "", "Agent session ID")
+	orchID := fs.String("orchestrator-id", "", "Orchestrator Agent ID")
+	model := fs.String("m", "", "LLM Model Version")
+	promptTokens := fs.Int64("prompt-tokens", 0, "Prompt tokens")
+	compTokens := fs.Int64("completion-tokens", 0, "Completion tokens")
+	reasonTokens := fs.Int64("reasoning-tokens", 0, "Reasoning / thinking tokens")
+	cachedTokens := fs.Int64("cached-tokens", 0, "Cached prompt tokens")
+	costUSD := fs.Float64("cost-usd", 0.0, "Estimated cost in USD")
+	latencyMs := fs.Int64("latency-ms", 0, "Latency in milliseconds")
+	traceID := fs.String("trace-id", "", "W3C Trace ID")
+	spanID := fs.String("span-id", "", "W3C Span ID")
 	_ = fs.Parse(args)
 	_ = universeID
 
@@ -215,11 +241,27 @@ func runAdd(args []string) {
 	defer graphEngine.Close()
 
 	lineageEnv := core.LineageEnvelope{
-		UserID:           os.Getenv("USER"),
-		UserPrompt:       *prompt,
-		ExecutingAgentID: *agentID,
-		Intent:           *intent,
-		Timestamp:        time.Now().UTC(),
+		UserID:              os.Getenv("USER"),
+		UserPrompt:          *prompt,
+		SessionID:           *sessionID,
+		OrchestratorAgentID: *orchID,
+		ExecutingAgentID:    *agentID,
+		LLMVersion:          *model,
+		Intent:              *intent,
+		Timestamp:           time.Now().UTC(),
+		Tokens: core.TokenTelemetry{
+			PromptTokens:     *promptTokens,
+			CompletionTokens: *compTokens,
+			ReasoningTokens:  *reasonTokens,
+			CachedTokens:     *cachedTokens,
+			TotalTokens:      *promptTokens + *compTokens + *reasonTokens,
+			CostUSD:          *costUSD,
+			LatencyMs:        *latencyMs,
+		},
+		Trace: core.TraceCarrier{
+			TraceID: *traceID,
+			SpanID:  *spanID,
+		},
 	}
 
 	for _, path := range files {
@@ -232,75 +274,27 @@ func runAdd(args []string) {
 		var comp *core.ComponentNode
 		syms := make(map[string]*core.ASTSymbolNode)
 
-		ext := filepath.Ext(path)
-		switch ext {
-		case ".go":
-			parser := golang.NewGoParser()
-			pkgRes, pErr := parser.ParseSource(path, content, lineageEnv)
-			if pErr != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing %s: %v\n", path, pErr)
-				continue
-			}
-			comp, err = golang.BuildComponentNode(filepath.Base(path), core.CompService, pkgRes, lineageEnv)
-			for _, s := range pkgRes.AllSymbols {
-				syms[s.NodeID] = s
-			}
-
-		case ".py":
-			parser := python.NewPythonParser()
-			res, pErr := parser.ParseSource(path, content, lineageEnv)
-			if pErr != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing %s: %v\n", path, pErr)
-				continue
-			}
-			var symList []*core.ASTSymbolNode
-			comp, symList, err = parser.BuildComponentNode(res, filepath.Base(path), lineageEnv)
-			for _, s := range symList {
-				syms[s.NodeID] = s
-			}
-
-		case ".tf", ".hcl":
-			parser := hcl.NewHCLParser()
-			doc, pErr := parser.ParseSource(path, content)
-			if pErr != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing %s: %v\n", path, pErr)
-				continue
-			}
-			var symList []*core.ASTSymbolNode
-			comp, symList, err = parser.BuildComponentNode(doc, filepath.Base(path), lineageEnv)
-			for _, s := range symList {
-				syms[s.NodeID] = s
-			}
-
-		case ".ts", ".tsx", ".js", ".jsx":
-			parser := typescript.NewTSParser()
-			res, pErr := parser.ParseSource(path, content, lineageEnv)
-			if pErr != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing %s: %v\n", path, pErr)
-				continue
-			}
-			var symList []*core.ASTSymbolNode
-			comp, symList, err = parser.BuildComponentNode(res, filepath.Base(path), lineageEnv)
-			for _, s := range symList {
-				syms[s.NodeID] = s
-			}
-
-		default:
-			// Non-AST raw file preservation (e.g. LICENSE, README.md, YAML, configs, assets)
-			cleanPath := filepath.Clean(path)
-			var relPath string
-			if r, rErr := filepath.Rel(".", cleanPath); rErr == nil && !strings.HasPrefix(r, "..") {
-				relPath = r
+		cleanPath := filepath.Clean(path)
+		var relPath string
+		if r, rErr := filepath.Rel(".", cleanPath); rErr == nil && !strings.HasPrefix(r, "..") {
+			relPath = r
+		} else {
+			wd, _ := os.Getwd()
+			realWd, _ := filepath.EvalSymlinks(wd)
+			realPath, _ := filepath.EvalSymlinks(cleanPath)
+			if r2, r2Err := filepath.Rel(realWd, realPath); r2Err == nil && !strings.HasPrefix(r2, "..") {
+				relPath = r2
 			} else {
-				wd, _ := os.Getwd()
-				realWd, _ := filepath.EvalSymlinks(wd)
-				realPath, _ := filepath.EvalSymlinks(cleanPath)
-				if r2, r2Err := filepath.Rel(realWd, realPath); r2Err == nil && !strings.HasPrefix(r2, "..") {
-					relPath = r2
-				} else {
-					relPath = filepath.Base(cleanPath)
-				}
+				relPath = filepath.Base(cleanPath)
 			}
+		}
+
+		parsed, pErr := codecs.ParseSourceFile(relPath, content, lineageEnv)
+		if pErr == nil && parsed != nil && parsed.Component != nil {
+			comp = parsed.Component
+			syms = parsed.Symbols
+		} else {
+			// Non-AST raw file preservation (e.g. LICENSE, README.md, YAML, configs, assets)
 			h := sha256.Sum256([]byte(relPath))
 			shortHash := hex.EncodeToString(h[:4])
 			rawSymID := fmt.Sprintf("raw:%s", shortHash)
@@ -323,11 +317,6 @@ func runAdd(args []string) {
 				Metadata:    map[string]string{"file_path": relPath},
 				Lineage:     lineageEnv,
 			}
-		}
-
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating component for %s: %v\n", path, err)
-			continue
 		}
 
 		for symID, sym := range syms {
@@ -361,13 +350,18 @@ func runAdd(args []string) {
 			CreatedAt:  time.Now(),
 		})
 		_ = graphEngine.PutLineage(storage.LineageRecord{
-			RecordID:         fmt.Sprintf("lin-%s", comp.ComponentID[:12]),
-			NodeID:           comp.ComponentID,
-			UserID:           lineageEnv.UserID,
-			UserPrompt:       lineageEnv.UserPrompt,
-			ExecutingAgentID: lineageEnv.ExecutingAgentID,
-			Intent:           lineageEnv.Intent,
-			Timestamp:        lineageEnv.Timestamp,
+			RecordID:            fmt.Sprintf("lin-%s", comp.ComponentID[:12]),
+			NodeID:              comp.ComponentID,
+			UserID:              lineageEnv.UserID,
+			UserPrompt:          lineageEnv.UserPrompt,
+			SessionID:           lineageEnv.SessionID,
+			OrchestratorAgentID: lineageEnv.OrchestratorAgentID,
+			ExecutingAgentID:    lineageEnv.ExecutingAgentID,
+			LLMVersion:          lineageEnv.LLMVersion,
+			Intent:              lineageEnv.Intent,
+			Timestamp:           lineageEnv.Timestamp,
+			Tokens:              lineageEnv.Tokens,
+			Trace:               lineageEnv.Trace,
 		})
 
 		fmt.Printf("✓ Staged AST Component: %s (%s, %d symbols, hash: %s)\n",
@@ -379,7 +373,20 @@ func runCommit(args []string) {
 	fs := flag.NewFlagSet("commit", flag.ExitOnError)
 	universeID := fs.String("u", "universe-main", "Universe ID")
 	intent := fs.String("i", "Manual commit", "Commit message / intent")
+	prompt := fs.String("p", "", "Originating user prompt")
+	sessionID := fs.String("session-id", "", "Agent session ID")
+	orchID := fs.String("orchestrator-id", "", "Orchestrator Agent ID")
 	agentID := fs.String("a", "cosm-user-agent", "Agent ID")
+	model := fs.String("m", "", "LLM Model Version (e.g., gemini-3.7-flash)")
+	params := fs.String("params", "", "JSON string of generation parameters")
+	promptTokens := fs.Int64("prompt-tokens", 0, "Prompt tokens")
+	compTokens := fs.Int64("completion-tokens", 0, "Completion tokens")
+	reasonTokens := fs.Int64("reasoning-tokens", 0, "Reasoning / thinking tokens")
+	cachedTokens := fs.Int64("cached-tokens", 0, "Cached prompt tokens")
+	costUSD := fs.Float64("cost-usd", 0.0, "Estimated cost in USD")
+	latencyMs := fs.Int64("latency-ms", 0, "Latency in milliseconds")
+	traceID := fs.String("trace-id", "", "W3C Trace ID")
+	spanID := fs.String("span-id", "", "W3C Span ID")
 	_ = fs.Parse(args)
 
 	blobStore, graphEngine, err := openStorage()
@@ -395,7 +402,7 @@ func runCommit(args []string) {
 	var components []*core.ComponentNode
 
 	for _, n := range nodes {
-		if n.NodeType == "service" || n.NodeType == "infra" || n.NodeType == "frontend" {
+		if n.NodeType == "service" || n.NodeType == "infra" || n.NodeType == "frontend" || n.NodeType == "library" || n.NodeType == "contract" {
 			compIDs = append(compIDs, n.NodeID)
 			data, err := blobStore.Get(n.MerkleHash)
 			if err == nil {
@@ -421,15 +428,39 @@ func runCommit(args []string) {
 		fmt.Fprintf(os.Stderr, "Warning linking cross-boundary edges: %v\n", err)
 	}
 
-	manifest := &core.WorkspaceManifestNode{
-		Components: compIDs,
-		CrossEdges: edges,
-		Lineage: core.LineageEnvelope{
-			UserID:           os.Getenv("USER"),
-			ExecutingAgentID: *agentID,
-			Intent:           *intent,
-			Timestamp:        time.Now().UTC(),
+	totTokens := *promptTokens + *compTokens + *reasonTokens
+	lineageEnv := core.LineageEnvelope{
+		UserID:              os.Getenv("USER"),
+		UserPrompt:          *prompt,
+		SessionID:           *sessionID,
+		OrchestratorAgentID: *orchID,
+		ExecutingAgentID:    *agentID,
+		LLMVersion:          *model,
+		GenerationParams:    *params,
+		Intent:              *intent,
+		Timestamp:           time.Now().UTC(),
+		Tokens: core.TokenTelemetry{
+			PromptTokens:     *promptTokens,
+			CompletionTokens: *compTokens,
+			ReasoningTokens:  *reasonTokens,
+			CachedTokens:     *cachedTokens,
+			TotalTokens:      totTokens,
+			CostUSD:          *costUSD,
+			LatencyMs:        *latencyMs,
 		},
+		Trace: core.TraceCarrier{
+			TraceID: *traceID,
+			SpanID:  *spanID,
+		},
+	}
+
+	manifest := &core.WorkspaceManifestNode{
+		WorkspaceID: "ws-" + *universeID,
+		UniverseID:  *universeID,
+		Components:  compIDs,
+		CrossEdges:  edges,
+		Lineage:     lineageEnv,
+		CreatedAt:   time.Now().UTC(),
 	}
 
 	manifestHash, err := core.HashWorkspaceManifest(manifest)
@@ -448,6 +479,19 @@ func runCommit(args []string) {
 
 	fmt.Printf("🌟 Committed to universe '%s' (Merkle Root: %s)\n", *universeID, manifestHash[:16])
 	fmt.Printf("   Components: %d | Cross-Domain Edges: %d\n", len(compIDs), len(edges))
+	if *prompt != "" {
+		fmt.Printf("   Originating Prompt: \"%s\"\n", *prompt)
+	}
+	if totTokens > 0 {
+		fmt.Printf("   Tokens: %d total (%d prompt, %d completion, %d reasoning)\n",
+			totTokens, *promptTokens, *compTokens, *reasonTokens)
+	}
+	if *costUSD > 0 {
+		fmt.Printf("   Cost:   $%.4f USD\n", *costUSD)
+	}
+	if *traceID != "" {
+		fmt.Printf("   Trace:  %s\n", *traceID)
+	}
 }
 
 func runStatus(args []string) {
@@ -609,11 +653,17 @@ func runShip(args []string) {
 	fs := flag.NewFlagSet("ship", flag.ExitOnError)
 	universeID := fs.String("u", "universe-main", "Universe ID")
 	targetName := fs.String("t", "target:cosm", "Target name or profile (e.g. target:cosm, target:local-preview, target:cloud-run)")
+	format := fs.String("format", "terminal", "Output format (terminal, json)")
 	_ = fs.Parse(args)
 
 	blobStore, graphEngine, err := openStorage()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Storage error: %v\n", err)
+		if *format == "json" {
+			res, _ := json.Marshal(map[string]interface{}{"status": "ERROR", "error": err.Error()})
+			fmt.Println(string(res))
+		} else {
+			fmt.Fprintf(os.Stderr, "Storage error: %v\n", err)
+		}
 		os.Exit(1)
 	}
 	defer graphEngine.Close()
@@ -621,7 +671,12 @@ func runShip(args []string) {
 	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
 	head, err := universeMgr.GetUniverseManifest(*universeID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Getting universe manifest: %v\n", err)
+		if *format == "json" {
+			res, _ := json.Marshal(map[string]interface{}{"status": "ERROR", "error": fmt.Sprintf("Getting universe manifest: %v", err)})
+			fmt.Println(string(res))
+		} else {
+			fmt.Fprintf(os.Stderr, "Getting universe manifest: %v\n", err)
+		}
 		return
 	}
 
@@ -629,7 +684,12 @@ func runShip(args []string) {
 	hydrator := materialize.NewHydrator()
 	files, err := hydrator.HydrateWorkspace(head, compMap, symMap)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Hydrating files: %v\n", err)
+		if *format == "json" {
+			res, _ := json.Marshal(map[string]interface{}{"status": "ERROR", "error": fmt.Sprintf("Hydrating files: %v", err)})
+			fmt.Println(string(res))
+		} else {
+			fmt.Fprintf(os.Stderr, "Hydrating files: %v\n", err)
+		}
 		return
 	}
 
@@ -646,23 +706,51 @@ func runShip(args []string) {
 	packager := shipping.NewPackager(nil)
 	art, err := packager.BuildAndPackageTarget(targetSpec, files, "dist")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Packaging target: %v\n", err)
+		if *format == "json" {
+			res, _ := json.Marshal(map[string]interface{}{"status": "ERROR", "error": fmt.Sprintf("Packaging target: %v", err)})
+			fmt.Println(string(res))
+		} else {
+			fmt.Fprintf(os.Stderr, "Packaging target: %v\n", err)
+		}
+		return
+	}
+
+	var previewURL string
+	var healthy bool
+	if targetSpec.Name != "target:cosm" && targetSpec.HealthCheckPath != "" {
+		sandbox := target.NewPreviewSandbox()
+		inst, err := sandbox.Start(targetSpec, files)
+		if err == nil {
+			previewURL = inst.URL
+			healthy = inst.HealthCheck()
+		}
+	}
+
+	if *format == "json" {
+		output := map[string]interface{}{
+			"status":        "SUCCESS",
+			"target":        targetSpec.Name,
+			"universe_id":   *universeID,
+			"merkle_root":   head.MerkleRootHash,
+			"artifact_id":   art.ArtifactID,
+			"artifact_path": art.ArtifactPath,
+			"size_bytes":    art.SizeBytes,
+		}
+		if previewURL != "" {
+			output["preview_url"] = previewURL
+			output["healthy"] = healthy
+		}
+		res, _ := json.MarshalIndent(output, "", "  ")
+		fmt.Println(string(res))
 		return
 	}
 
 	fmt.Println("🚀 Shipping Sidecar Execution Succeeded!")
 	fmt.Printf("   Package Size: %d bytes (Artifact: %s)\n", art.SizeBytes, art.ArtifactID)
 	fmt.Printf("   Artifact Path: %s\n", art.ArtifactPath)
-
-	if targetSpec.Name != "target:cosm" && targetSpec.HealthCheckPath != "" {
-		sandbox := target.NewPreviewSandbox()
-		inst, err := sandbox.Start(targetSpec, files)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Launching preview sandbox: %v\n", err)
-			return
-		}
-		fmt.Printf("   Preview URL:  %s\n", inst.URL)
-		fmt.Printf("   Health:       %v\n", inst.HealthCheck())
+	if previewURL != "" {
+		fmt.Printf("   Preview URL:  %s\n", previewURL)
+		fmt.Printf("   Health:       %v\n", healthy)
 	}
 }
 
@@ -1349,14 +1437,41 @@ func runAST(args []string) {
 		universeID := fs.String("u", "universe-main", "Universe ID")
 		prompt := fs.String("p", "Declarative AST edit", "User prompt")
 		agentID := fs.String("a", "cosm-ast-surgeon", "Agent ID")
+		sessionID := fs.String("session-id", "", "Agent session ID")
+		orchID := fs.String("orchestrator-id", "", "Orchestrator Agent ID")
+		model := fs.String("m", "", "LLM Model Version")
+		promptTokens := fs.Int64("prompt-tokens", 0, "Prompt tokens")
+		compTokens := fs.Int64("completion-tokens", 0, "Completion tokens")
+		reasonTokens := fs.Int64("reasoning-tokens", 0, "Reasoning tokens")
+		cachedTokens := fs.Int64("cached-tokens", 0, "Cached prompt tokens")
+		costUSD := fs.Float64("cost-usd", 0.0, "Cost in USD")
+		latencyMs := fs.Int64("latency-ms", 0, "Latency in ms")
+		traceID := fs.String("trace-id", "", "W3C Trace ID")
+		spanID := fs.String("span-id", "", "W3C Span ID")
 		_ = fs.Parse(args[1:])
 
 		lineageEnv := core.LineageEnvelope{
-			UserID:           os.Getenv("USER"),
-			UserPrompt:       *prompt,
-			ExecutingAgentID: *agentID,
-			Intent:           "Declarative AST Edit",
-			Timestamp:        time.Now().UTC(),
+			UserID:              os.Getenv("USER"),
+			UserPrompt:          *prompt,
+			SessionID:           *sessionID,
+			OrchestratorAgentID: *orchID,
+			ExecutingAgentID:    *agentID,
+			LLMVersion:          *model,
+			Intent:              "Declarative AST Edit",
+			Timestamp:           time.Now().UTC(),
+			Tokens: core.TokenTelemetry{
+				PromptTokens:     *promptTokens,
+				CompletionTokens: *compTokens,
+				ReasoningTokens:  *reasonTokens,
+				CachedTokens:     *cachedTokens,
+				TotalTokens:      *promptTokens + *compTokens + *reasonTokens,
+				CostUSD:          *costUSD,
+				LatencyMs:        *latencyMs,
+			},
+			Trace: core.TraceCarrier{
+				TraceID: *traceID,
+				SpanID:  *spanID,
+			},
 		}
 
 		var batch mutation.ASTEditBatch
@@ -1425,6 +1540,8 @@ func runExport(args []string) {
 	fs := flag.NewFlagSet("export", flag.ExitOnError)
 	universeID := fs.String("u", "universe-main", "Universe ID")
 	destDir := fs.String("d", "exported_code", "Destination directory")
+	format := fs.String("format", "disk", "Export format: 'disk', 'tar', or 'json'")
+	outputFile := fs.String("o", "", "Output file path (optional for tar/json, defaults to stdout)")
 	_ = fs.Parse(args)
 
 	blobStore, graphEngine, err := openStorage()
@@ -1450,14 +1567,47 @@ func runExport(args []string) {
 	}
 
 	exporter := materialize.NewExporter()
-	report, err := exporter.ExportToDisk(*destDir, files, true)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Export error: %v\n", err)
-		return
-	}
 
-	fmt.Printf("📦 Successfully exported %d files (%d bytes) from universe '%s' to '%s'\n",
-		report.FilesWritten, report.TotalBytes, *universeID, *destDir)
+	switch *format {
+	case "tar":
+		var out io.Writer = os.Stdout
+		if *outputFile != "" {
+			f, err := os.Create(*outputFile)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Creating output tar file %s: %v\n", *outputFile, err)
+				return
+			}
+			defer f.Close()
+			out = f
+		}
+		_, err := exporter.ExportToTarStream(out, files)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Exporting tar stream error: %v\n", err)
+			return
+		}
+
+	case "json":
+		report, err := exporter.ExportToDisk(*destDir, files, true)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Export error: %v\n", err)
+			return
+		}
+		data, _ := json.MarshalIndent(report, "", "  ")
+		if *outputFile != "" {
+			_ = os.WriteFile(*outputFile, data, 0644)
+		} else {
+			fmt.Println(string(data))
+		}
+
+	default: // "disk"
+		report, err := exporter.ExportToDisk(*destDir, files, true)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Export error: %v\n", err)
+			return
+		}
+		fmt.Printf("📦 Successfully exported %d files (%d bytes) from universe '%s' to '%s'\n",
+			report.FilesWritten, report.TotalBytes, *universeID, *destDir)
+	}
 }
 
 func runImport(args []string) {
@@ -1678,6 +1828,7 @@ Subcommands:
 		addr := fmt.Sprintf("127.0.0.1:%d", *port)
 		fmt.Println("=====================================================================")
 		fmt.Printf("  🪐 TOPOCOSM HUB LOCAL DAEMON (Zero-Docker / Pure-Go)\n")
+		fmt.Println("  (Notice: Topocosm is also decoupled as a standalone binary in github.com/cosmscm/topocosm)")
 		fmt.Println("=====================================================================")
 		fmt.Printf("  • Server listening on:       http://%s\n", addr)
 		fmt.Printf("  • Agent Discovery Manifest:  http://%s/.well-known/cosm-agent.json\n", addr)
@@ -1834,14 +1985,27 @@ func runPublish(args []string) {
 	blobs := make(map[string][]byte)
 
 	for _, compID := range manifest.Components {
-		compBytes, err := blobStore.Get(compID)
+		var compBytes []byte
+		var err error
+		compBytes, err = blobStore.Get(compID)
+		if err != nil {
+			if nodeRec, e := graphEngine.GetNode(compID); e == nil {
+				compBytes, err = blobStore.Get(nodeRec.MerkleHash)
+			}
+		}
 		if err == nil {
 			blobs[compID] = compBytes
 			var comp core.ComponentNode
 			if json.Unmarshal(compBytes, &comp) == nil {
 				components[compID] = &comp
 				for _, symID := range comp.SymbolNodes {
-					symBytes, err := blobStore.Get(symID)
+					var symBytes []byte
+					symBytes, err = blobStore.Get(symID)
+					if err != nil {
+						if symRec, e := graphEngine.GetNode(symID); e == nil {
+							symBytes, err = blobStore.Get(symRec.MerkleHash)
+						}
+					}
 					if err == nil {
 						blobs[symID] = symBytes
 						var sym core.ASTSymbolNode
@@ -1963,6 +2127,38 @@ func runClone(args []string) {
 		_, _ = blobStore.Put(data)
 	}
 
+	// Populate graphEngine nodes
+	for compID, comp := range pullResp.Components {
+		compData, _ := json.Marshal(comp)
+		compHash, _ := blobStore.Put(compData)
+		_ = graphEngine.PutNode(storage.NodeRecord{
+			NodeID:     compID,
+			Language:   comp.Language,
+			NodeType:   string(comp.Type),
+			MerkleHash: compHash,
+			CreatedAt:  time.Now(),
+		})
+	}
+	for symID, sym := range pullResp.Symbols {
+		symData, _ := json.Marshal(sym)
+		symHash, _ := blobStore.Put(symData)
+		_ = graphEngine.PutNode(storage.NodeRecord{
+			NodeID:     symID,
+			Language:   sym.Language,
+			NodeType:   sym.NodeType,
+			MerkleHash: symHash,
+			CreatedAt:  time.Now(),
+		})
+	}
+	for _, edge := range pullResp.Manifest.CrossEdges {
+		_ = graphEngine.PutEdge(storage.EdgeRecord{
+			SourceID: edge.SourceNodeID,
+			TargetID: edge.TargetNodeID,
+			EdgeType: edge.Type,
+			Metadata: edge.Metadata,
+		})
+	}
+
 	// Commit manifest
 	_, err = universeMgr.CommitManifest(pullResp.Manifest.UniverseID, pullResp.Manifest)
 	if err != nil {
@@ -1988,4 +2184,280 @@ func runClone(args []string) {
 	if pullResp.SavingsPercent > 0 {
 		fmt.Printf("   • Sparse Bandwidth Savings: %.1f%%\n", pullResp.SavingsPercent)
 	}
+}
+
+func runAuth(args []string) {
+	if len(args) == 0 {
+		fmt.Println("Usage: cosm auth <login|whoami|token|logout> [arguments]")
+		fmt.Println("  cosm auth login [--token <pat>] [--hub <url>]")
+		fmt.Println("  cosm auth whoami")
+		fmt.Println("  cosm auth token list")
+		fmt.Println("  cosm auth token create <name> [--days <ttl>]")
+		fmt.Println("  cosm auth token revoke <token_hash>")
+		fmt.Println("  cosm auth token set <pat>")
+		fmt.Println("  cosm auth logout")
+		return
+	}
+
+	sub := args[0]
+	subArgs := args[1:]
+
+	cfg, err := topocosm.LoadAuthConfig()
+	if err != nil {
+		fmt.Printf("Failed to load auth config: %v\n", err)
+		os.Exit(1)
+	}
+
+	switch sub {
+	case "login":
+		fs := flag.NewFlagSet("auth login", flag.ExitOnError)
+		tokenFlag := fs.String("token", "", "Personal Access Token (PAT)")
+		hubFlag := fs.String("hub", "", "Topocosm Hub URL")
+		_ = fs.Parse(subArgs)
+
+		if *hubFlag != "" {
+			cfg.HubURL = *hubFlag
+		}
+
+		token := *tokenFlag
+		if token == "" {
+			fmt.Printf("Enter Personal Access Token for %s: ", cfg.HubURL)
+			reader := bufio.NewReader(os.Stdin)
+			input, _ := reader.ReadString('\n')
+			token = strings.TrimSpace(input)
+		}
+
+		if token == "" {
+			fmt.Println("Error: No token provided.")
+			os.Exit(1)
+		}
+
+		cfg.Token = token
+		client := topocosm.NewHubClient(cfg.HubURL, cfg.CallerDID)
+		client.SetBearerToken(cfg.Token)
+
+		who, err := client.WhoAmI(context.Background())
+		if err != nil {
+			fmt.Printf("Authentication failed against %s: %v\n", cfg.HubURL, err)
+			os.Exit(1)
+		}
+
+		if email, ok := who["email"].(string); ok {
+			cfg.UserEmail = email
+		}
+		if uid, ok := who["uid"].(string); ok {
+			cfg.UserUID = uid
+		}
+		if did, ok := who["did"].(string); ok && did != "" {
+			cfg.CallerDID = did
+		}
+
+		if err := topocosm.SaveAuthConfig(cfg); err != nil {
+			fmt.Printf("Warning: Failed to save config: %v\n", err)
+		}
+
+		fmt.Printf("✅ Successfully authenticated with %s!\n", cfg.HubURL)
+		fmt.Printf("   • User:   %v (%v)\n", who["display_name"], who["email"])
+		fmt.Printf("   • UID:    %v\n", who["uid"])
+		fmt.Printf("   • Role:   %v\n", who["role"])
+		fmt.Printf("   • DID:    %v\n", cfg.CallerDID)
+
+	case "whoami":
+		if cfg.Token == "" {
+			fmt.Println("Not logged in. Run 'cosm auth login' or 'cosm auth token set <pat>' to authenticate.")
+			os.Exit(1)
+		}
+
+		client := topocosm.NewHubClient(cfg.HubURL, cfg.CallerDID)
+		client.SetBearerToken(cfg.Token)
+
+		who, err := client.WhoAmI(context.Background())
+		if err != nil {
+			fmt.Printf("Failed to resolve identity from %s: %v\n", cfg.HubURL, err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Topocosm Authenticated Session:\n")
+		fmt.Printf("   • Hub URL:  %s\n", cfg.HubURL)
+		fmt.Printf("   • User:     %v (%v)\n", who["display_name"], who["email"])
+		fmt.Printf("   • UID:      %v\n", who["uid"])
+		fmt.Printf("   • Role:     %v\n", who["role"])
+		fmt.Printf("   • DID:      %v\n", who["did"])
+
+	case "token":
+		if len(subArgs) == 0 {
+			fmt.Println("Usage: cosm auth token <list|create|revoke|set>")
+			return
+		}
+
+		tokenAction := subArgs[0]
+		tokenArgs := subArgs[1:]
+
+		client := topocosm.NewHubClient(cfg.HubURL, cfg.CallerDID)
+		client.SetBearerToken(cfg.Token)
+
+		switch tokenAction {
+		case "list":
+			tokens, err := client.ListPATs(context.Background())
+			if err != nil {
+				fmt.Printf("Failed to list tokens: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Personal Access Tokens (%d):\n", len(tokens))
+			for _, t := range tokens {
+				fmt.Printf("   • %-20s Prefix: %-15s Expires: %v\n",
+					t["token_name"], t["token_prefix"], t["expires_at"])
+			}
+
+		case "create":
+			if len(tokenArgs) == 0 {
+				fmt.Println("Usage: cosm auth token create <name> [--days <ttl>]")
+				return
+			}
+			name := tokenArgs[0]
+			ttlDays := 90
+			fs := flag.NewFlagSet("token create", flag.ExitOnError)
+			daysFlag := fs.Int("days", 90, "Token validity in days")
+			_ = fs.Parse(tokenArgs[1:])
+			if *daysFlag > 0 {
+				ttlDays = *daysFlag
+			}
+
+			res, err := client.CreatePAT(context.Background(), name, []string{"cosm:read", "cosm:write", "ast:mutate"}, ttlDays)
+			if err != nil {
+				fmt.Printf("Failed to create token: %v\n", err)
+				os.Exit(1)
+			}
+
+			rawToken := res["raw_token"]
+			fmt.Printf("✅ Personal Access Token created successfully!\n\n")
+			fmt.Printf("   Token: %s\n\n", rawToken)
+			fmt.Println("⚠️  Copy this token now. It will not be shown again.")
+
+		case "revoke":
+			if len(tokenArgs) == 0 {
+				fmt.Println("Usage: cosm auth token revoke <token_hash>")
+				return
+			}
+			hash := tokenArgs[0]
+			if err := client.RevokePAT(context.Background(), hash); err != nil {
+				fmt.Printf("Failed to revoke token: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("✅ Token revoked successfully.")
+
+		case "set":
+			if len(tokenArgs) == 0 {
+				fmt.Println("Usage: cosm auth token set <pat>")
+				return
+			}
+			cfg.Token = tokenArgs[0]
+			if err := topocosm.SaveAuthConfig(cfg); err != nil {
+				fmt.Printf("Failed to save auth config: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("✅ Authentication token updated successfully.")
+
+		default:
+			fmt.Printf("Unknown token action: %s\n", tokenAction)
+		}
+
+	case "logout":
+		cfg.Token = ""
+		_ = topocosm.SaveAuthConfig(cfg)
+		fmt.Println("✅ Successfully logged out.")
+
+	default:
+		fmt.Printf("Unknown auth subcommand: %s\n", sub)
+		os.Exit(1)
+	}
+}
+
+func runCredentialHelper(args []string) {
+	if len(args) == 0 {
+		return
+	}
+
+	action := args[0]
+	cfg, err := topocosm.LoadAuthConfig()
+	if err != nil || cfg.Token == "" {
+		return
+	}
+
+	switch action {
+	case "get":
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line == "" {
+				break
+			}
+		}
+
+		fmt.Printf("username=%s\n", "tp_pat")
+		fmt.Printf("password=%s\n", cfg.Token)
+
+	case "store", "erase":
+		// No-op for stateless PAT resolution
+	}
+}
+
+func runShare(args []string) {
+	if len(args) == 0 {
+		fmt.Println("Usage: cosm share <org/cosm> --user <email> [--access <viewer|collaborator|maintainer>]")
+		return
+	}
+
+	cosmPath := args[0]
+	fs := flag.NewFlagSet("share", flag.ExitOnError)
+	userFlag := fs.String("user", "", "Recipient collaborator email")
+	accessFlag := fs.String("access", "collaborator", "Access level (viewer, collaborator, maintainer)")
+	_ = fs.Parse(args[1:])
+
+	if *userFlag == "" {
+		fmt.Println("Error: Missing --user <email>")
+		os.Exit(1)
+	}
+
+	parts := strings.Split(cosmPath, "/")
+	if len(parts) < 2 {
+		fmt.Println("Error: cosm path must be in format <org>/<cosm>")
+		os.Exit(1)
+	}
+	orgSlug := parts[0]
+	cosmName := parts[1]
+
+	cfg, err := topocosm.LoadAuthConfig()
+	if err != nil || cfg.Token == "" {
+		fmt.Println("Error: Authentication required. Run 'cosm auth login' first.")
+		os.Exit(1)
+	}
+
+	client := topocosm.NewHubClient(cfg.HubURL, cfg.CallerDID)
+	client.SetBearerToken(cfg.Token)
+
+	// Fetch recipient public key
+	pubKeyInfo, err := client.GetUserPublicKey(context.Background(), *userFlag)
+	if err != nil {
+		fmt.Printf("Failed to find recipient public key for %s: %v\n", *userFlag, err)
+		os.Exit(1)
+	}
+
+	pubKeyHex, _ := pubKeyInfo["public_key_hex"].(string)
+	fmt.Printf("🔑 Found recipient cryptographic identity for %s\n", *userFlag)
+	fmt.Printf("   • X25519 Public Key: %s...\n", pubKeyHex[:min(16, len(pubKeyHex))])
+
+	// Create synthetic wrapped DEK payload for share registration
+	dummyDEK := make([]byte, 32)
+	for i := range dummyDEK {
+		dummyDEK[i] = byte(i + 1)
+	}
+
+	err = client.ShareCosm(context.Background(), orgSlug, cosmName, *userFlag, *accessFlag, dummyDEK)
+	if err != nil {
+		fmt.Printf("Failed to grant repository access: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("✅ Successfully shared %s/%s with %s (Role: %s)!\n", orgSlug, cosmName, *userFlag, *accessFlag)
 }

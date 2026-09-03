@@ -1,4 +1,4 @@
-# AGENTS.md - Cosm (`future-of-git`) Agent Guidelines & Architecture Rules
+# AGENTS.md - Cosm (`cosm`) Agent Guidelines & Architecture Rules
 
 This document establishes durable conventions, architectural invariants, environment constraints, and workflow patterns for all AI agents working within the Cosm repository.
 
@@ -7,12 +7,13 @@ This document establishes durable conventions, architectural invariants, environ
 ## 1. Project Vision & Core Identity
 
 **Cosm (`cosm`)** is an AI-Native Polyglot AST Source Control Management (SCM) and Target Compilation System built in pure Go (`go 1.22+`).
-- **Storage**: Software is stored as a content-addressed AST Merkle-DAG in `.cosm/objects/` with metadata, semantic dependency edges, universe heads, and event Oplogs managed in pure-Go SQLite WAL mode (`.cosm/graph.db`).
+- **Storage**: Software is stored as a content-addressed AST Merkle-DAG in `.cosm/objects/` with metadata, semantic dependency edges, universe heads, and event Oplogs managed in pure-Go custom WAL binary format (`.cosm/graph.db`).
 - **Branching**: Zero-copy parallel micro-universes (non-linear frontier heads).
 - **Lineage**: Multi-tier causal pedigree (`User Prompt` $\rightarrow$ `Session ID` $\rightarrow$ `Agent ID` $\rightarrow$ `Model Params` $\rightarrow$ `AST Node`) with Ed25519 digital signatures.
 - **Shipping**: Autonomous target compilation sidecar (`cosm ship`) executing isolated staging builds.
 - **Collaboration**: Local Git CLI compatibility shim (`cosm git`) + Radicle-inspired distributed P2P Collaborative Objects (COBs) with CRDT state synchronization.
 - **PR Model**: Human-understandable Universe Proposals displaying AST symbol deltas, topology changes, and build badges.
+- **Federation**: Multi-repo AST chaining and sparse replication via Topocosm (`topocosm.dev`), which is decoupled as an independent cloud hub.
 
 ---
 
@@ -24,20 +25,21 @@ This document establishes durable conventions, architectural invariants, environ
    - Do NOT use Python or external interpreted wrappers for core Cosm functionality.
 
 2. **Storage Durability & Zero-CGO**:
-   - Uses pure-Go SQLite (`modernc.org/sqlite`) in Write-Ahead Log (`WAL`) mode.
+   - Uses zero-dependency pure-Go custom Write-Ahead Log (`WAL`) graph engine with CRC32 checksums (`pkg/storage/graphengine.go`).
    - Atomic write-and-rename (`fsync`) semantics for content-addressed immutable blobs in `.cosm/objects/`.
    - The database and blob store must survive sudden process termination or service restarts with zero corrupt records.
 
-3. **Git vs. GitHub.com Disentanglement**:
-   - Cosm runs 100% locally with zero required network calls or cloud dependencies.
-   - Git compatibility (`cosm git`) provides a local plumbing shim for IDEs and existing tools.
-   - Distributed remote sync uses Radicle-style CRDT Collaborative Objects (COBs) and Jujutsu-style stacked proposals.
+3. **Cosm Engine vs. Topocosm Hub Separation**:
+   - `cosm` is the 100% offline, pure-Go local AST engine, compiler, and developer CLI.
+   - `topocosm` is the decentralized distribution hub, agent registry, and cloud backplane (being spun off into `github.com/cosmscm/topocosm`).
+   - Communication between `cosm` and `topocosm` occurs strictly over versioned wire protocols (`/api/v1/`, gRPC) defined in `pkg/api/`.
 
-4. **Preserve the Human PR Model**:
-   - Proposals represent semantic AST mutations, cross-boundary contracts, and cryptographic attestations while preserving familiar human review workflows (annotating symbols, partial approvals, natural language remediation prompts).
+4. **Multi-Repo Federation & Causal Time**:
+   - Cross-repository contracts use content-addressed URIs (`cosm://org/repo/component@hash`).
+   - Replication orders events via Lamport Logical Clocks + DID tiebreakers, converging via CRDT semilattice joins ($\sqcup$).
 
 5. **Always Update Documentation & Maintain Direct Style**:
-   - Whenever schemas, storage engines, APIs, CLI commands, codecs, or distributed models are created or altered, corresponding reference documents under `docs/` (`docs/reference/schema-and-storage.md`, `docs/reference/agent-api.md`, `docs/reference/codecs.md`, `docs/reference/cli.md`, etc.) MUST be updated immediately in the same change.
+   - Whenever schemas, storage engines, APIs, CLI commands, codecs, or distributed models are created or altered, corresponding reference documents under `docs/` (`docs/reference/schema-and-storage.md`, `docs/reference/agent-api.md`, `docs/reference/codecs.md`, `docs/reference/federation-and-multi-repo.md`, `docs/reference/topocosm.md`, etc.) MUST be updated immediately in the same change.
    - Documentation style MUST be **very direct, concise, and technically rigorous**—avoiding filler, marketing fluff, or conversational tangents, and emphasizing exact data structures, mathematical equations, wire DTO schemas, and executable code snippets.
 
 6. **Test Agent & Rater Harness Isolation**:
@@ -84,6 +86,10 @@ cosm blast-radius <node_id>
 cosm universe list
 cosm universe create <universe_id> [--parent <parent_id>]
 
+# Jujutsu-style stacked proposals
+cosm stack create -c <change_id> -u <universe_id> -p <parent_change_id>
+cosm stack evolve -c <change_id>
+
 # Universe Proposals (PR equivalent)
 cosm proposal list
 cosm proposal create --title "..." --source <universe_id> --target universe-main
@@ -103,17 +109,17 @@ cosm-agent-harness suite --all
 ## 5. Directory Structure Reference
 
 ```
-future-of-git/
+cosm/
 ├── .cosm/                      # Content-addressed AST store & SQLite WAL database
 ├── cmd/
 │   ├── cosm/                   # Developer CLI binary (`cosm`)
 │   └── cosm-agent-harness/     # Standalone test/rater agent harness binary
 ├── pkg/
-│   ├── api/                    # gRPC and in-process Go client/server SDK
+│   ├── api/                    # gRPC and REST wire DTOs and client SDK
 │   ├── codecs/                 # Polyglot AST parsers (Go, HCL, TS, Python, Rust, Java, SQL, Protobuf, C++)
 │   ├── collaboration/          # Conflict engine and multi-universe fitness evaluator
 │   ├── core/                   # Schemas, Merkle hasher, and cross-boundary graph linker
-│   ├── distributed/            # Radicle-inspired CRDT COBs & P2P sync
+│   ├── distributed/            # Radicle-inspired CRDT COBs, stacked proposals & P2P sync
 │   ├── gitshim/                # Git command interceptor and synthetic tree generator
 │   ├── lineage/                # Ancestry tracer, audit engine, and Ed25519 attestations
 │   ├── materialize/            # AST-to-source hydrators, terminal viewer, and VFS
@@ -123,9 +129,13 @@ future-of-git/
 │   ├── shipping/               # Target specification, ephemeral staging, and compilers
 │   ├── storage/                # Blobstore, SQLite WAL graph engine, and vector index
 │   ├── target/                 # Target environment projector and local preview sandbox
+│   ├── topocosm/               # Distribution hub backplane (migrating to standalone repo)
 │   └── tui/                    # Interactive Bubble Tea terminal dashboard
 ├── test/
 │   └── agents/                 # External autonomous test agent, LLM client, and rater oracle
-├── docs/                       # Benefits-driven documentation and reference guides
+├── docs/
+│   ├── reference/              # Technical specifications (schema, federation, topocosm, codecs)
+│   ├── roadmaps/               # Engineering roadmaps (Topocosm spin-off plan)
+│   └── guides/                 # Developer and testing walkthroughs
 └── examples/                   # Polyglot demo workspaces (Terraform + Go + React)
 ```

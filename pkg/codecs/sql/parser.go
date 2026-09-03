@@ -75,11 +75,11 @@ type SQLAlterTable struct {
 
 // SQLFileResult contains all extracted SQL DDL statements and entities.
 type SQLFileResult struct {
-	FilePath   string              `json:"file_path"`
-	Tables     []SQLTable          `json:"tables"`
-	Indexes    []SQLIndex          `json:"indexes"`
-	Views      []SQLView           `json:"views"`
-	AlterTable []SQLAlterTable     `json:"alter_table"`
+	FilePath   string                `json:"file_path"`
+	Tables     []SQLTable            `json:"tables"`
+	Indexes    []SQLIndex            `json:"indexes"`
+	Views      []SQLView             `json:"views"`
+	AlterTable []SQLAlterTable       `json:"alter_table"`
 	AllSymbols []*core.ASTSymbolNode `json:"all_symbols"`
 }
 

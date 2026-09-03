@@ -12,13 +12,13 @@ import (
 
 // UniverseDiff encapsulates differences between two micro-universes.
 type UniverseDiff struct {
-	UniverseA         string                  `json:"universe_a"`
-	UniverseB         string                  `json:"universe_b"`
-	ManifestHashA     string                  `json:"manifest_hash_a"`
-	ManifestHashB     string                  `json:"manifest_hash_b"`
-	Identical         bool                    `json:"identical"`
-	AddedComponents   []string                `json:"added_components"`   // In B but not A
-	RemovedComponents []string                `json:"removed_components"` // In A but not B
+	UniverseA         string                   `json:"universe_a"`
+	UniverseB         string                   `json:"universe_b"`
+	ManifestHashA     string                   `json:"manifest_hash_a"`
+	ManifestHashB     string                   `json:"manifest_hash_b"`
+	Identical         bool                     `json:"identical"`
+	AddedComponents   []string                 `json:"added_components"`   // In B but not A
+	RemovedComponents []string                 `json:"removed_components"` // In A but not B
 	AddedEdges        []core.CrossBoundaryEdge `json:"added_edges"`        // In B but not A
 	RemovedEdges      []core.CrossBoundaryEdge `json:"removed_edges"`      // In A but not B
 }

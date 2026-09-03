@@ -16,9 +16,9 @@ import (
 
 // TSAPICall represents an HTTP fetch or API client request discovered in TypeScript/TSX.
 type TSAPICall struct {
-	Method     string `json:"method"`      // e.g. "GET", "POST", "PUT", "DELETE"
-	URL        string `json:"url"`         // e.g. "/api/v1/users", "/api/auth/login"
-	Caller     string `json:"caller"`      // e.g. "fetch", "axios.get", "apiClient.post"
+	Method     string `json:"method"` // e.g. "GET", "POST", "PUT", "DELETE"
+	URL        string `json:"url"`    // e.g. "/api/v1/users", "/api/auth/login"
+	Caller     string `json:"caller"` // e.g. "fetch", "axios.get", "apiClient.post"
 	LineNumber int    `json:"line_number"`
 }
 
@@ -81,16 +81,16 @@ type TSImport struct {
 
 // TSFileResult contains all extracted symbols from a TypeScript / TSX file.
 type TSFileResult struct {
-	FilePath   string                 `json:"file_path"`
-	Components []TSComponent          `json:"components"`
-	Hooks      []TSHook               `json:"hooks"`
-	Interfaces []TSInterface          `json:"interfaces"`
-	Types      []TSTypeAlias          `json:"types"`
-	Functions  []TSFunction           `json:"functions"`
-	APICalls   []TSAPICall            `json:"api_calls"`
-	Imports    []TSImport             `json:"imports"`
-	Exports    []string               `json:"exports"`
-	AllSymbols []*core.ASTSymbolNode  `json:"all_symbols"`
+	FilePath   string                `json:"file_path"`
+	Components []TSComponent         `json:"components"`
+	Hooks      []TSHook              `json:"hooks"`
+	Interfaces []TSInterface         `json:"interfaces"`
+	Types      []TSTypeAlias         `json:"types"`
+	Functions  []TSFunction          `json:"functions"`
+	APICalls   []TSAPICall           `json:"api_calls"`
+	Imports    []TSImport            `json:"imports"`
+	Exports    []string              `json:"exports"`
+	AllSymbols []*core.ASTSymbolNode `json:"all_symbols"`
 }
 
 // TSParser extracts symbols, components, hooks, interfaces, and API calls from TypeScript/TSX.

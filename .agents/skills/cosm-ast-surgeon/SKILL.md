@@ -113,6 +113,48 @@ Content-Type: application/json
       "target": "BillingService.ProcessPayment",
       "content": "w.WriteHeader(http.StatusOK)\nreturn nil"
     }
-  ]
+  ],
+  "lineage": {
+    "user_prompt": "Fix payment return status",
+    "executing_agent_id": "cosm-ast-surgeon",
+    "llm_version": "gemini-3.7-flash",
+    "tokens": {
+      "prompt_tokens": 820,
+      "completion_tokens": 140,
+      "reasoning_tokens": 260,
+      "cost_usd": 0.00062,
+      "latency_ms": 320
+    },
+    "trace": {
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "span_id": "00f067aa0ba902b7"
+    }
+  }
 }
 ```
+
+---
+
+## 6. Commit Contract & Token Telemetry Guidelines
+
+When finalizing AST mutations and committing the micro-universe workspace, autonomous agents MUST supply complete causal lineage and token telemetry:
+
+```bash
+cosm commit \
+  -u universe-feat-auth \
+  -i "feat: update token verification" \
+  -p "Implement RS256 token verification" \
+  --session-id "sess-4491-a8b2" \
+  -a cosm-ast-surgeon \
+  -m "gemini-3.7-flash" \
+  --prompt-tokens 1420 \
+  --completion-tokens 312 \
+  --reasoning-tokens 850 \
+  --cost-usd 0.00184 \
+  --latency-ms 640 \
+  --trace-id "4bf92f3577b34da6a3ce929d0e0e4736" \
+  --span-id "00f067aa0ba902b7"
+```
+
+For complete specification details, see [Agent Commit Contract Reference](file:///Users/jasondavenport/GitHub/cosm/docs/reference/agent-commit-contract.md).
+

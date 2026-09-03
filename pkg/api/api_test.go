@@ -168,3 +168,121 @@ func TestAgentAPIServer_ApplyASTEditBatch(t *testing.T) {
 		t.Fatalf("Unexpected modified/added count: %+v", res)
 	}
 }
+
+func TestAgentAPIServer_CommitWorkspaceWithTelemetry(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "fg-api-commit-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp failed: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	blobStore, _ := storage.NewBlobStore(filepath.Join(tmpDir, "objects"))
+	graphEngine, _ := storage.NewGraphEngine(filepath.Join(tmpDir, "graph.db"))
+	defer graphEngine.Close()
+
+	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
+	server := NewAgentAPIServer(universeMgr, blobStore, graphEngine)
+	client := NewInProcessAgentClient(server.Handler())
+
+	universeID := "universe-telemetry-test"
+	_, _ = universeMgr.CreateUniverse(universeID, "")
+
+	// 1. Stage a component and symbol
+	sym := &core.ASTSymbolNode{
+		Language:   core.LangGo,
+		NodeType:   "FunctionDecl",
+		Identifier: "pkg/auth::ValidateRS256Token",
+		ASTPayload: []byte("func ValidateRS256Token() bool { return true }"),
+	}
+	symBytes, _ := json.Marshal(sym)
+	symHash, _ := blobStore.Put(symBytes)
+	sym.NodeID = symHash
+
+	_ = graphEngine.PutNode(storage.NodeRecord{
+		NodeID:     symHash,
+		Language:   core.LangGo,
+		NodeType:   "FunctionDecl",
+		Identifier: "pkg/auth::ValidateRS256Token",
+		MerkleHash: symHash,
+		CreatedAt:  time.Now().UTC(),
+	})
+
+	comp := &core.ComponentNode{
+		Name:        "pkg/auth",
+		Type:        core.CompService,
+		Language:    core.LangGo,
+		SymbolNodes: []string{symHash},
+	}
+	compBytes, _ := json.Marshal(comp)
+	compHash, _ := blobStore.Put(compBytes)
+	comp.ComponentID = compHash
+
+	_ = graphEngine.PutNode(storage.NodeRecord{
+		NodeID:     compHash,
+		Language:   core.LangGo,
+		NodeType:   "service",
+		Identifier: "pkg/auth",
+		MerkleHash: compHash,
+		CreatedAt:  time.Now().UTC(),
+	})
+
+	// 2. Commit workspace with full LineageEnvelope, Tokens, and Trace Carrier
+	commitReq := &CommitWorkspaceRequest{
+		UniverseID: universeID,
+		Intent:     "Implement RS256 token verification",
+		Lineage: core.LineageEnvelope{
+			UserID:              "developer-alice",
+			UserPrompt:          "Add RS256 token validation with error propagation",
+			SessionID:           "sess-993821aa-8371-4209",
+			OrchestratorAgentID: "agent-orchestrator-alpha",
+			ExecutingAgentID:    "cosm-worker-auth-1",
+			LLMVersion:          "gemini-3.7-flash",
+			GenerationParams:    `{"temperature": 0.2, "seed": 42}`,
+			Intent:              "Add RS256 token validation",
+			Timestamp:           time.Now().UTC(),
+			Tokens: core.TokenTelemetry{
+				PromptTokens:     1420,
+				CompletionTokens: 312,
+				ReasoningTokens:  850,
+				CachedTokens:     128,
+				TotalTokens:      2582,
+				CostUSD:          0.00184,
+				LatencyMs:        640,
+			},
+			Trace: core.TraceCarrier{
+				TraceID:    "4bf92f3577b34da6a3ce929d0e0e4736",
+				SpanID:     "00f067aa0ba902b7",
+				TraceFlags: "01",
+				Attributes: map[string]string{
+					"agent.role": "auth-engineer",
+				},
+			},
+		},
+	}
+
+	commitResp, err := client.CommitWorkspace(commitReq)
+	if err != nil {
+		t.Fatalf("CommitWorkspace failed: %v", err)
+	}
+
+	if !commitResp.Success || commitResp.MerkleRootHash == "" {
+		t.Fatalf("expected successful commit, got: %+v", commitResp)
+	}
+
+	if commitResp.ComponentCount != 1 {
+		t.Fatalf("expected 1 component, got %d", commitResp.ComponentCount)
+	}
+
+	// 3. Verify Universe Manifest
+	uniManifest, err := universeMgr.GetUniverseManifest(universeID)
+	if err != nil {
+		t.Fatalf("GetUniverseManifest failed: %v", err)
+	}
+
+	if uniManifest.Lineage.Tokens.TotalTokens != 2582 {
+		t.Fatalf("expected 2582 total tokens, got %d", uniManifest.Lineage.Tokens.TotalTokens)
+	}
+	if uniManifest.Lineage.Trace.TraceID != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Fatalf("expected trace id 4bf92f3577b34da6a3ce929d0e0e4736, got %s", uniManifest.Lineage.Trace.TraceID)
+	}
+}

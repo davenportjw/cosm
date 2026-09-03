@@ -56,9 +56,9 @@ func TestOperations_ResolveSymbol(t *testing.T) {
 
 	// Create Go Function Symbol with structured GoFuncSymbol payload
 	fnSymbol := golang.GoFuncSymbol{
-		Name:       "ProcessPayment",
-		Doc:        "ProcessPayment processes an incoming payment.",
-		IsMethod:   true,
+		Name:         "ProcessPayment",
+		Doc:          "ProcessPayment processes an incoming payment.",
+		IsMethod:     true,
 		ReceiverName: "s",
 		ReceiverType: "*BillingService",
 		Params: []golang.GoFuncParam{

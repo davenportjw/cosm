@@ -6,38 +6,43 @@ Topocosm provides machine-first agent discovery, sparse AST subgraph replication
 
 ---
 
-## 1. System Architecture
+## 1. System Division of Concerns: `cosm` vs. `topocosm`
 
 ```
-                                  Agent Swarms / Cosm CLI
-                                             │
-                      ┌──────────────────────┴──────────────────────┐
-                      │                                             │
-             HTTP / REST / gRPC                             Git Smart-HTTP
-         (Agent / Developer SDK)                       (IDE & CLI Compatibility)
-                      │                                             │
-                      ▼                                             ▼
-       ┌──────────────────────────────────────────────────────────────────┐
-       │                       Topocosm Hub Server                        │
-       │                                                                  │
-       │  • /.well-known/cosm-agent.json  • CAS AST Publishing & Pull     │
-       │  • Ed25519 DID & Policy Engine   • Sparse Subtree Extraction     │
-       │  • Blackboard Lease Coordination • CRDT Proposal Merging (COBs)  │
-       └──────────────────────────────────┬───────────────────────────────┘
-                                          │
-                            Pluggable Backplane Interface
-                        (BackplaneProvider / LocalBackplane)
-                                          │
-                 ┌────────────────────────┴────────────────────────┐
-                 │                                                 │
-          Local Dev / Edge                               Cloud Cluster Backplane
-      (100% Pure-Go / SQLite WAL)                    (Distributed Cloud Services)
-                 │                                                 │
-      • BlobStore (.cosm/objects/)                      • S3 / GCS / R2 Object Store
-      • SQLite WAL (.cosm/graph.db)                     • CockroachDB / DynamoDB Metadata
-      • In-Memory Go Channels                           • NATS JetStream Event Fabric
-      • In-Process Mutex Leases                         • Redis / DynamoDB Distributed Locks
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                 TOPOCOSM (The Hub / Mesh)                              │
+│                                                                                        │
+│  • Agent Discovery (/.well-known/cosm-agent.json)   • Multi-Repo Catalog & Registry    │
+│  • Distributed Blackboard Leases (Domain Locks)     • Sparse Subgraph CAS Distribution │
+│  • Multi-Peer Proposal Gossip & CRDT Convergence    • Remote Git Smart-HTTP Server     │
+└───────────────────────────────────────────┬────────────────────────────────────────────┘
+                                            │
+                        Network Pull / Push Protocol (CAS Blobs + COBs)
+                                            │
+                                            ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                              COSM (The Local Core Engine / CLI)                        │
+│                                                                                        │
+│  • Polyglot AST Codecs (Go, TS, Py, HCL, Rust, etc) • AST Hydration to Disk (Files)   │
+│  • Local CAS Blobstore (.cosm/objects/)              • SQLite WAL Graph (.cosm/graph.db)│
+│  • Declarative AST Surgery (9 Geometric Verbs)       • Stack Auto-Evolution (jj-style) │
+│  • Cross-Boundary Linker & Blast Radius Engine       • Embedded Shipping Sidecar (Ship)│
+│  • Local Git Interceptor & Synthetic Commit Adapter  • Micro-Universe Branching        │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Architectural Division Matrix
+
+| Responsibility | Handled by `cosm` | Handled by `topocosm` |
+| :--- | :---: | :---: |
+| **AST Parsing, Slicing & Surgery** | **YES** (`pkg/codecs/`, `pkg/mutation/`) | **NO** (Client-side execution) |
+| **AST Hydration to Disk ("Cloning")** | **YES** (`pkg/materialize/`, `pkg/gitshim/`) | **NO** (Only streams CAS blobs) |
+| **Project vs. Non-Project Boundaries** | **YES** (`pkg/core/crossboundary.go`) | **NO** (Stores indexed edges) |
+| **Stack Auto-Evolution (`cosm stack evolve`)** | **YES** (`pkg/distributed/stacked.go`) | **NO** (Propagates proposal COBs) |
+| **Lamport Clocks & CRDT Joining** | **YES** (Local clock tick) | **YES** (State convergence join $\sqcup$) |
+| **Agent Domain Leases (Blackboard)** | **SDK Client** | **Server Authority / Lock Engine** |
+| **Sparse Subtree Replication** | **Ingest Engine** | **Filtered Packaging Service** |
+| **Git Interoperability** | **Local CLI Interceptor** | **Remote Smart-HTTP Endpoint** |
 
 ---
 
@@ -168,27 +173,72 @@ Topocosm exposes an agent discovery endpoint at `GET /.well-known/cosm-agent.jso
 ### Git Smart-HTTP Compatibility Shim
 - `GET /git/{org}/{cosm}.git/info/refs?service=git-upload-pack`: Returns synthetic Git refs advertisement for IDEs and legacy git clients.
 
+### Web UI Dashboard & Administration (`/cosms`, `/federation`, `/admin`, `/settings`)
+- `GET /cosms`: Polyglot Cosm repository catalog with Merkle root hashes and component metrics.
+- `GET /cosms/{org}/{cosm}`: 4-tier AST Merkle-DAG workspace, zero-copy micro-universe switcher, and cross-boundary topology graph.
+- `GET /cosms/{org}/{cosm}/symbols/{id}`: Split-pane AST symbol inspector, hydrated polyglot source code, and Ed25519 causal lineage card.
+- `GET /cosms/{org}/{cosm}/proposals/{id}`: Semantic AST symbol deltas, AI Critic Oracle reviews, and CRDT merge actions.
+- `GET /cosms/{org}/{cosm}/stacks`: Jujutsu-style stacked proposals with auto-evolution timeline.
+- `GET /federation`: Multi-Cosm AST Super-DAG continuum and Sparse Subtree Replication Simulator.
+- `GET /admin/users`: User & access governance table, admin invitation modal, and role assigner (`admin`, `maintainer`, `contributor`, `viewer`).
+- `GET /admin/blackboard`: Live micro-domain lease coordinator with active agent goals and force-evict actions.
+- `GET /admin/benchmarks`: Multi-agent concurrent swarm simulation controller with live throughput telemetry.
+- `GET /settings/tokens`: Developer Personal Access Token (PAT) management with one-time copy reveals and SHA-256 one-way hashing.
+- `POST /auth/session`: Federated Social Sign-in (Google / GitHub / Passkeys) and session cookie issuer with `LOCAL_DEV` bypass.
+
 ---
 
-## 5. Developer CLI Workflows
+## 5. Teamwork, Envelope Encryption & Developer Authentication
+
+### Zero Plaintext Storage Invariant
+- Topocosm **never** stores plaintext user passwords, private keys, or raw PATs.
+- Personal Access Tokens use the `tp_pat_` prefix and are persisted strictly as `sha256(raw_token)` hashes.
+- Authenticated requests pass `Authorization: Bearer tp_pat_<secret>` or an active session cookie.
+
+### Client-Side Multi-Recipient Envelope Encryption
+1. **Data Encryption Key (DEK)**: 256-bit AES-GCM random symmetric key generated client-side per workspace/universe.
+2. **Key Encryption Key (KEK)**: Derived via ECDH (`crypto/ecdh.X25519()`) between an ephemeral keypair and each recipient's public key, finalized with HKDF-SHA256.
+3. **Sharing & Access Grants**: The repository owner seals the DEK for collaborator public keys retrieved from `GET /api/v1/users/{email}/pubkey` and stores access grants via `POST /api/v1/cosms/{org}/{cosm}/share`.
+4. **Revocation**: Removing a collaborator envelope immediately revokes decryption capability without requiring re-encryption of past immutable CAS commits.
+
+---
+
+## 6. Standalone Repository Spin-Off Roadmap
+
+Topocosm is scheduled for decoupling into an independent repository (`github.com/cosmscm/topocosm`). 
+For the full migration timeline, package extraction maps, and protocol versioning, refer to the [Topocosm Spin-Off Roadmap](file:///Users/jasondavenport/GitHub/cosm/docs/roadmaps/topocosm-spin-off-plan.md).
+
+---
+
+## 7. Developer CLI Workflows
 
 ```bash
 # 1. Start local zero-Docker Topocosm Hub daemon
 cosm topocosm dev --port 51204 --dir .topocosm
 
-# 2. Seed mock polyglot cosms, proposals, and blackboard claims
+# 2. Authenticate CLI & Manage Personal Access Tokens (PATs)
+cosm auth login --token tp_pat_9a4f21b7c8e901...
+cosm auth whoami
+cosm auth token list
+cosm auth token create my-laptop-pat --days 90
+
+# 3. Seed mock polyglot cosms, proposals, and blackboard claims
 cosm topocosm seed --dir .topocosm
 
-# 3. Inspect local hub status and active claims
+# 4. Inspect local hub status and active claims
 cosm topocosm status --url http://127.0.0.1:51204
 
-# 4. Benchmark concurrent agent swarm throughput
+# 5. Benchmark concurrent agent swarm throughput
 cosm topocosm test-swarm --agents 25 --duration 5s
 
-# 5. Publish local universe AST DAG to Topocosm Hub
+# 6. Publish local universe AST DAG to Topocosm Hub
 cosm publish http://127.0.0.1:51204/demo-org/cloud-platform --universe universe-main --intent "Ship payment API"
 
-# 6. Clone or sparse-pull cosm to local disk
+# 7. Grant collaborator access with client-side envelope encryption
+cosm share demo-org/cloud-platform --user collaborator@company.com --access maintainer
+
+# 8. Clone or sparse-pull cosm to local disk
 cosm clone http://127.0.0.1:51204/demo-org/cloud-platform ./cloud-platform
 cosm clone http://127.0.0.1:51204/demo-org/cloud-platform ./billing-subgraph --sparse "services/billing"
 ```
+

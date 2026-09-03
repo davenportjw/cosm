@@ -94,12 +94,12 @@ func (r *ToolRegistry) Execute(ctx context.Context, call ToolCall) ToolResult {
 
 // LoopOptions defines execution parameters for the autonomous agent loop.
 type LoopOptions struct {
-	MaxSteps              int
-	SystemInstruction     string
-	Temperature           *float64
-	ReflectOnError        bool
+	MaxSteps                int
+	SystemInstruction       string
+	Temperature             *float64
+	ReflectOnError          bool
 	KeepRunningWithoutTools bool
-	OnStepCallback        func(trace StepTrace)
+	OnStepCallback          func(trace StepTrace)
 }
 
 // DefaultLoopOptions returns default loop execution options.

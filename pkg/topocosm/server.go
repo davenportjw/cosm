@@ -17,10 +17,10 @@ import (
 // HubServer represents the Topocosm HTTP/REST and gRPC-compatible API server.
 type HubServer struct {
 	bp          backplane.BackplaneProvider
-	repos       map[string]*CosmRepository          // "org/cosm" -> CosmRepository
-	users       map[string]*UserAccount             // UserDID -> UserAccount
-	orgs        map[string]*Organization            // OrgSlug -> Organization
-	agents      map[string]*AgentIdentity           // AgentDID -> AgentIdentity
+	repos       map[string]*CosmRepository                     // "org/cosm" -> CosmRepository
+	users       map[string]*UserAccount                        // UserDID -> UserAccount
+	orgs        map[string]*Organization                       // OrgSlug -> Organization
+	agents      map[string]*AgentIdentity                      // AgentDID -> AgentIdentity
 	proposals   map[string]map[string]*distributed.ProposalCOB // "org/cosm" -> (PropID -> ProposalCOB)
 	blackboards map[string]*distributed.BlackboardCOB          // "org/cosm" -> BlackboardCOB
 	startTime   time.Time
@@ -160,12 +160,12 @@ func (s *HubServer) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DID         string `json:"did"`
-		Username    string `json:"username"`
-		Email       string `json:"email"`
-		DisplayName string `json:"display_name"`
-		PublicKey   string `json:"public_key"`
-		IsAgent     bool   `json:"is_agent"`
+		DID          string `json:"did"`
+		Username     string `json:"username"`
+		Email        string `json:"email"`
+		DisplayName  string `json:"display_name"`
+		PublicKey    string `json:"public_key"`
+		IsAgent      bool   `json:"is_agent"`
 		ModelVersion string `json:"model_version,omitempty"`
 	}
 
@@ -335,11 +335,11 @@ func (s *HubServer) handleAgentSettings(w http.ResponseWriter, r *http.Request) 
 func (s *HubServer) handleCosms(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		var req struct {
-			OrgSlug        string     `json:"org_slug"`
-			CosmName       string     `json:"cosm_name"`
-			Description    string     `json:"description"`
-			Visibility     Visibility `json:"visibility"`
-			DefaultUniverse string    `json:"default_universe"`
+			OrgSlug         string     `json:"org_slug"`
+			CosmName        string     `json:"cosm_name"`
+			Description     string     `json:"description"`
+			Visibility      Visibility `json:"visibility"`
+			DefaultUniverse string     `json:"default_universe"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
@@ -520,6 +520,8 @@ func (s *HubServer) handlePublish(w http.ResponseWriter, r *http.Request, orgSlu
 			OwnerDID:        r.Header.Get("X-Cosm-DID"),
 			MerkleRootHash:  merkleRoot,
 			Manifest:        payload.Manifest,
+			Components:      payload.Components,
+			Symbols:         payload.Symbols,
 			CreatedAt:       now,
 			UpdatedAt:       now,
 		}
@@ -527,6 +529,8 @@ func (s *HubServer) handlePublish(w http.ResponseWriter, r *http.Request, orgSlu
 	} else {
 		repo.MerkleRootHash = merkleRoot
 		repo.Manifest = payload.Manifest
+		repo.Components = payload.Components
+		repo.Symbols = payload.Symbols
 		repo.UpdatedAt = now
 	}
 	s.mu.Unlock()
@@ -564,10 +568,14 @@ func (s *HubServer) handlePull(w http.ResponseWriter, r *http.Request, orgSlug, 
 		universeID = repo.DefaultUniverse
 	}
 
-	manifest, err := s.bp.UniverseManager().GetUniverseManifest(universeID)
-	if err != nil || manifest == nil {
-		http.Error(w, fmt.Sprintf(`{"error":"universe %s not found: %v"}`, universeID, err), http.StatusNotFound)
-		return
+	manifest := repo.Manifest
+	if manifest == nil {
+		var err error
+		manifest, err = s.bp.UniverseManager().GetUniverseManifest(universeID)
+		if err != nil || manifest == nil {
+			http.Error(w, fmt.Sprintf(`{"error":"universe %s not found: %v"}`, universeID, err), http.StatusNotFound)
+			return
+		}
 	}
 
 	// Package full blobs
@@ -576,20 +584,49 @@ func (s *HubServer) handlePull(w http.ResponseWriter, r *http.Request, orgSlug, 
 	blobs := make(map[string][]byte)
 
 	for _, compID := range manifest.Components {
-		compBytes, err := s.bp.BlobStore().Get(compID)
-		if err == nil {
-			blobs[compID] = compBytes
-			var comp core.ComponentNode
-			if json.Unmarshal(compBytes, &comp) == nil {
-				components[compID] = &comp
-				for _, symID := range comp.SymbolNodes {
-					symBytes, err := s.bp.BlobStore().Get(symID)
-					if err == nil {
-						blobs[symID] = symBytes
-						var sym core.ASTSymbolNode
-						if json.Unmarshal(symBytes, &sym) == nil {
-							symbols[symID] = &sym
+		var comp *core.ComponentNode
+		var compBytes []byte
+		if repo.Components != nil {
+			comp = repo.Components[compID]
+		}
+		if comp != nil {
+			compBytes, _ = json.Marshal(comp)
+		} else {
+			compBytes, _ = s.bp.BlobStore().Get(compID)
+			if compBytes != nil {
+				var c core.ComponentNode
+				if json.Unmarshal(compBytes, &c) == nil {
+					comp = &c
+				}
+			}
+		}
+
+		if comp != nil {
+			components[compID] = comp
+			if len(compBytes) > 0 {
+				blobs[compID] = compBytes
+			}
+			for _, symID := range comp.SymbolNodes {
+				var sym *core.ASTSymbolNode
+				var symBytes []byte
+				if repo.Symbols != nil {
+					sym = repo.Symbols[symID]
+				}
+				if sym != nil {
+					symBytes, _ = json.Marshal(sym)
+				} else {
+					symBytes, _ = s.bp.BlobStore().Get(symID)
+					if symBytes != nil {
+						var s core.ASTSymbolNode
+						if json.Unmarshal(symBytes, &s) == nil {
+							sym = &s
 						}
+					}
+				}
+				if sym != nil {
+					symbols[symID] = sym
+					if len(symBytes) > 0 {
+						blobs[symID] = symBytes
 					}
 				}
 			}
@@ -611,6 +648,16 @@ func (s *HubServer) handlePull(w http.ResponseWriter, r *http.Request, orgSlug, 
 
 // handleSparsePull processes agent-filtered subtree extraction requests.
 func (s *HubServer) handleSparsePull(w http.ResponseWriter, r *http.Request, orgSlug, cosmName string) {
+	slug := orgSlug + "/" + cosmName
+	s.mu.RLock()
+	repo, exists := s.repos[slug]
+	s.mu.RUnlock()
+
+	if !exists {
+		http.Error(w, fmt.Sprintf(`{"error":"cosm %s not found"}`, slug), http.StatusNotFound)
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
@@ -624,13 +671,17 @@ func (s *HubServer) handleSparsePull(w http.ResponseWriter, r *http.Request, org
 
 	universeID := req.UniverseID
 	if universeID == "" {
-		universeID = "universe-main"
+		universeID = repo.DefaultUniverse
 	}
 
-	manifest, err := s.bp.UniverseManager().GetUniverseManifest(universeID)
-	if err != nil || manifest == nil {
-		http.Error(w, fmt.Sprintf(`{"error":"universe %s manifest not found: %v"}`, universeID, err), http.StatusNotFound)
-		return
+	manifest := repo.Manifest
+	if manifest == nil {
+		var err error
+		manifest, err = s.bp.UniverseManager().GetUniverseManifest(universeID)
+		if err != nil || manifest == nil {
+			http.Error(w, fmt.Sprintf(`{"error":"universe %s manifest not found: %v"}`, universeID, err), http.StatusNotFound)
+			return
+		}
 	}
 
 	components := make(map[string]*core.ComponentNode)
@@ -640,13 +691,24 @@ func (s *HubServer) handleSparsePull(w http.ResponseWriter, r *http.Request, org
 	totalPossibleBlobs := len(manifest.Components)
 
 	for _, compID := range manifest.Components {
-		compBytes, err := s.bp.BlobStore().Get(compID)
-		if err != nil {
-			continue
+		var comp *core.ComponentNode
+		var compBytes []byte
+		if repo.Components != nil {
+			comp = repo.Components[compID]
+		}
+		if comp != nil {
+			compBytes, _ = json.Marshal(comp)
+		} else {
+			compBytes, _ = s.bp.BlobStore().Get(compID)
+			if compBytes != nil {
+				var c core.ComponentNode
+				if json.Unmarshal(compBytes, &c) == nil {
+					comp = &c
+				}
+			}
 		}
 
-		var comp core.ComponentNode
-		if json.Unmarshal(compBytes, &comp) != nil {
+		if comp == nil {
 			continue
 		}
 
@@ -674,16 +736,32 @@ func (s *HubServer) handleSparsePull(w http.ResponseWriter, r *http.Request, org
 		}
 
 		if matches {
-			components[compID] = &comp
-			filteredBlobs[compID] = compBytes
+			components[compID] = comp
+			if len(compBytes) > 0 {
+				filteredBlobs[compID] = compBytes
+			}
 
 			for _, symID := range comp.SymbolNodes {
-				symBytes, err := s.bp.BlobStore().Get(symID)
-				if err == nil {
-					filteredBlobs[symID] = symBytes
-					var sym core.ASTSymbolNode
-					if json.Unmarshal(symBytes, &sym) == nil {
-						symbols[symID] = &sym
+				var sym *core.ASTSymbolNode
+				var symBytes []byte
+				if repo.Symbols != nil {
+					sym = repo.Symbols[symID]
+				}
+				if sym != nil {
+					symBytes, _ = json.Marshal(sym)
+				} else {
+					symBytes, _ = s.bp.BlobStore().Get(symID)
+					if symBytes != nil {
+						var s core.ASTSymbolNode
+						if json.Unmarshal(symBytes, &s) == nil {
+							sym = &s
+						}
+					}
+				}
+				if sym != nil {
+					symbols[symID] = sym
+					if len(symBytes) > 0 {
+						filteredBlobs[symID] = symBytes
 					}
 				}
 			}
@@ -723,11 +801,11 @@ func (s *HubServer) handleProposals(w http.ResponseWriter, r *http.Request, orgS
 		if r.Method == http.MethodPost {
 			// Create Proposal
 			var req struct {
-				ID             string              `json:"id"`
-				Title          string              `json:"title"`
-				SourceUniverse string              `json:"source_universe"`
-				TargetUniverse string              `json:"target_universe"`
-				AuthorDID      string              `json:"author_did"`
+				ID             string               `json:"id"`
+				Title          string               `json:"title"`
+				SourceUniverse string               `json:"source_universe"`
+				TargetUniverse string               `json:"target_universe"`
+				AuthorDID      string               `json:"author_did"`
 				Lineage        core.LineageEnvelope `json:"lineage"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

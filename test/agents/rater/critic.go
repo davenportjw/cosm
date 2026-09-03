@@ -22,7 +22,7 @@ type CritiqueItem struct {
 // CritiqueReport represents the multi-turn evaluation produced by the AI Critic.
 type CritiqueReport struct {
 	ReviewerAgent     string         `json:"reviewer_agent"`
-	Verdict           string         `json:"verdict"` // "APPROVE", "REQUEST_CHANGES", "REJECT"
+	Verdict           string         `json:"verdict"`       // "APPROVE", "REQUEST_CHANGES", "REJECT"
 	FitnessScore      float64        `json:"fitness_score"` // 0.0 to 1.0
 	Critiques         []CritiqueItem `json:"critiques"`
 	RemediationPrompt string         `json:"remediation_prompt"`

@@ -35,12 +35,12 @@ type ComponentDrift struct {
 
 // TargetState represents the known deployed or materialized snapshot of a target environment.
 type TargetState struct {
-	TargetName       string            `json:"target_name"`
-	LastDeployedAt   time.Time         `json:"last_deployed_at"`
-	ComponentHashes  map[string]string `json:"component_hashes"`  // ComponentName -> ComponentID
-	ResourceHashes   map[string]string `json:"resource_hashes"`   // ResourceIdentifier -> NodeID
-	ActiveEnvVars    map[string]string `json:"active_env_vars"`   // EnvName -> Value
-	ActiveEndpoints  []string          `json:"active_endpoints"`  // ["GET /api/v1/users", ...]
+	TargetName      string            `json:"target_name"`
+	LastDeployedAt  time.Time         `json:"last_deployed_at"`
+	ComponentHashes map[string]string `json:"component_hashes"` // ComponentName -> ComponentID
+	ResourceHashes  map[string]string `json:"resource_hashes"`  // ResourceIdentifier -> NodeID
+	ActiveEnvVars   map[string]string `json:"active_env_vars"`  // EnvName -> Value
+	ActiveEndpoints []string          `json:"active_endpoints"` // ["GET /api/v1/users", ...]
 }
 
 // ProjectionDiff captures the complete delta and pending plan between Universe AST and Target state.

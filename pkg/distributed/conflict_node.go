@@ -12,12 +12,12 @@ import (
 
 // ConflictingVersion represents one concurrent agent's proposed version of a symbol or component.
 type ConflictingVersion struct {
-	AgentID      string               `json:"agent_id"`
-	UniverseID   string               `json:"universe_id"`
-	ASTHash      string               `json:"ast_hash"`
-	ASTPayload   []byte               `json:"ast_payload"`
-	Lineage      core.LineageEnvelope `json:"lineage"`
-	Timestamp    time.Time            `json:"timestamp"`
+	AgentID    string               `json:"agent_id"`
+	UniverseID string               `json:"universe_id"`
+	ASTHash    string               `json:"ast_hash"`
+	ASTPayload []byte               `json:"ast_payload"`
+	Lineage    core.LineageEnvelope `json:"lineage"`
+	Timestamp  time.Time            `json:"timestamp"`
 }
 
 // ASTConflictNode represents a first-class conflict state stored inside the Merkle DAG.

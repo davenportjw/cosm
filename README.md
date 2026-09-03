@@ -103,13 +103,13 @@ cosm dashboard
 ## 📁 Repository Structure
 
 ```
-future-of-git/
+cosm/
 ├── cmd/
 │   ├── cosm/                   # Developer CLI binary (`cosm`)
 │   └── cosm-agent-harness/     # Standalone autonomous test & rater agent harness
 ├── pkg/
 │   ├── api/                    # gRPC & in-process client/server SDK
-│   ├── codecs/                 # Polyglot AST parsers (Go, TS, Python, HCL, Rust, Java, SQL, Proto, C++)
+│   ├── codecs/                 # Polyglot AST parsers (Go, TS, Python, HCL, Rust, Java, C++, Swift, Kotlin, C#, WASM, Zig, GraphQL, Ruby, PHP, Elixir, SQL, Proto, Dockerfile)
 │   ├── collaboration/          # Conflict engine & multi-universe fitness evaluator
 │   ├── core/                   # Core schemas, Merkle hasher, and graph linker
 │   ├── distributed/            # Radicle-inspired CRDT COBs & P2P sync
@@ -173,6 +173,7 @@ For testing Cosm and Topocosm, refer to the 3 step-by-step testing guides:
 | [Agent API & SDK Reference](docs/reference/agent-api.md) | In-process and gRPC SDK for autonomous agents |
 | [Schema & Durable Storage Spec](docs/reference/schema-and-storage.md) | Content-addressed blobstore and SQLite WAL schema |
 | [Language Codecs & Contract Inference](docs/reference/codecs.md) | Polyglot parser implementations and symbol boundary contracts |
+| [Language Codec & Binary Asset Specification](docs/reference/language-and-binary-requirements.md) | Architectural specification for Storage, Presentation, and Compilation across 19 languages |
 | [Topocosm Hub & Agent Distribution](docs/reference/topocosm.md) | Machine discovery manifests, sparse cloning, and hub federation |
 | [PR & Collaboration Workflow](docs/HOW_TO_PR_AND_COLLABORATION.md) | Human reviewer and agent collaboration protocol |
 

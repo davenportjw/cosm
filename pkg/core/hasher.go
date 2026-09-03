@@ -52,6 +52,26 @@ func HashLineage(l *LineageEnvelope) string {
 	return HashString(builder.String())
 }
 
+// HashLineageContent computes the deterministic content hash for lineage attributes excluding volatile timestamps.
+// This is used for AST symbol node content addressing to preserve deduplication across commits.
+func HashLineageContent(l *LineageEnvelope) string {
+	if l == nil {
+		return HashString("nil_lineage_content")
+	}
+
+	var builder strings.Builder
+	builder.WriteString("lineage_content:v1\n")
+	builder.WriteString(fmt.Sprintf("user_id:%s\n", l.UserID))
+	builder.WriteString(fmt.Sprintf("user_prompt:%s\n", l.UserPrompt))
+	builder.WriteString(fmt.Sprintf("orchestrator_agent_id:%s\n", l.OrchestratorAgentID))
+	builder.WriteString(fmt.Sprintf("executing_agent_id:%s\n", l.ExecutingAgentID))
+	builder.WriteString(fmt.Sprintf("llm_version:%s\n", l.LLMVersion))
+	builder.WriteString(fmt.Sprintf("generation_params:%s\n", l.GenerationParams))
+	builder.WriteString(fmt.Sprintf("intent:%s\n", l.Intent))
+
+	return HashString(builder.String())
+}
+
 // HashASTSymbolNode computes the deterministic SHA-256 Merkle hash for an AST symbol node.
 func HashASTSymbolNode(node *ASTSymbolNode) (string, error) {
 	if node == nil {
@@ -59,7 +79,7 @@ func HashASTSymbolNode(node *ASTSymbolNode) (string, error) {
 	}
 
 	payloadHash := HashBytes(node.ASTPayload)
-	lineageHash := HashLineage(&node.Lineage)
+	lineageHash := HashLineageContent(&node.Lineage)
 
 	// Combine and sort dependencies for deterministic order
 	depSet := make(map[string]bool)

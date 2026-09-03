@@ -68,14 +68,14 @@ type ProtoService struct {
 
 // ProtoFileResult contains all extracted Protobuf definitions from a .proto file.
 type ProtoFileResult struct {
-	FilePath   string              `json:"file_path"`
-	Syntax     string              `json:"syntax"`
-	Package    string              `json:"package"`
-	Imports    []string            `json:"imports"`
-	Options    map[string]string   `json:"options"`
-	Services   []ProtoService      `json:"services"`
-	Messages   []ProtoMessage      `json:"messages"`
-	Enums      []ProtoEnum         `json:"enums"`
+	FilePath   string                `json:"file_path"`
+	Syntax     string                `json:"syntax"`
+	Package    string                `json:"package"`
+	Imports    []string              `json:"imports"`
+	Options    map[string]string     `json:"options"`
+	Services   []ProtoService        `json:"services"`
+	Messages   []ProtoMessage        `json:"messages"`
+	Enums      []ProtoEnum           `json:"enums"`
 	AllSymbols []*core.ASTSymbolNode `json:"all_symbols"`
 }
 

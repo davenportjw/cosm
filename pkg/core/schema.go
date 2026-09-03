@@ -21,6 +21,16 @@ const (
 	LangC          Language = "c"
 	LangSQL        Language = "sql"
 	LangProtobuf   Language = "protobuf"
+	LangSwift      Language = "swift"
+	LangKotlin     Language = "kotlin"
+	LangCSharp     Language = "csharp"
+	LangWasm       Language = "wasm"
+	LangZig        Language = "zig"
+	LangGraphQL    Language = "graphql"
+	LangRuby       Language = "ruby"
+	LangPHP        Language = "php"
+	LangElixir     Language = "elixir"
+	LangDockerfile Language = "dockerfile"
 	LangRaw        Language = "raw"
 )
 
@@ -28,7 +38,10 @@ const (
 func (l Language) IsValid() bool {
 	switch l {
 	case LangGo, LangHCL, LangTypeScript, LangPython, LangOpenAPI,
-		LangRust, LangJava, LangCpp, LangC, LangSQL, LangProtobuf, LangRaw:
+		LangRust, LangJava, LangCpp, LangC, LangSQL, LangProtobuf,
+		LangSwift, LangKotlin, LangCSharp, LangWasm, LangZig,
+		LangGraphQL, LangRuby, LangPHP, LangElixir, LangDockerfile,
+		LangRaw:
 		return true
 	default:
 		return false
@@ -98,18 +111,42 @@ func (e EdgeType) String() string {
 	return string(e)
 }
 
+// TokenTelemetry captures fine-grained token usage, financial cost, and model execution latency.
+type TokenTelemetry struct {
+	PromptTokens     int64   `json:"prompt_tokens,omitempty"`
+	CompletionTokens int64   `json:"completion_tokens,omitempty"`
+	ReasoningTokens  int64   `json:"reasoning_tokens,omitempty"` // Model thinking / scratchpad tokens
+	CachedTokens     int64   `json:"cached_tokens,omitempty"`    // Prompt cache hits
+	TotalTokens      int64   `json:"total_tokens,omitempty"`
+	CostUSD          float64 `json:"cost_usd,omitempty"`   // Financial cost in USD
+	LatencyMs        int64   `json:"latency_ms,omitempty"` // Inference round-trip latency in ms
+	TTFTMs           int64   `json:"ttft_ms,omitempty"`    // Time to first token in ms
+}
+
+// TraceCarrier encapsulates W3C Distributed Tracing and OpenTelemetry context for distributed agent swarms.
+type TraceCarrier struct {
+	TraceID      string            `json:"trace_id,omitempty"`    // W3C Trace ID (32 hex characters)
+	SpanID       string            `json:"span_id,omitempty"`     // W3C Span ID (16 hex characters)
+	TraceFlags   string            `json:"trace_flags,omitempty"` // W3C Trace Flags (e.g., "01" for sampled)
+	ParentSpanID string            `json:"parent_span_id,omitempty"`
+	TraceState   string            `json:"tracestate,omitempty"`
+	Attributes   map[string]string `json:"attributes,omitempty"`
+}
+
 // LineageEnvelope records the unbroken causal pedigree from user prompt and agent sessions to code nodes.
 type LineageEnvelope struct {
-	UserID              string    `json:"user_id"`
-	UserPrompt          string    `json:"user_prompt"`
-	SessionID           string    `json:"session_id"`
-	OrchestratorAgentID string    `json:"orchestrator_agent_id"`
-	ExecutingAgentID    string    `json:"executing_agent_id"`
-	LLMVersion          string    `json:"llm_version"`
-	GenerationParams    string    `json:"generation_params"` // JSON string: temp, seed, etc.
-	Intent              string    `json:"intent"`
-	Timestamp           time.Time `json:"timestamp"`
-	SignatureEd25519    []byte    `json:"signature_ed25519,omitempty"`
+	UserID              string         `json:"user_id"`
+	UserPrompt          string         `json:"user_prompt"`
+	SessionID           string         `json:"session_id"`
+	OrchestratorAgentID string         `json:"orchestrator_agent_id"`
+	ExecutingAgentID    string         `json:"executing_agent_id"`
+	LLMVersion          string         `json:"llm_version"`
+	GenerationParams    string         `json:"generation_params"` // JSON string: temp, seed, etc.
+	Intent              string         `json:"intent"`
+	Timestamp           time.Time      `json:"timestamp"`
+	Tokens              TokenTelemetry `json:"tokens,omitempty"`
+	Trace               TraceCarrier   `json:"trace,omitempty"`
+	SignatureEd25519    []byte         `json:"signature_ed25519,omitempty"`
 }
 
 // Clone creates a deep copy of the LineageEnvelope.
@@ -118,6 +155,12 @@ func (l *LineageEnvelope) Clone() LineageEnvelope {
 	if l.SignatureEd25519 != nil {
 		clone.SignatureEd25519 = make([]byte, len(l.SignatureEd25519))
 		copy(clone.SignatureEd25519, l.SignatureEd25519)
+	}
+	if l.Trace.Attributes != nil {
+		clone.Trace.Attributes = make(map[string]string, len(l.Trace.Attributes))
+		for k, v := range l.Trace.Attributes {
+			clone.Trace.Attributes[k] = v
+		}
 	}
 	return clone
 }
