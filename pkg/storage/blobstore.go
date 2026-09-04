@@ -21,7 +21,7 @@ type BlobStore struct {
 }
 
 // NewBlobStore initializes a content-addressed blob store within the specified objects directory.
-// If rootPath points to a repo or .cosm/.fg directory, it creates the objects and .tmp subdirectories.
+// If rootPath points to a repo or .cosm directory, it creates the objects and .tmp subdirectories.
 func NewBlobStore(rootPath string) (*BlobStore, error) {
 	var objectsDir string
 	if filepath.Base(rootPath) == "objects" {

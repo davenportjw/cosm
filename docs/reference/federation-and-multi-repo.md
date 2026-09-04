@@ -133,8 +133,10 @@ Cosm bridges the gap between AI agent efficiency and human developer ergonomics:
      Topological AST Slice (2 KB - 5 KB)           Full AST Hydration to Disk (Files)
      • Target Symbol Payload                       • Real .go, .tsx, .tf, .py files
      • 1-Hop Contract Signatures                   • Normal VS Code / Cursor / Neovim
-     • 98% Token Reduction                         • Synthetic Git CLI Interceptor
+     • 80%–99% Scale-Dependent Token Reduction     • Synthetic Git CLI Interceptor
 ```
+
+For full mathematical derivation and empirical tables across 5- to 100-component repositories, see [Empirical Benchmarks & Savings Reference](file:///Users/jasondavenport/GitHub/cosm/docs/reference/empirical-benchmarks-and-savings.md).
 
 ### 5.1 AI Agents: Topological AST Slices
 * Agents receive only the target symbol and its 1-hop contract dependencies (omitting bodies of unchanged code).
@@ -203,3 +205,14 @@ cosm blast-radius services/billing::ChargeCard
 # 6. Publish to federated hub
 cosm publish http://topocosm.dev/acme/payment-backend --universe universe-main --intent "Release v2.0"
 ```
+
+---
+
+## 8. Multi-Region Symmetric Swarm & Topocosm Leaderless Team
+
+Topocosm hubs replicate AST Merkle-DAG chunks across cloud regions (e.g., `us-central1`, `europe-west1`, `asia-east1`) using a **BitTorrent-inspired symmetric leaderless swarm**:
+
+* **Gossip Peer Exchange (PEX)**: Dynamically forms the team mesh via peer announcement handshakes (`/api/v1/swarm/peers/announce`).
+* **Shared Storage Heartbeats**: Autonomous discovery via TTL leases in shared object storage (`mesh/peers/node-<id>.json`).
+* **BitTorrent/Bitswap Chunk Availability**: Nodes announce new commits via `HaveMessage` broadcasts; missing AST blobs are lazily fetched on-demand (`GET /api/v1/blobs/{hash}`) with cryptographic SHA-256 verification and local CAS caching.
+* **CRDT Eventual Consistency**: Cosm machine runtimes can push or pull from any regional teammate node; universe heads and stacked proposals converge via semilattice join ($\sqcup$).

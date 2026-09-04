@@ -8,7 +8,7 @@ This document outlines the phased engineering roadmap for spinning off **Topocos
 
 ### Why Spin Off Topocosm?
 * **Zero-Dependency Local Engine**: `cosm` must remain a pure-Go, ultra-fast, zero-cloud SCM engine capable of running completely offline on laptops and hermetic CI runners without network or cloud infrastructure dependencies.
-* **Specialized Cloud Backplane**: `topocosm` serves enterprise multi-tenancy, S3/R2 CAS distribution, CockroachDB/Spanner metadata indices, NATS JetStream event meshes, and Firecracker sandboxes.
+* **Specialized Cloud Backplane**: `topocosm` serves enterprise multi-tenancy, Google Cloud Storage (GCS) CAS distribution, Cloud Spanner metadata indices, Google Cloud Pub/Sub event meshes, and Cloud Run / Apple container preview sandboxes.
 * **Independent Release Cycles**: The CLI tool (`cosm`) and the distributed cloud hub (`topocosm`) have different deployment velocities, security models, and scaling profiles.
 
 ```
@@ -37,7 +37,7 @@ This document outlines the phased engineering roadmap for spinning off **Topocos
 │  • Distributed Blackboard Domain Leases                │
 │  • Sparse Subtree Distribution Engine                  │
 │  • Multi-Peer CRDT Proposal Convergence (COBs)         │
-│  • Cloud Backplane (S3, CockroachDB, NATS, Redis)      │
+│  • Cloud Backplane (GCS, Memorystore Redis, Pub/Sub)   │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -77,7 +77,7 @@ gantt
 * Import core packages:
   * `cmd/topocosm/` (Server daemon binary)
   * `pkg/server/` (HTTP/REST/gRPC router & handlers)
-  * `pkg/backplane/` (Local SQLite + Cloud S3/CockroachDB/NATS backplanes)
+  * `pkg/backplane/` (Local SQLite + Google Cloud GCS/Memorystore/PubSub backplanes)
   * `pkg/discovery/` (Agent discovery manifest and attestation policies)
 * Include Go module dependency: `require github.com/cosmscm/cosm v1.x` for shared AST core schemas.
 

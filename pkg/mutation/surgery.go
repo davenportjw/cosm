@@ -70,13 +70,12 @@ func (e *SurgeryEngine) MutateSymbol(
 	oldManifestHash := manifest.MerkleRootHash
 
 	// 2. Locate target symbol in BlobStore
-	targetMerkle := targetSymbolID
-	if len(targetMerkle) != 64 {
-		if nodeRec, nErr := e.graphEngine.GetNode(targetSymbolID); nErr == nil && nodeRec != nil && nodeRec.MerkleHash != "" {
-			targetMerkle = nodeRec.MerkleHash
-		}
+	var oldSymData []byte
+	if nodeRec, nErr := e.graphEngine.GetNode(targetSymbolID); nErr == nil && nodeRec != nil && nodeRec.MerkleHash != "" {
+		oldSymData, err = e.blobStore.Get(nodeRec.MerkleHash)
+	} else {
+		oldSymData, err = e.blobStore.Get(targetSymbolID)
 	}
-	oldSymData, err := e.blobStore.Get(targetMerkle)
 	var oldSym core.ASTSymbolNode
 	if err == nil {
 		_ = json.Unmarshal(oldSymData, &oldSym)
@@ -137,13 +136,12 @@ func (e *SurgeryEngine) MutateSymbol(
 	var oldCompID string
 
 	for idx, compID := range manifest.Components {
-		compMerkle := compID
-		if len(compMerkle) != 64 {
-			if nodeRec, nErr := e.graphEngine.GetNode(compID); nErr == nil && nodeRec != nil && nodeRec.MerkleHash != "" {
-				compMerkle = nodeRec.MerkleHash
-			}
+		var compBytes []byte
+		if nodeRec, nErr := e.graphEngine.GetNode(compID); nErr == nil && nodeRec != nil && nodeRec.MerkleHash != "" {
+			compBytes, err = e.blobStore.Get(nodeRec.MerkleHash)
+		} else {
+			compBytes, err = e.blobStore.Get(compID)
 		}
-		compBytes, err := e.blobStore.Get(compMerkle)
 		if err != nil {
 			continue
 		}

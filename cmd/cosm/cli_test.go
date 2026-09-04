@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -114,4 +115,23 @@ func DoService() string { return "ok" }`), 0644)
 	// 11. Test symbol edit and impact
 	runSymbol([]string{"edit", "-id", "sample-symbol-id", "--body", "func DoService() string { return \"updated\" }", "-u", "universe-onboarded"})
 	runSymbol([]string{"impact", "-id", "sample-symbol-id"})
+
+	// 12. Test AST resolve and AST edit with disk synchronization (-w)
+	runAST([]string{"resolve", "-u", "universe-test", "--target", "HandleHealth"})
+	runAST([]string{
+		"edit",
+		"-u", "universe-test",
+		"--op", "replace_function_body",
+		"--target", "HandleHealth",
+		"--content", "w.WriteHeader(http.StatusNoContent)",
+		"-w",
+	})
+
+	updatedGo, err := os.ReadFile(goFile)
+	if err != nil {
+		t.Fatalf("Failed to read updated main.go from disk: %v", err)
+	}
+	if !strings.Contains(string(updatedGo), "StatusNoContent") {
+		t.Errorf("Expected main.go on disk to reflect AST edit, got: %s", string(updatedGo))
+	}
 }

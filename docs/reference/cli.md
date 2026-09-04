@@ -151,14 +151,17 @@ cosm ast resolve <scoped_target> [-u <universe>] [--format terminal|json]
 # Example:
 cosm ast resolve "services/auth::ValidateToken"
 
-# Declaratively edit an AST symbol
-cosm ast edit --op <op> --target <target> --content "<content>" [-u <universe>]
+# Declaratively edit an AST symbol (auto-synchronizes to workspace disk files by default)
+cosm ast edit --op <op> --target <target> --content "<content>" [-u <universe>] [--write-disk=true|-w]
 # Example:
-cosm ast edit --op replace_function_body --target "LRUCache.get" --content "return self.cache.get(key)"
+cosm ast edit --op replace_function_body --target "LRUCache.get" --content "return self.cache.get(key)" -w
 
 # Execute a multi-operation AST batch from file
-cosm ast edit --batch <batch.json> [-u <universe>]
+cosm ast edit --batch <batch.json> [-u <universe>] [--write-disk=true|-w]
 ```
+
+**Flags**:
+- `--write-disk`, `-w` (default: `true`): Automatically synchronizes modified components to workspace disk files so VS Code, Cursor, and Language Server Protocols (LSP) immediately reload updated symbols. Set to `false` for headless DAG-only batch workflows.
 
 **Supported Operations (`--op`)**:
 - `replace_function_body`: Spliced replacement of function body retaining signature, docstring, and annotations.
@@ -171,7 +174,7 @@ cosm ast edit --batch <batch.json> [-u <universe>]
 
 ---
 
-### 13. `cosm import-repo` (alias: `cosm onboard`)
+### 14. `cosm import-repo` (alias: `cosm onboard`)
 Recursively scans an existing polyglot codebase, extracts AST symbols across all supported languages, infers cross-domain contracts, and commits the initial Merkle DAG.
 ```bash
 cosm import-repo -d <directory_path> [-u <universe>]
@@ -249,4 +252,44 @@ cosm clone http://127.0.0.1:51204/demo-org/cloud-platform ./cloud-platform
 # Agent-filtered sparse subtree clone:
 cosm clone http://127.0.0.1:51204/demo-org/cloud-platform ./billing --sparse "services/billing"
 ```
+
+---
+
+### 21. `cosm claim`
+Acquires an exclusive mutation lease on a blackboard domain on Topocosm Hub to prevent concurrent agent conflicts.
+```bash
+cosm claim <domain> [flags] [hub_url/org/cosm]
+
+# Examples:
+cosm claim services/billing --goal "Refactoring Stripe webhook HMAC validation" --ttl 600
+cosm claim infra/pubsub http://127.0.0.1:51204/demo-org/cloud-platform --ttl 300
+```
+* `--goal <text>`: Intent or description of task holding the domain lease (default: `"AST mutation lease"`).
+* `--ttl <seconds>`: Lease time-to-live duration in seconds before automatic expiration (default: `600`).
+* `--url <hub_url>`: Explicit Topocosm Hub URL (overrides default or `COSM_HUB_URL`).
+* `--agent <did>`: Explicit agent DID identifier holding the lease (overrides auth credentials).
+
+---
+
+### 22. `cosm release`
+Releases an active blackboard domain mutation lease on Topocosm Hub, unlocking it for other agents.
+```bash
+cosm release <domain> [flags] [hub_url/org/cosm]
+
+# Example:
+cosm release services/billing
+```
+
+---
+
+### 23. `cosm blackboard`
+Inspects all active agent blackboard domain leases, holder DIDs, intent goals, and countdown timers.
+```bash
+cosm blackboard [flags] [hub_url/org/cosm]
+
+# Example:
+cosm blackboard
+cosm blackboard http://127.0.0.1:51204/demo-org/cloud-platform
+```
+
 

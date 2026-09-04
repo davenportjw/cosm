@@ -1,0 +1,89 @@
+name: Cosm & Topocosm Compatibility Matrix
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  cosm-core-and-polyglot:
+    name: Cosm AST Engine & Codecs
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: [ '1.22.x', '1.23.x' ]
+    steps:
+      - name: Checkout Cosm
+        uses: actions/checkout@v4
+
+      - name: Set up Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+
+      - name: Set up uv for Python
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Verify Zero-CGO Static Binary Build
+        run: |
+          CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/cosm ./cmd/cosm
+          CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/cosm-agent-harness ./cmd/cosm-agent-harness
+
+      - name: Run Cosm Unit & Integration Tests
+        run: go test -v -race ./pkg/... ./cmd/...
+
+      - name: Run Cosm Agent Harness (Hermetic Mock Scenarios)
+        run: |
+          ./bin/cosm-agent-harness list-scenarios
+          ./bin/cosm-agent-harness run --scenario swift-go-tf --mock
+          ./bin/cosm-agent-harness run --scenario kotlin-py-sql --mock
+          ./bin/cosm-agent-harness run --scenario csharp-react-proto --mock
+
+  topocosm-hub-and-e2e:
+    name: Topocosm Hub Backplanes & End-to-End Coordination
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Cosm
+        uses: actions/checkout@v4
+        with:
+          path: cosm
+
+      - name: Checkout Topocosm
+        uses: actions/checkout@v4
+        with:
+          repository: cosmscm/topocosm
+          path: topocosm
+        continue-on-error: true
+
+      - name: Set up Go 1.23
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+
+      - name: Test Topocosm Hub (if present)
+        run: |
+          if [ -d "topocosm" ]; then
+            cd topocosm
+            go test -v ./pkg/...
+            CGO_ENABLED=0 go build -o bin/topocosm ./cmd/topocosm
+            # Start Topocosm Hub daemon in background
+            ./bin/topocosm start --port 51204 --dir /tmp/topocosm-data &
+            HUB_PID=$!
+            sleep 2
+            
+            # Test Cosm CLI against live Topocosm Hub
+            cd ../cosm
+            go build -o bin/cosm ./cmd/cosm
+            ./bin/cosm blackboard --url http://127.0.0.1:51204
+            ./bin/cosm claim services/billing --goal "CI validation" --url http://127.0.0.1:51204 --agent did:key:z6MkuCIWorker
+            ./bin/cosm blackboard --url http://127.0.0.1:51204
+            ./bin/cosm release services/billing --url http://127.0.0.1:51204 --agent did:key:z6MkuCIWorker
+            
+            kill $HUB_PID || true
+          else
+            echo "Topocosm standalone repo checkout skipped; standalone matrix active."
+          fi

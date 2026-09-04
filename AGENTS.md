@@ -47,6 +47,11 @@ This document establishes durable conventions, architectural invariants, environ
    - Always use the latest model for LLM evaluations: `gemini-3.7-flash` is the default.
    - Hermetic CI tests use `test/agents/llm/mock.go` to run without API keys or network.
 
+7. **IDE & Workspace Disk Synchronization**:
+   - `cosm ast edit` automatically updates enclosing source files on disk using `--write-disk` (default `true` / `-w`).
+   - This ensures open VS Code buffers, Language Server Protocols (`gopls`, `tsserver`, `pyright`), linters, and test runners instantly observe mutations without requiring manual export.
+   - Headless background batch pipelines may pass `--write-disk=false` when only DAG manipulation is required.
+
 ---
 
 ## 3. Environment & Tooling Guidelines
@@ -139,3 +144,14 @@ cosm/
 │   └── guides/                 # Developer and testing walkthroughs
 └── examples/                   # Polyglot demo workspaces (Terraform + Go + React)
 ```
+
+---
+
+## 6. Skills Available in Workspace
+
+- `cosm-core-dev`: Core Cosm AST DAG development, storage operations, and CLI workflows.
+- `cosm-agent-harness`: Autonomous test and rater agent execution, scenarios, and scorecards.
+- `cosm-ast-surgeon`: Declarative AST mutations using the 9 Geometric AST verbs.
+- `polyglot-codecs-guide`: Adding and testing language codecs, hydrators, and cross-boundary contracts.
+- `shipping-and-validation`: Target preview sidecar, Terraform validation, and `uv` runner.
+- `topocosm-cloud-deploy`: Deploy Topocosm Hub to Google Cloud (Cloud Run, GCS CAS, Memorystore for Redis, Cloud Pub/Sub, Secret Manager) and perform zero-downtime updates, canary traffic routing, rollback, and Day-2 cloud operations.

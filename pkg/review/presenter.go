@@ -112,7 +112,7 @@ func (p *ProposalPresenter) RenderMarkdown(model *ProposalPresentationModel) str
 	return b.String()
 }
 
-// RenderTerminalCards produces formatted text for CLI display (`fg proposal view`).
+// RenderTerminalCards produces formatted text for CLI display ('cosm proposal view').
 func (p *ProposalPresenter) RenderTerminalCards(model *ProposalPresentationModel) string {
 	var b strings.Builder
 	sep := strings.Repeat("═", 70)

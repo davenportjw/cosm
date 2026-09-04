@@ -28,7 +28,7 @@ type Scenario struct {
 var ScenarioFastAPIReactTF = Scenario{
 	Name:               "fastapi-react-tf",
 	Description:        "Python FastAPI Backend, React TypeScript Frontend, and Terraform Cloud Infrastructure",
-	Prompt:             "Initialize fg repository, stage backend, frontend, and infra components, link cross-boundary contracts, and produce a committed Merkle root.",
+	Prompt:             "Initialize cosm repository, stage backend, frontend, and infra components, link cross-boundary contracts, and produce a committed Merkle root.",
 	ExpectedComponents: []string{"backend", "frontend", "infra"},
 	TargetContracts: []CrossBoundaryContractSpec{
 		{
@@ -420,10 +420,223 @@ resource "google_cloud_run_v2_service" "orders_backend" {
 	},
 }
 
+// ScenarioSwiftGoTF tests Swift iOS client, Go REST API backend, and Terraform Cloud Run infrastructure.
+var ScenarioSwiftGoTF = Scenario{
+	Name:               "swift-go-tf",
+	Description:        "Swift iOS Client, Go REST API Backend, and Google Cloud Run Terraform Infrastructure",
+	Prompt:             "Initialize cosm repository, stage Swift mobile app, Go HTTP backend, and Terraform Cloud Run infrastructure, verify cross-boundary API contracts, and produce a committed Merkle root.",
+	ExpectedComponents: []string{"mobile", "backend", "infra"},
+	TargetContracts: []CrossBoundaryContractSpec{
+		{
+			SourceComponent: "mobile",
+			TargetComponent: "backend",
+			ContractType:    "CONSUMES_API",
+			Identifier:      "/api/v1/orders",
+		},
+		{
+			SourceComponent: "backend",
+			TargetComponent: "infra",
+			ContractType:    "BINDS_ENV",
+			Identifier:      "DATABASE_URL",
+		},
+	},
+	Files: map[string]string{
+		"mobile/ApiClient.swift": `import Foundation
+
+public struct Order: Codable {
+    public let id: String
+    public let total: Double
+}
+
+public class OrderApiClient {
+    private let baseURL = "http://localhost:8080"
+
+    public func fetchOrders(completion: @escaping (Result<[Order], Error>) -> Void) {
+        guard let url = URL(string: "\(baseURL)/api/v1/orders") else { return }
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            if let error = error {
+                completion(.failure(error))
+                return
+            }
+            if let data = data, let orders = try? JSONDecoder().decode([Order].self, from: data) {
+                completion(.success(orders))
+            }
+        }.resume()
+    }
+}
+`,
+		"backend/main.go": `package main
+
+import (
+	"encoding/json"
+	"net/http"
+	"os"
+)
+
+type Order struct {
+	ID    string  ` + "`" + `json:"id"` + "`" + `
+	Total float64 ` + "`" + `json:"total"` + "`" + `
+}
+
+func main() {
+	_ = os.Getenv("DATABASE_URL")
+	http.HandleFunc("/api/v1/orders", func(w http.ResponseWriter, r *http.Request) {
+		orders := []Order{{ID: "ord-101", Total: 89.50}}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(orders)
+	})
+	_ = http.ListenAndServe(":8080", nil)
+}
+`,
+		"infra/main.tf": `resource "google_cloud_run_service" "api_backend" {
+  name     = "orders-api"
+  location = "us-central1"
+
+  template {
+    spec {
+      containers {
+        image = "gcr.io/demo-project/orders-api:latest"
+        env {
+          name  = "DATABASE_URL"
+          value = "postgres://orders_user:secret@10.0.0.5:5432/orders_db"
+        }
+      }
+    }
+  }
+}
+`,
+	},
+}
+
+// ScenarioKotlinPySQL tests Kotlin Ktor microservice, Python analytics processor, and PostgreSQL DDL.
+var ScenarioKotlinPySQL = Scenario{
+	Name:               "kotlin-py-sql",
+	Description:        "Kotlin Ktor Microservice, Python Analytics Worker, and PostgreSQL DDL Schema",
+	Prompt:             "Initialize cosm repository, stage Kotlin microservice, Python analytics processor, and PostgreSQL database schema, verify table query and route contracts, and commit to universe-main.",
+	ExpectedComponents: []string{"service", "analytics", "db"},
+	TargetContracts: []CrossBoundaryContractSpec{
+		{
+			SourceComponent: "service",
+			TargetComponent: "db",
+			ContractType:    "QUERIES_TABLE",
+			Identifier:      "users",
+		},
+		{
+			SourceComponent: "analytics",
+			TargetComponent: "service",
+			ContractType:    "CONSUMES_API",
+			Identifier:      "/api/v1/metrics",
+		},
+	},
+	Files: map[string]string{
+		"service/Application.kt": `package com.cosm.service
+
+data class User(val id: String, val email: String)
+
+class UserService {
+    fun queryUsers(): List<User> {
+        val sql = "SELECT id, email FROM users WHERE active = true"
+        return listOf(User("u1", "alice@example.com"))
+    }
+}
+`,
+		"analytics/worker.py": `import urllib.request
+import json
+
+def pull_metrics():
+    url = "http://localhost:8080/api/v1/metrics"
+    req = urllib.request.Request(url)
+    with urllib.request.urlopen(req) as resp:
+        data = json.loads(resp.read().decode())
+        return data
+`,
+		"db/schema.sql": `CREATE TABLE users (
+    id VARCHAR(64) PRIMARY KEY,
+    email VARCHAR(255) NOT NULL,
+    active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+`,
+	},
+}
+
+// ScenarioCSharpReactProto tests C# ASP.NET Core gRPC service, React TypeScript frontend, and Proto3 IDL.
+var ScenarioCSharpReactProto = Scenario{
+	Name:               "csharp-react-proto",
+	Description:        "C# ASP.NET Core gRPC Backend, React TypeScript Frontend, and Proto3 IDL Contracts",
+	Prompt:             "Initialize cosm repository, stage C# gRPC service, React TypeScript frontend, and Proto3 contract definitions, infer cross-boundary RPC and API dependencies, and produce an attested commit.",
+	ExpectedComponents: []string{"backend", "frontend", "proto"},
+	TargetContracts: []CrossBoundaryContractSpec{
+		{
+			SourceComponent: "backend",
+			TargetComponent: "proto",
+			ContractType:    "IMPLEMENTS_RPC",
+			Identifier:      "InventoryService",
+		},
+		{
+			SourceComponent: "frontend",
+			TargetComponent: "backend",
+			ContractType:    "CONSUMES_API",
+			Identifier:      "/api/v1/inventory",
+		},
+	},
+	Files: map[string]string{
+		"backend/InventoryServer.cs": `using System;
+using System.Threading.Tasks;
+
+namespace Cosm.Backend {
+    public class InventoryServer : InventoryService.InventoryServiceBase {
+        public Task<InventoryResponse> GetInventory(InventoryRequest request) {
+            return Task.FromResult(new InventoryResponse { ItemCount = 42 });
+        }
+    }
+}
+`,
+		"frontend/InventoryView.tsx": `import React, { useEffect, useState } from "react";
+
+export const InventoryView: React.FC = () => {
+  const [items, setItems] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetch("/api/v1/inventory")
+      .then((res) => res.json())
+      .then((data) => setItems(data));
+  }, []);
+
+  return (
+    <div className="inventory-container">
+      <h2>Inventory Dashboard</h2>
+      <p>Items in stock: {items.length}</p>
+    </div>
+  );
+};
+`,
+		"proto/inventory.proto": `syntax = "proto3";
+
+package inventory.v1;
+
+message InventoryRequest {
+    string category = 1;
+}
+
+message InventoryResponse {
+    int32 item_count = 1;
+}
+
+service InventoryService {
+    rpc GetInventory (InventoryRequest) returns (InventoryResponse);
+}
+`,
+	},
+}
+
 var allScenarios = map[string]Scenario{
 	"fastapi-react-tf":            ScenarioFastAPIReactTF,
 	"go-gin-vue-tf":               ScenarioGoGinVueTF,
 	"rust-axum-react-postgres-tf": ScenarioRustAxumReactPostgresTF,
+	"swift-go-tf":                 ScenarioSwiftGoTF,
+	"kotlin-py-sql":               ScenarioKotlinPySQL,
+	"csharp-react-proto":          ScenarioCSharpReactProto,
 }
 
 // ListScenarios returns all preconfigured polyglot scenario templates.
@@ -432,6 +645,9 @@ func ListScenarios() []Scenario {
 		ScenarioFastAPIReactTF,
 		ScenarioGoGinVueTF,
 		ScenarioRustAxumReactPostgresTF,
+		ScenarioSwiftGoTF,
+		ScenarioKotlinPySQL,
+		ScenarioCSharpReactProto,
 	}
 }
 
@@ -440,7 +656,7 @@ func GetScenario(name string) (*Scenario, error) {
 	if s, ok := allScenarios[name]; ok {
 		return &s, nil
 	}
-	return nil, fmt.Errorf("unknown scenario name: %q (available: fastapi-react-tf, go-gin-vue-tf, rust-axum-react-postgres-tf)", name)
+	return nil, fmt.Errorf("unknown scenario name: %q (available: fastapi-react-tf, go-gin-vue-tf, rust-axum-react-postgres-tf, swift-go-tf, kotlin-py-sql, csharp-react-proto)", name)
 }
 
 // WriteScenarioFiles writes all scenario blueprint files into a specified target directory.

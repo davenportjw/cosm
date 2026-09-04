@@ -17,7 +17,7 @@ This guide provides a comprehensive operational and architectural manual for the
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │ 2. OUTER LOOP: Topocosm Cloud Backplane (`topocosm.dev`)                               │
 │                                                                                        │
-│   • Centralized CAS Object Store (Cloudflare R2 / S3 / SQLite WAL)                     │
+│   • Centralized CAS Object Store (Google Cloud Storage / GCS / SQLite WAL)            │
 │   • Multi-Agent Proposal Mesh & CRDT State Synchronization                             │
 │   • Cloud Sandbox & Build Orchestration Engine                                         │
 └───────────────────────┬──────────────────────────────────────┬─────────────────────────┘

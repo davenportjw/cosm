@@ -158,3 +158,25 @@ cosm commit \
 
 For complete specification details, see [Agent Commit Contract Reference](file:///Users/jasondavenport/GitHub/cosm/docs/reference/agent-commit-contract.md).
 
+---
+
+## 7. Operating Inside VS Code & IDE Workspaces
+
+When operating in an interactive developer environment (such as VS Code, Cursor, or JetBrains):
+
+1. **Automatic Disk Synchronization**:
+   - `cosm ast edit` automatically updates the enclosing source file on disk using `--write-disk` (which is enabled by default, `-w`).
+   - This ensures open VS Code editor buffers, Language Server Protocols (LSP - `gopls`, `tsserver`, `pyright`), linters, and test runners instantly observe mutations without requiring manual export.
+   - If mutating in headless/DAG-only mode (e.g. background batch processing), pass `--write-disk=false`.
+
+2. **Resolving Targets Before Editing**:
+   - Always run `cosm ast resolve <target>` to verify the symbol ID and component name before executing an edit.
+   - You can specify targets using symbol names (`ValidateToken`), scoped identifiers (`services/auth::ValidateToken`), or hex symbol IDs.
+
+3. **Git Shim Visibility**:
+   - `cosm git diff` and `cosm git status` project the synthetic Git repository, allowing VS Code's Source Control view (Git pane) to display live AST changes as normal file diffs.
+   - To manually re-hydrate the workspace from the active universe head at any time:
+     ```bash
+     cosm export -u universe-main -d .
+     ```
+

@@ -29,7 +29,7 @@ Subcommands:
   list-scenarios   List available polyglot application templates
 
 Flags:
-  --scenario <name>       Scenario name (e.g. fastapi-react-tf, go-gin-vue-tf, rust-axum-react-postgres-tf)
+  --scenario <name>       Scenario name (e.g. fastapi-react-tf, go-gin-vue-tf, rust-axum-react-postgres-tf, swift-go-tf, kotlin-py-sql, csharp-react-proto)
   --model <model>         LLM model to use (default: gemini-3.7-flash)
   --workdir <dir>         Workspace directory (default: temp directory)
   --universe <id>         Target universe ID for verification (default: universe-main)

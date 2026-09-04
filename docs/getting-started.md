@@ -6,17 +6,31 @@ This guide walks you through installing Cosm, initializing your first repository
 
 ## 1. Installation
 
-### Option A: Build from Source (Go 1.22+)
+Cosm requires **Go 1.22+** and has zero CGO dependencies.
+
+### Option A: Direct Go Install (Recommended)
+Compile and install the `cosm` binary directly into your Go bin directory (`$GOPATH/bin` or `~/go/bin`):
+```bash
+go install github.com/cosmscm/cosm/cmd/cosm@latest
+```
+*Make sure `$(go env GOPATH)/bin` or `~/go/bin` is in your `$PATH`.*
+
+### Option B: Build from Source
 ```bash
 git clone https://github.com/cosmscm/cosm.git
 cd cosm
 go build -o cosm ./cmd/cosm
 sudo mv cosm /usr/local/bin/
+
+# Optional: Build autonomous agent test harness binary
+go build -o cosm-agent-harness ./cmd/cosm-agent-harness
+sudo mv cosm-agent-harness /usr/local/bin/
 ```
 
-### Option B: Verify Installation
+### Option C: Verify Installation
 ```bash
 cosm --help
+cosm version
 ```
 
 ---
@@ -155,3 +169,44 @@ Launch the full-screen Bubble Tea TUI dashboard to inspect micro-universes, revi
 ```bash
 cosm dashboard
 ```
+
+---
+
+## 5. AI Agent Setup & Antigravity Skills
+
+Cosm is built from the ground up for AI agent pair programming. While legacy SCM systems force agents to manipulate lines of raw text (often resulting in hallucinated indentation, malformed brackets, or git merge conflicts), Cosm allows agents to perform **direct semantic AST mutations** and project changes into isolated micro-universes.
+
+### Bundled Antigravity Skills
+
+Antigravity agent workflows in Cosm are guided by modular skills located under [`.agents/skills/`](../.agents/skills/):
+
+* **[`cosm-core-dev`](../.agents/skills/cosm-core-dev/SKILL.md)**: Repository initialization, SQLite WAL graph inspection (`.cosm/graph.db`), zero-copy micro-universe branching, and standard CLI subcommands.
+* **[`cosm-ast-surgeon`](../.agents/skills/cosm-ast-surgeon/SKILL.md)**: Precise geometric AST modifications using 9 declarative verbs (`insert_symbol`, `replace_body`, `delete_symbol`, `wrap_symbol`, etc.) without full-file rewrites.
+* **[`shipping-and-validation`](../.agents/skills/shipping-and-validation/SKILL.md)**: Target staging compilation (`cosm ship`), Terraform formatting and validation, Python `uv` test execution, and Apple container previews.
+* **[`polyglot-codecs-guide`](../.agents/skills/polyglot-codecs-guide/SKILL.md)**: AST codecs and cross-boundary contract inferencers across 19 supported languages.
+* **[`cosm-agent-harness`](../.agents/skills/cosm-agent-harness/SKILL.md)**: Autonomous test harness, verification oracles (0–100 scorecards), and benchmark evaluations.
+
+### How Antigravity Loads Skills
+
+Antigravity uses a **hierarchical discovery** and **progressive disclosure** mechanism:
+
+1. **Discovery**: Antigravity automatically scans for `.agents/skills/*/SKILL.md` from the current working directory upwards to the workspace root.
+2. **Indexing (Zero Token Waste)**: At conversation startup, only the skill name and short description from each `SKILL.md` frontmatter are registered into the prompt catalog.
+3. **Progressive Disclosure**: When a prompt or task matches a skill's purpose, the agent dynamically invokes `view_file` to load the full runbook instructions into active context.
+4. **Hard Invariants**: Project rules in [`AGENTS.md`](../AGENTS.md) and [`GEMINI.md`](../GEMINI.md) are loaded unconditionally to enforce architectural invariants (pure Go WAL engine, zero-CGO, local-first autonomy).
+
+### Enabling Cosm Skills in Your Own Application Project
+
+If you are using Cosm as the source control system for your own project:
+
+```bash
+# Option A: Workspace scope (shared with your team in Git/Cosm)
+mkdir -p .agents/skills
+cp -r /path/to/cosm/.agents/skills/cosm-* .agents/skills/
+
+# Option B: Global user scope (available across all workspaces on your machine)
+mkdir -p ~/.gemini/config/skills
+cp -r /path/to/cosm/.agents/skills/cosm-ast-surgeon ~/.gemini/config/skills/
+cp -r /path/to/cosm/.agents/skills/cosm-core-dev ~/.gemini/config/skills/
+```
+

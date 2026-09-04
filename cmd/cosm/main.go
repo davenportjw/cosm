@@ -72,6 +72,9 @@ Topocosm (topocosm.dev & Local Hub) Commands:
   topocosm status                  Inspect hub metrics, active cosms, and agent blackboard claims
   publish <url>/<org>/<cosm>       Push & publish local universe AST DAG to Topocosm Hub
   clone <url>/<org>/<cosm>         Clone or sparse-pull cosm from Topocosm Hub into local directory
+  claim <domain> [target]          Acquire an exclusive agent mutation lease on a blackboard domain
+  release <domain> [target]        Release an active blackboard domain mutation lease
+  blackboard [target]              Inspect active agent blackboard domain leases and countdowns
 
 Flags:
   -u, --universe <id>              Active micro-universe ID (default: universe-main)
@@ -140,8 +143,11 @@ func main() {
 	case "import-repo", "onboard":
 		runImportRepo(args)
 
-	case "symbol", "ast":
+	case "symbol":
 		runSymbol(args)
+
+	case "ast":
+		runAST(args)
 
 	case "export":
 		runExport(args)
@@ -169,6 +175,15 @@ func main() {
 
 	case "clone":
 		runClone(args)
+
+	case "claim":
+		runClaim(args)
+
+	case "release":
+		runRelease(args)
+
+	case "blackboard":
+		runBlackboard(args)
 
 	default:
 		fmt.Printf("Unknown command: %s\nRun 'cosm help' for usage.\n", command)
@@ -1435,6 +1450,8 @@ func runAST(args []string) {
 		content := fs.String("content", "", "Content payload or code")
 		batchFile := fs.String("batch", "", "Path to AST edit batch JSON file")
 		universeID := fs.String("u", "universe-main", "Universe ID")
+		writeDisk := fs.Bool("write-disk", true, "Automatically synchronize modified components to workspace disk files (VS Code ready)")
+		fs.BoolVar(writeDisk, "w", true, "Alias for --write-disk")
 		prompt := fs.String("p", "Declarative AST edit", "User prompt")
 		agentID := fs.String("a", "cosm-ast-surgeon", "Agent ID")
 		sessionID := fs.String("session-id", "", "Agent session ID")
@@ -1530,6 +1547,31 @@ func runAST(args []string) {
 			fmt.Printf("   • Merkle Head Delta:  %s -> %s\n", res.OldManifestHash[:12], res.NewManifestHash[:12])
 		}
 		fmt.Printf("   • Execution Time:     %s\n", res.Duration.Round(time.Millisecond))
+
+		if *writeDisk {
+			updatedHead, hErr := universeMgr.GetUniverseManifest(res.UniverseID)
+			if hErr == nil && updatedHead != nil {
+				compMap, symMap := loadManifestState(blobStore, graphEngine, updatedHead)
+				hydrator := materialize.NewHydrator()
+				allFiles, hydErr := hydrator.HydrateWorkspace(updatedHead, compMap, symMap)
+				if hydErr == nil && len(allFiles) > 0 {
+					changedFiles := make(map[string][]byte)
+					for relPath, content := range allFiles {
+						existing, rErr := os.ReadFile(relPath)
+						if rErr != nil || string(existing) != string(content) {
+							changedFiles[relPath] = content
+						}
+					}
+					if len(changedFiles) > 0 {
+						exporter := materialize.NewExporter()
+						report, expErr := exporter.ExportToDisk(".", changedFiles, true)
+						if expErr == nil && report != nil {
+							fmt.Printf("   • Disk Sync (VS Code): %d file(s) synchronized to workspace\n", report.FilesWritten)
+						}
+					}
+				}
+			}
+		}
 
 	default:
 		fmt.Println("Usage: cosm ast <edit|resolve> [flags]")
@@ -1765,6 +1807,7 @@ func loadManifestState(
 			var comp core.ComponentNode
 			if e := json.Unmarshal(compData, &comp); e == nil {
 				compMap[comp.ComponentID] = &comp
+				compMap[cID] = &comp
 				for _, sID := range comp.SymbolNodes {
 					var sData []byte
 					var sErr error
@@ -1777,6 +1820,7 @@ func loadManifestState(
 						var sym core.ASTSymbolNode
 						if se := json.Unmarshal(sData, &sym); se == nil {
 							symMap[sym.NodeID] = &sym
+							symMap[sID] = &sym
 						}
 					}
 				}
@@ -2184,6 +2228,238 @@ func runClone(args []string) {
 	if pullResp.SavingsPercent > 0 {
 		fmt.Printf("   • Sparse Bandwidth Savings: %.1f%%\n", pullResp.SavingsPercent)
 	}
+}
+
+func resolveHubTarget(rawTarget string) (hubURL, orgSlug, cosmName string) {
+	hubURL = "http://127.0.0.1:51204"
+	orgSlug = "demo-org"
+	cosmName = "cloud-platform"
+
+	if rawTarget == "" {
+		return
+	}
+
+	parts := strings.Split(rawTarget, "/")
+	if len(parts) == 1 {
+		cosmName = parts[0]
+	} else if len(parts) == 2 {
+		orgSlug = parts[0]
+		cosmName = parts[1]
+	} else if len(parts) >= 3 {
+		cosmName = parts[len(parts)-1]
+		orgSlug = parts[len(parts)-2]
+		hubURL = strings.Join(parts[:len(parts)-2], "/")
+	}
+	return
+}
+
+func runClaim(args []string) {
+	if len(args) == 0 {
+		fmt.Println("Usage: cosm claim [flags] <domain> [hub_url/org/cosm]")
+		fmt.Println("  e.g.: cosm claim services/billing --goal \"Refactoring Stripe signature\" --ttl 600")
+		fmt.Println("  e.g.: cosm claim services/billing http://127.0.0.1:51204/demo-org/cloud-platform")
+		return
+	}
+
+	fs := flag.NewFlagSet("claim", flag.ExitOnError)
+	goal := fs.String("goal", "AST mutation lease", "Intent or description of task holding the domain lease")
+	ttl := fs.Int("ttl", 600, "Lease time-to-live duration in seconds")
+	hubFlag := fs.String("url", "", "Topocosm Hub endpoint URL")
+	agentFlag := fs.String("agent", "", "Agent DID identifier holding the lease")
+	_ = fs.Parse(args)
+
+	remain := fs.Args()
+	if len(remain) == 0 {
+		fmt.Println("Error: Missing domain to claim (e.g. services/billing, infra/pubsub)")
+		os.Exit(1)
+	}
+
+	domain := remain[0]
+	target := ""
+	if len(remain) > 1 {
+		target = remain[1]
+	}
+
+	authCfg, _ := topocosm.LoadAuthConfig()
+	hubURL, orgSlug, cosmName := resolveHubTarget(target)
+	if *hubFlag != "" {
+		hubURL = *hubFlag
+	} else if authCfg.HubURL != "" && authCfg.HubURL != "https://topocosm.dev" {
+		hubURL = authCfg.HubURL
+	}
+
+	callerDID := "did:key:z6MkuCLIPublisher"
+	if *agentFlag != "" {
+		callerDID = *agentFlag
+	} else if authCfg.CallerDID != "" {
+		callerDID = authCfg.CallerDID
+	}
+
+	client := topocosm.NewHubClient(hubURL, callerDID)
+	if authCfg.Token != "" {
+		client.SetBearerToken(authCfg.Token)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	ok, err := client.ClaimDomain(ctx, orgSlug, cosmName, domain, *goal, *ttl)
+	if err != nil {
+		fmt.Printf("❌ Failed to acquire domain lease for %q on %s/%s: %v\n", domain, orgSlug, cosmName, err)
+		os.Exit(1)
+	}
+	if !ok {
+		fmt.Printf("⚠️ Domain %q on %s/%s is currently locked by another agent or contested.\n", domain, orgSlug, cosmName)
+		os.Exit(1)
+	}
+
+	fmt.Println("=====================================================================")
+	fmt.Println("  🔒 BLACKBOARD DOMAIN LEASE ACQUIRED")
+	fmt.Println("=====================================================================")
+	fmt.Printf("  • Domain:      %s\n", domain)
+	fmt.Printf("  • Holder DID:  %s\n", callerDID)
+	fmt.Printf("  • Goal:        %s\n", *goal)
+	fmt.Printf("  • Lease TTL:   %ds\n", *ttl)
+	fmt.Printf("  • Target Cosm: %s/%s\n", orgSlug, cosmName)
+	fmt.Printf("  • Hub URL:     %s\n", hubURL)
+	fmt.Println("=====================================================================")
+}
+
+func runRelease(args []string) {
+	if len(args) == 0 {
+		fmt.Println("Usage: cosm release [flags] <domain> [hub_url/org/cosm]")
+		fmt.Println("  e.g.: cosm release services/billing")
+		return
+	}
+
+	fs := flag.NewFlagSet("release", flag.ExitOnError)
+	hubFlag := fs.String("url", "", "Topocosm Hub endpoint URL")
+	agentFlag := fs.String("agent", "", "Agent DID identifier holding the lease")
+	_ = fs.Parse(args)
+
+	remain := fs.Args()
+	if len(remain) == 0 {
+		fmt.Println("Error: Missing domain to release")
+		os.Exit(1)
+	}
+
+	domain := remain[0]
+	target := ""
+	if len(remain) > 1 {
+		target = remain[1]
+	}
+
+	authCfg, _ := topocosm.LoadAuthConfig()
+	hubURL, orgSlug, cosmName := resolveHubTarget(target)
+	if *hubFlag != "" {
+		hubURL = *hubFlag
+	} else if authCfg.HubURL != "" && authCfg.HubURL != "https://topocosm.dev" {
+		hubURL = authCfg.HubURL
+	}
+
+	callerDID := "did:key:z6MkuCLIPublisher"
+	if *agentFlag != "" {
+		callerDID = *agentFlag
+	} else if authCfg.CallerDID != "" {
+		callerDID = authCfg.CallerDID
+	}
+
+	client := topocosm.NewHubClient(hubURL, callerDID)
+	if authCfg.Token != "" {
+		client.SetBearerToken(authCfg.Token)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := client.ReleaseDomain(ctx, orgSlug, cosmName, domain); err != nil {
+		fmt.Printf("❌ Failed to release domain lease %q: %v\n", domain, err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("✅ Successfully released blackboard domain lease: %s\n", domain)
+}
+
+func runBlackboard(args []string) {
+	fs := flag.NewFlagSet("blackboard", flag.ExitOnError)
+	hubFlag := fs.String("url", "", "Topocosm Hub endpoint URL")
+	_ = fs.Parse(args)
+
+	target := ""
+	if len(fs.Args()) > 0 {
+		target = fs.Args()[0]
+	}
+
+	authCfg, _ := topocosm.LoadAuthConfig()
+	hubURL, orgSlug, cosmName := resolveHubTarget(target)
+	if *hubFlag != "" {
+		hubURL = *hubFlag
+	} else if authCfg.HubURL != "" && authCfg.HubURL != "https://topocosm.dev" {
+		hubURL = authCfg.HubURL
+	}
+
+	callerDID := "did:key:z6MkuCLIPublisher"
+	if authCfg.CallerDID != "" {
+		callerDID = authCfg.CallerDID
+	}
+
+	client := topocosm.NewHubClient(hubURL, callerDID)
+	if authCfg.Token != "" {
+		client.SetBearerToken(authCfg.Token)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	data, err := client.GetBlackboard(ctx, orgSlug, cosmName)
+	if err != nil {
+		fmt.Printf("❌ Failed to inspect blackboard at %s: %v\n", hubURL, err)
+		os.Exit(1)
+	}
+
+	claimsRaw, ok := data["claims"]
+	if !ok || claimsRaw == nil {
+		fmt.Printf("📋 Blackboard for %s/%s has no active claims.\n", orgSlug, cosmName)
+		return
+	}
+
+	claimsList, ok := claimsRaw.([]any)
+	if !ok || len(claimsList) == 0 {
+		fmt.Printf("📋 Blackboard for %s/%s: No active domain claims. Safe for agent mutation.\n", orgSlug, cosmName)
+		return
+	}
+
+	fmt.Println("=========================================================================================================")
+	fmt.Printf("  📋 TOPOCOSM BLACKBOARD DOMAIN LEASES (%s/%s)\n", orgSlug, cosmName)
+	fmt.Println("=========================================================================================================")
+	fmt.Printf("  %-22s %-28s %-32s %-10s\n", "DOMAIN", "AGENT DID", "INTENT / GOAL", "REMAINING")
+	fmt.Println("  -------------------------------------------------------------------------------------------------------")
+
+	for _, item := range claimsList {
+		cMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		domain, _ := cMap["domain"].(string)
+		agentDID, _ := cMap["agent_did"].(string)
+		goal, _ := cMap["goal"].(string)
+		secLeft, _ := cMap["seconds_left"].(float64)
+
+		remStr := fmt.Sprintf("%ds", int(secLeft))
+		if secLeft >= 60 {
+			remStr = fmt.Sprintf("%dm%02ds", int(secLeft)/60, int(secLeft)%60)
+		}
+
+		if len(agentDID) > 26 {
+			agentDID = agentDID[:23] + "..."
+		}
+		if len(goal) > 30 {
+			goal = goal[:27] + "..."
+		}
+
+		fmt.Printf("  %-22s %-28s %-32s %-10s\n", domain, agentDID, goal, remStr)
+	}
+	fmt.Println("=========================================================================================================")
 }
 
 func runAuth(args []string) {

@@ -34,6 +34,8 @@ This file contains durable project rules and contextual memory for Antigravity p
 5. **Continuous Documentation Updates & Direct Style**:
    - ALWAYS update docs in `docs/` (`docs/reference/schema-and-storage.md`, `docs/reference/federation-and-multi-repo.md`, `docs/reference/topocosm.md`, `docs/roadmaps/topocosm-spin-off-plan.md`, etc.) whenever data models, APIs, codecs, or CLI commands change.
    - Documentation style MUST be **very direct, precise, and concise** (zero fluff, exact type definitions, clear markdown tables, and explicit formulas).
+6. **IDE & Workspace Auto-Synchronization**:
+   - `cosm ast edit` automatically updates workspace disk files (`--write-disk` / `-w`, default `true`) so open VS Code buffers, Language Server Protocols (`gopls`, `tsserver`, `pyright`), and linters immediately see AST mutations.
 
 ---
 
@@ -44,3 +46,4 @@ The following specialized skills are available in `.agents/skills/`:
 - `cosm-agent-harness`: Autonomous test and rater agent execution, scenarios, and scorecards.
 - `polyglot-codecs-guide`: Adding and testing language codecs, hydrators, and cross-boundary contracts.
 - `shipping-and-validation`: Target preview sidecar, Terraform validation, and `uv` runner.
+- `topocosm-cloud-deploy`: Deploy Topocosm Hub to Google Cloud (Cloud Run, GCS CAS, Memorystore for Redis, Cloud Pub/Sub, Secret Manager) and perform zero-downtime updates, canary traffic routing, rollback, and Day-2 cloud operations.

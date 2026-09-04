@@ -119,13 +119,13 @@ func (e *SurgeryEngine) ResolveSymbol(universeID string, target string) (*Resolv
 	}
 
 	for cIdx, compID := range manifest.Components {
-		compMerkle := compID
-		if len(compMerkle) != 64 {
-			if nodeRec, nErr := e.graphEngine.GetNode(compID); nErr == nil && nodeRec != nil && nodeRec.MerkleHash != "" {
-				compMerkle = nodeRec.MerkleHash
-			}
+		var compBytes []byte
+		var err error
+		if nodeRec, nErr := e.graphEngine.GetNode(compID); nErr == nil && nodeRec != nil && nodeRec.MerkleHash != "" {
+			compBytes, err = e.blobStore.Get(nodeRec.MerkleHash)
+		} else {
+			compBytes, err = e.blobStore.Get(compID)
 		}
-		compBytes, err := e.blobStore.Get(compMerkle)
 		if err != nil {
 			continue
 		}
@@ -144,14 +144,14 @@ func (e *SurgeryEngine) ResolveSymbol(universeID string, target string) (*Resolv
 		}
 
 		for sIdx, sID := range comp.SymbolNodes {
-			symMerkle := sID
-			if len(symMerkle) != 64 {
-				if nodeRec, nErr := e.graphEngine.GetNode(sID); nErr == nil && nodeRec != nil && nodeRec.MerkleHash != "" {
-					symMerkle = nodeRec.MerkleHash
-				}
+			var symBytes []byte
+			var sErr error
+			if nodeRec, nErr := e.graphEngine.GetNode(sID); nErr == nil && nodeRec != nil && nodeRec.MerkleHash != "" {
+				symBytes, sErr = e.blobStore.Get(nodeRec.MerkleHash)
+			} else {
+				symBytes, sErr = e.blobStore.Get(sID)
 			}
-			symBytes, err := e.blobStore.Get(symMerkle)
-			if err != nil {
+			if sErr != nil {
 				continue
 			}
 			var sym core.ASTSymbolNode

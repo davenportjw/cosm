@@ -140,10 +140,11 @@ cosm ast edit \
     return self.redis_client.get(f'user:{user_id}')"
 ```
 
-**What Happens in the Object Store:**
+**What Happens in the Object Store & Workspace:**
 1. Only the new method node `sym-py-new-cache` is created and hashed.
 2. Sibling methods (`load_combined_state`, `save_combined_state`, `append_event`) retain their exact existing SHA-256 hashes.
 3. A new component Merkle hash and workspace root are generated in pure memory.
+4. **Automatic IDE Disk Synchronization (`--write-disk` / `-w`)**: Enabled by default, Cosm automatically synchronizes the enclosing file (`app/database.py`) to disk. Open VS Code buffers, Language Server Protocols (`pyright`, `gopls`), and linters instantly reload the updated symbol without manual export steps.
 
 ```bash
 cosm commit \
@@ -227,6 +228,7 @@ When building agent tools or IDE plugins for Cosm:
 2. **Never poll the file system**—subscribe to SQLite WAL change notifications on `.cosm/graph.db`.
 3. **Respect content addressing**—all blobs written to `.cosm/objects/` MUST match their SHA-256 hex payload hash.
 4. **Always preserve causal lineage**—every mutation MUST supply `intent`, `prompt`, and `agent_id` for Ed25519 signing.
+5. **IDE & Workspace Auto-Synchronization**—`cosm ast edit` synchronizes modified components to workspace disk files by default (`--write-disk=true` / `-w`), ensuring VS Code, Cursor, and Language Server Protocols (LSPs) always remain consistent with the AST Merkle DAG. Pass `--write-disk=false` only for headless/DAG-only transformations.
 
 ---
 

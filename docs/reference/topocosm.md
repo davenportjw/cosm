@@ -71,12 +71,12 @@ type BackplaneProvider interface {
 - **Docker Requirement**: **Zero**. Runs 100% locally and hermetically.
 
 ### Cloud Cluster Requirements
-When hosted at `topocosm.dev`, the cloud backplane provisions:
-1. **CAS Object Store**: Global S3/GCS bucket with edge CDN caching for immutable AST blobs.
-2. **Metadata DAG Engine**: CockroachDB / Spanner multi-region SQL for cross-boundary edges and universe manifests.
-3. **Event Mesh**: NATS JetStream cluster for real-time agent swarms and proposal sync.
-4. **Lease Coordination**: Redis / DynamoDB conditional writes with TTLs for blackboard claims.
-5. **Preview Execution**: Firecracker microVMs / Apple containers for sandboxed compilation.
+When hosted at `topocosm.dev`, the cloud backplane provisions Google Cloud Platform infrastructure:
+1. **CAS Object Store**: Global Google Cloud Storage (GCS) bucket with Cloud CDN caching for immutable AST blobs.
+2. **Metadata DAG Engine**: Cloud Spanner / SQLite WAL for cross-boundary edges and universe manifests.
+3. **Event Mesh**: Google Cloud Pub/Sub for real-time agent swarms and proposal sync.
+4. **Lease Coordination**: Google Cloud Memorystore for Redis conditional writes with TTLs for blackboard claims.
+5. **Preview Execution**: Google Cloud Run / Apple containers for sandboxed compilation and local preview.
 
 ---
 

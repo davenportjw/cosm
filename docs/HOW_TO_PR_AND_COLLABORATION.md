@@ -178,7 +178,7 @@ When running parallel agent swarms across multiple processes or distributed mach
    # 📡 Sparse AST Replication for Universe 'universe-main':
    #    • Filter:           services/billing
    #    • Synchronized:     12 AST blobs (1 components, 11 symbols)
-   #    • Bandwidth Saved:  94.2% reduction vs full repository clone
+   #    • Bandwidth Saved:  94.2% reduction vs full repository clone (12 blobs synced vs 207 total blobs)
    # ✨ Local state synchronized with peer swarm.
    ```
 

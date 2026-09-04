@@ -95,8 +95,8 @@ Cosm treats source code as a **typed, content-addressed semantic graph**, while 
 > *"Frontier LLMs (GPT-4o, Claude 3.7, Gemini) are autoregressive text tokenizers trained on raw files and standard unified diffs. Forcing an LLM to call fine-grained geometric AST tools (`insert_parameter`, `replace_body`) burns 10x more roundtrips, token latency, and JSON schema parsing errors than simply outputting a diff or overwriting the file."*
 
 #### 🛡️ The Cosm Defense:
-1. **Mitigating Full-File Hallucination & Truncation**: When an LLM overwrites a 2,000-line file to edit 3 lines, it frequently hallucinates unrelated methods or truncates code with `// ... rest of code remains the same ...`. Declarative AST mutations isolate the target symbol, eliminating 95% of output token cost and hallucination risk.
-2. **Surgical Context Retrieval (Subgraphs vs. Repo Dumps)**: Rather than stuffing an entire codebase into an LLM's prompt window, Cosm traverses the AST graph and provides the LLM with **only** the target symbol and its immediate 1-hop blast radius dependencies (`cosm blast-radius <node_id>`), cutting prompt token consumption dramatically.
+1. **Mitigating Full-File Hallucination & Truncation**: When an LLM overwrites a 2,000-line file to edit 3 lines, it frequently hallucinates unrelated methods or truncates code with `// ... rest of code remains the same ...`. Declarative AST mutations isolate the target symbol, eliminating 99.2%–99.8% of output token generation cost (empirically measured: 35–38 tokens for surgical payload vs 4,625–18,500 tokens for full file rewrite; see [Empirical Benchmarks & Savings](file:///Users/jasondavenport/GitHub/cosm/docs/reference/empirical-benchmarks-and-savings.md)) and removing truncation risk.
+2. **Surgical Context Retrieval (Subgraphs vs. Repo Dumps)**: Rather than stuffing an entire codebase into an LLM's prompt window, Cosm traverses the AST graph and provides the LLM with **only** the target symbol and its immediate 1-hop blast radius dependencies (`cosm blast-radius <node_id>`), cutting prompt token consumption by 95.0%–98.5% compared to full-file hydration.
 3. **Dual Ingestion**: Agents are never forced to speak raw AST. An agent can write standard text or diffs; Cosm's background engine automatically parses and reconciles the changes into the AST Merkle tree asynchronously.
 
 ---
@@ -108,7 +108,8 @@ Cosm treats source code as a **typed, content-addressed semantic graph**, while 
 
 #### 🛡️ The Cosm Defense:
 1. **State Synchronization, Not Just Disk Blocks**: An APFS clone creates isolated files on disk, but it does not manage **causal time, CRDT convergence, or branch relationships**. If 20 agents test competing mutations across 20 APFS worktrees, you still face a massive rebase/merge conflict crisis when merging their text files back together.
-2. **Mathematical Tree Search (MCTS)**: Cosm's micro-universes are lightweight pointers in a pure-Go SQLite database (`.cosm/graph.db`). An orchestrator can spin up 50 micro-universes, score each solution against a test suite, run Monte Carlo Tree Search (MCTS), and automatically collapse the winning frontier head into the main universe with mathematical CRDT guarantees ($\sqcup$).
+2. **Empirical Execution Latency**: Creating a zero-copy micro-universe in Cosm is an atomic WAL pointer update and Oplog append requiring **5.67 ms** (empirically benchmarked on Apple M3 in `BenchmarkMicroUniverseCreation`), allocating 0 disk bytes for unmodified sibling trees.
+3. **Mathematical Tree Search (MCTS)**: Cosm's micro-universes are lightweight pointers in a pure-Go database (`.cosm/graph.db`). An orchestrator can spin up 50 micro-universes, score each solution against a test suite, run Monte Carlo Tree Search (MCTS), and automatically collapse the winning frontier head into the main universe with mathematical CRDT guarantees ($\sqcup$).
 
 ---
 

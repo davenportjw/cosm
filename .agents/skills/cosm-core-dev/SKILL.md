@@ -69,6 +69,9 @@ defer graph2.Close()
 2. Add corresponding integration tests in `cmd/cosm/cli_test.go`.
 3. Verify CLI output formatting with Lipgloss.
 
+### 5. IDE & Workspace Disk Synchronization
+When AST mutations are applied via `cosm ast edit`, Cosm automatically synchronizes modified components to the workspace disk files via `materialize.NewExporter().ExportToDisk()` (default flag `--write-disk` / `-w`). This preserves real-time synchronization with developer IDEs (VS Code, Cursor) and Language Server Protocols (`gopls`, `tsserver`, `pyright`). When writing or testing commands that modify universe AST state, ensure the disk synchronization layer cleanly hydrates and exports affected components.
+
 ---
 
 ## Rules to Remember
@@ -76,5 +79,7 @@ defer graph2.Close()
 - **Pure Go Only**: Never introduce CGO dependencies (use `modernc.org/sqlite`).
 - **Atomic Persistence**: Always persist AST symbol nodes to `.cosm/objects/` before recording node IDs in SQLite.
 - **Deduplication**: Unchanged sibling AST symbols must share identical SHA-256 hashes and avoid redundant disk writes.
+- **IDE Disk Sync**: Commands performing AST surgery (`cosm ast edit`) must auto-synchronize changes to workspace disk files by default (`-w`) to keep VS Code and Language Servers in sync.
 - **Always Update Docs**: When modifying schemas, storage formats, or CLI commands, always update `docs/reference/schema-and-storage.md`, `docs/reference/agent-api.md`, and `docs/reference/cli.md` in the same commit.
 - **Direct Documentation Style**: Documentation must be strictly technical, direct, and concise (no fluff, exact equations, explicit JSON wire schemas, and copy-pasteable code).
+

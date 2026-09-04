@@ -40,31 +40,57 @@ graph LR
 
 ---
 
-## 🚀 Quickstart
+## 📦 Installation
 
-### 1. Build the Binary
+Cosm requires **Go 1.22+** and has zero CGO dependencies.
+
+### Option 1: Direct Go Install (Recommended)
+Install the `cosm` binary directly into `$GOPATH/bin` (or `~/go/bin`):
 ```bash
+go install github.com/cosmscm/cosm/cmd/cosm@latest
+```
+*Ensure `$(go env GOPATH)/bin` or `~/go/bin` is in your `$PATH`.*
+
+### Option 2: Build from Source
+```bash
+git clone https://github.com/cosmscm/cosm.git
+cd cosm
 go build -o cosm ./cmd/cosm
+sudo mv cosm /usr/local/bin/
+
+# Optional: Build autonomous agent test harness
+go build -o cosm-agent-harness ./cmd/cosm-agent-harness
+sudo mv cosm-agent-harness /usr/local/bin/
 ```
 
-### 2. Initialize a Repository
+### Verify Installation
+```bash
+cosm --help
+cosm version
+```
+
+---
+
+## 🚀 Quickstart
+
+### 1. Initialize a Repository
 ```bash
 # Initialize a new Cosm repository with a default universe
 cosm init -u universe-main
 ```
 
-### 3. Stage Polyglot Code into AST Symbol Nodes
+### 2. Stage Polyglot Code into AST Symbol Nodes
 ```bash
 # Stage Go, TypeScript, Python, HCL, or SQL source files
 cosm add -p "Initial setup" -i "Staged Go backend and HCL infra" server.go infra/main.tf
 ```
 
-### 4. Commit with Causal Lineage
+### 3. Commit with Causal Lineage
 ```bash
 cosm commit -i "Initial backend & infrastructure setup"
 ```
 
-### 5. Inspect Workspace Status & Cross-Domain Topology
+### 4. Inspect Workspace Status & Cross-Domain Topology
 ```bash
 # Check staged symbol nodes and frontier heads
 cosm status
@@ -73,7 +99,7 @@ cosm status
 cosm topology
 ```
 
-### 6. Zero-Copy Micro-Universes & Proposals
+### 5. Zero-Copy Micro-Universes & Proposals
 ```bash
 # Create an isolated micro-universe branched from universe-main
 cosm universe create universe-feature-auth -p universe-main
@@ -88,15 +114,66 @@ cosm proposal create --title "Add OAuth2 Flow" --source universe-feature-auth --
 cosm proposal view prop-1
 ```
 
-### 7. Compile & Ship to Target Preview
+### 6. Compile & Ship to Target Preview
 ```bash
 cosm ship --target local-preview
 ```
 
-### 8. Interactive Terminal Dashboard
+### 7. Interactive Terminal Dashboard
 ```bash
 cosm dashboard
 ```
+
+---
+
+## 🤖 AI Agent Integration & Antigravity Skills
+
+Cosm is designed natively for pair-programming agents (such as Antigravity / Gemini) and autonomous swarms. To ensure agents interact with Cosm via AST-level surgery rather than error-prone text/line diffs, specialized skills are bundled in [`.agents/skills/`](.agents/skills).
+
+### Bundled Skills Catalog
+
+| Skill Name | Location | Description & Capabilities |
+| :--- | :--- | :--- |
+| **`cosm-core-dev`** | [`.agents/skills/cosm-core-dev/SKILL.md`](.agents/skills/cosm-core-dev/SKILL.md) | Initializing repositories, WAL graph operations (`.cosm/graph.db`), zero-copy micro-universes, and CLI workflows. |
+| **`cosm-ast-surgeon`** | [`.agents/skills/cosm-ast-surgeon/SKILL.md`](.agents/skills/cosm-ast-surgeon/SKILL.md) | Executing declarative AST code modifications using 9 geometric verbs (`insert_symbol`, `replace_body`, `delete_symbol`, etc.) without full-file rewrites. |
+| **`shipping-and-validation`** | [`.agents/skills/shipping-and-validation/SKILL.md`](.agents/skills/shipping-and-validation/SKILL.md) | Running target compilation previews (`cosm ship`), Terraform validation, Python `uv` tests, and containerless staging. |
+| **`polyglot-codecs-guide`** | [`.agents/skills/polyglot-codecs-guide/SKILL.md`](.agents/skills/polyglot-codecs-guide/SKILL.md) | Implementing and testing AST parsers and cross-boundary contract inferencers across 19 supported languages. |
+| **`cosm-agent-harness`** | [`.agents/skills/cosm-agent-harness/SKILL.md`](.agents/skills/cosm-agent-harness/SKILL.md) | Benchmarking autonomous agent execution, scoring verification oracles (0–100), and running scenario suites. |
+
+### How Antigravity Loads and Executes Skills
+
+Antigravity uses a **hierarchical discovery** and **progressive disclosure** model:
+
+```
+[Repository Root]
+  └── .agents/skills/<skill-name>/SKILL.md
+        │
+        ├── 1. Discovery & Indexing ──► Agent startup reads YAML frontmatter (name & description)
+        │                               into system prompt (<skills> block). Zero token overhead.
+        │
+        └── 2. Progressive Activation ──► When a prompt matches a skill (e.g. AST surgery, shipping),
+                                        the agent calls view_file on SKILL.md to load full procedures.
+```
+
+1. **Discovery**: Antigravity automatically scans for `.agents/skills/*/SKILL.md` from the current working directory up to the workspace root.
+2. **Progressive Disclosure**: At startup, only the YAML frontmatter (`name` and `description`) is injected into the context window. Full runbooks are read on-demand only when the agent needs them, keeping the context window focused.
+3. **Project Invariants**: In addition to skills, Antigravity loads [`AGENTS.md`](AGENTS.md) and [`GEMINI.md`](GEMINI.md) unconditionally to enforce hard architectural rules (pure Go, zero-CGO WAL, offline local engine, and test toolchains).
+
+### Using Cosm Skills in Any Project (Outside the Cosm Repo)
+
+To empower Antigravity or any agent to use Cosm in other repositories:
+
+* **Workspace Scope** (recommended for team projects):
+  ```bash
+  mkdir -p .agents/skills
+  cp -r /path/to/cosm/.agents/skills/cosm-* .agents/skills/
+  ```
+* **Global Machine Scope** (applies across all local projects):
+  ```bash
+  mkdir -p ~/.gemini/config/skills
+  cp -r /path/to/cosm/.agents/skills/cosm-ast-surgeon ~/.gemini/config/skills/
+  cp -r /path/to/cosm/.agents/skills/cosm-core-dev ~/.gemini/config/skills/
+  ```
 
 ---
 
