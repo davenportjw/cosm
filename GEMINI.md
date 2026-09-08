@@ -17,7 +17,7 @@ This file contains durable project rules and contextual memory for Antigravity p
 - **Distributed Collaboration & Stacking**:
   - Radicle-style CRDT Collaborative Objects (COBs), Lamport logical clocks, and Jujutsu-style stacked proposals (`pkg/distributed/`).
 - **Human PR Compatibility**: Universe proposals present code changes, AST symbol diff cards, contract topology graphs, and build badges while maintaining intuitive human review semantics (`pkg/review/`).
-- **Test Agents**: Autonomous agent testing and scoring harnesses live in `test/agents/` and `cmd/cosm-agent-harness/`. Default LLM is `gemini-3.7-flash`.
+- **Test Agents**: Autonomous agent testing and scoring harnesses live in `test/agents/` and `cmd/cosm-agent-harness/`. Default LLM is `gemini-3.8-flash`.
 
 ---
 

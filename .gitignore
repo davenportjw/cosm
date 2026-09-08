@@ -24,6 +24,8 @@ go.work.sum
 coverage.out
 coverage.html
 test.log
+*.log
+logs/
 
 # ------------------------------------------------------------------------------
 # Python
