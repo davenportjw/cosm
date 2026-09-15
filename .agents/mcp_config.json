@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "cosm": {
+      "command": "cosm",
+      "args": ["mcp"],
+      "env": {
+        "COSM_UNIVERSE": "universe-main"
+      }
+    }
+  }
+}

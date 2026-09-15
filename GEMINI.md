@@ -35,7 +35,9 @@ This file contains durable project rules and contextual memory for Antigravity p
    - ALWAYS update docs in `docs/` (`docs/reference/schema-and-storage.md`, `docs/reference/federation-and-multi-repo.md`, `docs/reference/topocosm.md`, `docs/roadmaps/topocosm-spin-off-plan.md`, etc.) whenever data models, APIs, codecs, or CLI commands change.
    - Documentation style MUST be **very direct, precise, and concise** (zero fluff, exact type definitions, clear markdown tables, and explicit formulas).
 6. **IDE & Workspace Auto-Synchronization**:
-   - `cosm ast edit` automatically updates workspace disk files (`--write-disk` / `-w`, default `true`) so open VS Code buffers, Language Server Protocols (`gopls`, `tsserver`, `pyright`), and linters immediately see AST mutations.
+   - `cosm ast edit` automatically updates workspace disk files (`--write-disk` / `-w`, default `true`) so open VS Code buffers, Language Server Protocols (`gopls`, `tsserver`, `pyright`), linters, and test runners immediately see AST mutations.
+7. **Graph Concurrency & Edge Write Synchronization**:
+   - `GraphEngine` synchronizes `PutEdge` via `g.mu.Lock()` and framed binary WAL records with CRC32 checksums and atomic `fsync`. Edges are addressed via composite keys (`SourceID|TargetID|EdgeType`), ensuring write idempotency. Branch blocking locks are replaced by zero-copy micro-universes and non-blocking `ASTConflictNode`s.
 
 ---
 

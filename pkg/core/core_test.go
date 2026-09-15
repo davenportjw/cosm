@@ -375,3 +375,103 @@ func TestWorkspaceManifestNodeDeterministicHashing(t *testing.T) {
 		t.Fatalf("roundtrip mismatch: %+v vs %+v", roundtrip, manifest1)
 	}
 }
+
+type mockEdgeFilter struct {
+	suppressEnv string
+}
+
+func (m *mockEdgeFilter) ShouldIgnoreEdge(edge core.CrossBoundaryEdge, sourceNode, targetNode *core.ASTSymbolNode, sourcePath, targetPath string) bool {
+	if edge.Type == core.EdgeBindsEnv && edge.Metadata["env_var"] == m.suppressEnv {
+		return true
+	}
+	return false
+}
+
+func TestCrossBoundaryLinker_EdgeFilterSuppression(t *testing.T) {
+	linker := core.NewCrossBoundaryLinker()
+
+	hclSym := &core.ASTSymbolNode{
+		NodeID:     "sym-hcl-app",
+		Language:   core.LangHCL,
+		NodeType:   "ResourceBlock",
+		Identifier: "google_cloud_run_service.app",
+		ASTPayload: []byte(`{"resource_type":"google_cloud_run_service","nested_blocks":[{"block_type":"env","attributes":{"name":{"value":"TEST_KEY"},"value":{"value":"val1"}}},{"block_type":"env","attributes":{"name":{"value":"PROD_KEY"},"value":{"value":"val2"}}}]}`),
+	}
+
+	backendSym1 := &core.ASTSymbolNode{
+		NodeID:      "sym-be-test",
+		Language:    core.LangGo,
+		NodeType:    "FunctionDecl",
+		Identifier:  "GetTestKey",
+		ASTPayload:  []byte(`{"env_vars_accessed":["TEST_KEY"]}`),
+		ASTMetadata: map[string]string{"env_access": "TEST_KEY"},
+	}
+
+	backendSym2 := &core.ASTSymbolNode{
+		NodeID:      "sym-be-prod",
+		Language:    core.LangGo,
+		NodeType:    "FunctionDecl",
+		Identifier:  "GetProdKey",
+		ASTPayload:  []byte(`{"env_vars_accessed":["PROD_KEY"]}`),
+		ASTMetadata: map[string]string{"env_access": "PROD_KEY"},
+	}
+
+	compHCL := &core.ComponentNode{
+		ComponentID: "comp-infra",
+		Name:        "infra/main.tf",
+		Type:        core.CompInfra,
+		Language:    core.LangHCL,
+		SymbolNodes: []string{hclSym.NodeID},
+		Metadata:    map[string]string{"file_path": "infra/main.tf"},
+	}
+
+	compBackend := &core.ComponentNode{
+		ComponentID: "comp-service",
+		Name:        "backend/main.go",
+		Type:        core.CompService,
+		Language:    core.LangGo,
+		SymbolNodes: []string{backendSym1.NodeID, backendSym2.NodeID},
+		Metadata:    map[string]string{"file_path": "backend/main.go"},
+	}
+
+	syms := map[string]*core.ASTSymbolNode{
+		hclSym.NodeID:      hclSym,
+		backendSym1.NodeID: backendSym1,
+		backendSym2.NodeID: backendSym2,
+	}
+	comps := []*core.ComponentNode{compHCL, compBackend}
+
+	// 1. Without filter: both edges linked
+	edges, err := linker.LinkWorkspace(comps, syms)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(edges) != 2 {
+		t.Fatalf("expected 2 edges without filter, got %d", len(edges))
+	}
+
+	// 2. With filter: TEST_KEY edge suppressed
+	filter := &mockEdgeFilter{suppressEnv: "TEST_KEY"}
+	linker.SetFilter(filter)
+	filteredEdges, err := linker.LinkWorkspace(comps, syms)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(filteredEdges) != 1 {
+		t.Fatalf("expected 1 edge with filter, got %d", len(filteredEdges))
+	}
+	if filteredEdges[0].Metadata["env_var"] != "PROD_KEY" {
+		t.Errorf("expected remaining edge to be PROD_KEY, got %s", filteredEdges[0].Metadata["env_var"])
+	}
+
+	// 3. With inline metadata directive: PROD_KEY ignored via ASTMetadata
+	backendSym2.ASTMetadata["cosm:ignore-edge"] = "BINDS_ENV"
+	inlineEdges, err := linker.LinkWorkspace(comps, syms)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(inlineEdges) != 0 {
+		t.Fatalf("expected 0 edges when both are suppressed, got %d", len(inlineEdges))
+	}
+}
+

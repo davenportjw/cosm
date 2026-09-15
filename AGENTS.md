@@ -52,6 +52,12 @@ This document establishes durable conventions, architectural invariants, environ
    - This ensures open VS Code buffers, Language Server Protocols (`gopls`, `tsserver`, `pyright`), linters, and test runners instantly observe mutations without requiring manual export.
    - Headless background batch pipelines may pass `--write-disk=false` when only DAG manipulation is required.
 
+8. **Graph Concurrency, Edge Write Synchronization & Non-Blocking Conflict Reification**:
+   - In `pkg/storage/graphengine.go`, edge and node mutations (`PutEdge`) are strictly synchronized via `g.mu.Lock()` and committed through framed binary WAL records with IEEE CRC32 checksums and atomic `fsync`.
+   - Edges are composite-addressed via `EdgeKey() = SourceID|TargetID|EdgeType` guaranteeing idempotency under concurrent writes.
+   - Long-lived blocking locks across branches are prohibited: agents work in isolated micro-universes.
+   - Cross-agent edge contract discrepancies are detected via `core.DetectContractBreakages` and reified as first-class `ASTConflictNode`s in the Merkle-DAG rather than stalling the pipeline.
+
 ---
 
 ## 3. Environment & Tooling Guidelines

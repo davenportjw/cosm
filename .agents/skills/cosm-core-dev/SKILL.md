@@ -72,6 +72,27 @@ defer graph2.Close()
 ### 5. IDE & Workspace Disk Synchronization
 When AST mutations are applied via `cosm ast edit`, Cosm automatically synchronizes modified components to the workspace disk files via `materialize.NewExporter().ExportToDisk()` (default flag `--write-disk` / `-w`). This preserves real-time synchronization with developer IDEs (VS Code, Cursor) and Language Server Protocols (`gopls`, `tsserver`, `pyright`). When writing or testing commands that modify universe AST state, ensure the disk synchronization layer cleanly hydrates and exports affected components.
 
+### 6. Storage Concurrency & Edge Write Invariants
+When developing or extending `pkg/storage/graphengine.go`, `pkg/storage/universe.go`, or cross-boundary graph traversal, adhere strictly to these physical storage and edge concurrency invariants:
+1. **Physical Engine Mutex Lock (`mu sync.RWMutex`)**:
+   `GraphEngine` guards all write mutations with `g.mu.Lock()` in `executeMutation`. Standalone mutations write framed binary WAL records (`walRecordTxBegin`, `walRecordMutation`, `walRecordTxCommit`) with IEEE CRC32 checksums before in-memory index application:
+   $$\text{Frame} = [\text{Magic}_{4\text{B}}][\text{Type}_{1\text{B}}][\text{Length}_{4\text{B}}][\text{CRC32}_{4\text{B}}][\text{Payload}]$$
+   Every committed transaction executes `g.walFile.Sync()` (`fsync`) to guarantee disk durability.
+2. **Composite Key Idempotency**:
+   Edge records are uniquely addressed by `EdgeRecord.EdgeKey()`:
+   ```go
+   fmt.Sprintf("%s|%s|%s", e.SourceID, e.TargetID, e.EdgeType)
+   ```
+   Concurrent `PutEdge` calls on identical relation keys are safe and idempotent; the second caller updates metadata without corrupting graph topology or creating duplicate relational edges in `g.outgoingEdges` or `g.incomingEdges`.
+3. **Micro-Universe Manifest Edge Union**:
+   In `UniverseManager.MergeUniverse`, merging cross-boundary edges pools them into an edge set map:
+   ```go
+   edgeSet[fmt.Sprintf("%s|%s|%s", e.SourceNodeID, e.TargetNodeID, e.Type)] = e
+   ```
+   Deduplication occurs automatically across non-conflicting micro-universe heads.
+4. **Semantic Conflict Reification vs. Lock Stalls**:
+   Cosm core engine code must never block waiting for long-held external locks. When concurrent micro-universes introduce conflicting edge contracts (evaluated via `core.DetectContractBreakages`), the collaboration engine raises `SemanticConflict` (`SeverityError`) and persists competing versions as first-class `pkg/distributed/ASTConflictNode`s in the Merkle-DAG rather than throwing merge deadlocks or corrupting graph state.
+
 ---
 
 ## Rules to Remember
@@ -79,6 +100,7 @@ When AST mutations are applied via `cosm ast edit`, Cosm automatically synchroni
 - **Pure Go Only**: Never introduce CGO dependencies (use `modernc.org/sqlite`).
 - **Atomic Persistence**: Always persist AST symbol nodes to `.cosm/objects/` before recording node IDs in SQLite.
 - **Deduplication**: Unchanged sibling AST symbols must share identical SHA-256 hashes and avoid redundant disk writes.
+- **Edge Write Synchronization**: In `GraphEngine`, all edge mutations must be synchronized via `g.mu.Lock()` and committed through framed WAL records with CRC32 verification before updating in-memory indices.
 - **IDE Disk Sync**: Commands performing AST surgery (`cosm ast edit`) must auto-synchronize changes to workspace disk files by default (`-w`) to keep VS Code and Language Servers in sync.
 - **Always Update Docs**: When modifying schemas, storage formats, or CLI commands, always update `docs/reference/schema-and-storage.md`, `docs/reference/agent-api.md`, and `docs/reference/cli.md` in the same commit.
 - **Direct Documentation Style**: Documentation must be strictly technical, direct, and concise (no fluff, exact equations, explicit JSON wire schemas, and copy-pasteable code).

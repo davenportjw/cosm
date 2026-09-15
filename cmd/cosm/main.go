@@ -11,16 +11,21 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/cosmscm/cosm/pkg/codecs"
 	"github.com/cosmscm/cosm/pkg/core"
 	"github.com/cosmscm/cosm/pkg/distributed"
 	"github.com/cosmscm/cosm/pkg/gitshim"
+	"github.com/cosmscm/cosm/pkg/ignore"
 	"github.com/cosmscm/cosm/pkg/lineage"
+	"github.com/cosmscm/cosm/pkg/lsp"
 	"github.com/cosmscm/cosm/pkg/materialize"
+	"github.com/cosmscm/cosm/pkg/mcp"
 	"github.com/cosmscm/cosm/pkg/mutation"
 	"github.com/cosmscm/cosm/pkg/onboarding"
 	"github.com/cosmscm/cosm/pkg/review"
@@ -30,6 +35,7 @@ import (
 	"github.com/cosmscm/cosm/pkg/topocosm"
 	"github.com/cosmscm/cosm/pkg/topocosm/backplane"
 	"github.com/cosmscm/cosm/pkg/tui"
+	"github.com/cosmscm/cosm/pkg/watcher"
 )
 
 func printHelp() {
@@ -59,6 +65,12 @@ Core Commands:
   export -d <dir>                  Reconstitute and write entire universe AST back to disk
   dashboard                        Launch interactive terminal dashboard (TUI)
   git <status|log|diff|push>       Local Git compatibility shim (for IDEs and local Git tooling)
+
+IDE & Machine Interfaces:
+  mcp [-d <dir>] [-u <universe>]   Start Model Context Protocol (MCP) JSON-RPC 2.0 stdio server
+  lsp [-d <dir>]                   Start Language Server Protocol (LSP) JSON-RPC 2.0 stdio server
+  watch [-d <dir>] [-u <universe>] Run background filesystem watcher and auto-stager daemon
+  git init-bridge [-d <dir>]       Initialize synthetic .git bridge for IDE compatibility
 
 Authentication & Teamwork:
   auth <login|whoami|token|logout> Authenticate developer CLI and manage personal access tokens (PATs)
@@ -158,6 +170,15 @@ func main() {
 	case "git":
 		runGit(args)
 
+	case "mcp":
+		runMCP(args)
+
+	case "lsp":
+		runLSP(args)
+
+	case "watch":
+		runWatch(args)
+
 	case "auth":
 		runAuth(args)
 
@@ -223,7 +244,14 @@ func runInit(args []string) {
 }
 
 func runAdd(args []string) {
-	fs := flag.NewFlagSet("add", flag.ExitOnError)
+	if err := runAddE(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runAddE(args []string) error {
+	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	universeID := fs.String("u", "universe-main", "Active micro-universe ID")
 	agentID := fs.String("a", "cosm-user-agent", "Agent ID")
 	prompt := fs.String("p", "", "User prompt")
@@ -239,19 +267,29 @@ func runAdd(args []string) {
 	latencyMs := fs.Int64("latency-ms", 0, "Latency in milliseconds")
 	traceID := fs.String("trace-id", "", "W3C Trace ID")
 	spanID := fs.String("span-id", "", "W3C Span ID")
-	_ = fs.Parse(args)
+	force := fs.Bool("force", false, "Allow adding files matching .cosmignore or default exclusion rules")
+	fs.BoolVar(force, "f", false, "Allow adding files matching .cosmignore rules (shorthand)")
+	allowSecrets := fs.Bool("allow-secrets", false, "Allow staging files containing detected credentials or plaintext secrets")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	_ = universeID
 
 	files := fs.Args()
 	if len(files) == 0 {
 		fmt.Println("No files specified to add.")
-		return
+		return nil
 	}
+
+	ignoreEngine, _ := ignore.LoadWorkspaceRules(".")
+	if ignoreEngine == nil {
+		ignoreEngine = ignore.NewIgnoreEngine(".")
+	}
+	secretDetector := ignore.NewSecretDetector()
 
 	blobStore, graphEngine, err := openStorage()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Storage error: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("storage error: %w", err)
 	}
 	defer graphEngine.Close()
 
@@ -286,9 +324,6 @@ func runAdd(args []string) {
 			continue
 		}
 
-		var comp *core.ComponentNode
-		syms := make(map[string]*core.ASTSymbolNode)
-
 		cleanPath := filepath.Clean(path)
 		var relPath string
 		if r, rErr := filepath.Rel(".", cleanPath); rErr == nil && !strings.HasPrefix(r, "..") {
@@ -303,6 +338,23 @@ func runAdd(args []string) {
 				relPath = filepath.Base(cleanPath)
 			}
 		}
+
+		if !*force && ignoreEngine.ShouldIgnorePath(relPath, false) {
+			return fmt.Errorf("'%s' is ignored by .cosmignore or default exclusion rules. Use --force (-f) to override", relPath)
+		}
+
+		if !*allowSecrets {
+			if findings := secretDetector.DetectSecrets(relPath, content); len(findings) > 0 {
+				var msgs []string
+				for _, f := range findings {
+					msgs = append(msgs, fmt.Sprintf("line %d: %s [%s]", f.LineNumber, f.Snippet, f.Type))
+				}
+				return fmt.Errorf("secret detected in '%s' (%s). Aborting stage to prevent credential leakage. Use --allow-secrets or inline '// cosm:allow-secret' to override", relPath, strings.Join(msgs, ", "))
+			}
+		}
+
+		var comp *core.ComponentNode
+		syms := make(map[string]*core.ASTSymbolNode)
 
 		parsed, pErr := codecs.ParseSourceFile(relPath, content, lineageEnv)
 		if pErr == nil && parsed != nil && parsed.Component != nil {
@@ -382,6 +434,7 @@ func runAdd(args []string) {
 		fmt.Printf("✓ Staged AST Component: %s (%s, %d symbols, hash: %s)\n",
 			comp.Name, comp.Language, len(comp.SymbolNodes), comp.ComponentID[:12])
 	}
+	return nil
 }
 
 func runCommit(args []string) {
@@ -437,7 +490,11 @@ func runCommit(args []string) {
 		}
 	}
 
+	engine, _ := ignore.LoadWorkspaceRules(".")
 	linker := core.NewCrossBoundaryLinker()
+	if engine != nil && engine.EdgeFilter != nil {
+		linker.SetFilter(engine.EdgeFilter)
+	}
 	edges, err := linker.LinkWorkspace(components, symbolMap)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning linking cross-boundary edges: %v\n", err)
@@ -512,11 +569,18 @@ func runCommit(args []string) {
 func runStatus(args []string) {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	universeID := fs.String("u", "universe-main", "Universe ID")
+	format := fs.String("format", "text", "Output format (text, json)")
+	fs.StringVar(format, "f", "text", "Alias for --format")
 	_ = fs.Parse(args)
 
 	blobStore, graphEngine, err := openStorage()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Storage error: %v\n", err)
+		if *format == "json" {
+			res, _ := json.Marshal(map[string]interface{}{"status": "ERROR", "error": err.Error()})
+			fmt.Println(string(res))
+		} else {
+			fmt.Fprintf(os.Stderr, "Storage error: %v\n", err)
+		}
 		os.Exit(1)
 	}
 	defer graphEngine.Close()
@@ -524,7 +588,32 @@ func runStatus(args []string) {
 	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
 	head, err := universeMgr.GetUniverseManifest(*universeID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Getting universe manifest: %v\n", err)
+		if *format == "json" {
+			res, _ := json.Marshal(map[string]interface{}{"status": "ERROR", "error": err.Error()})
+			fmt.Println(string(res))
+		} else {
+			fmt.Fprintf(os.Stderr, "Getting universe manifest: %v\n", err)
+		}
+		return
+	}
+
+	if *format == "json" {
+		out := map[string]interface{}{
+			"status":            "SUCCESS",
+			"universe_id":       *universeID,
+			"merkle_root":       "",
+			"components_count":  0,
+			"cross_edges_count": 0,
+			"components":        []string{},
+		}
+		if head != nil {
+			out["merkle_root"] = head.MerkleRootHash
+			out["components_count"] = len(head.Components)
+			out["cross_edges_count"] = len(head.CrossEdges)
+			out["components"] = head.Components
+		}
+		data, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(data))
 		return
 	}
 
@@ -541,12 +630,18 @@ func runStatus(args []string) {
 func runTopology(args []string) {
 	fs := flag.NewFlagSet("topology", flag.ExitOnError)
 	universeID := fs.String("u", "universe-main", "Universe ID")
-	format := fs.String("f", "ascii", "Output format (ascii/mermaid)")
+	format := fs.String("f", "ascii", "Output format (ascii/mermaid/json)")
+	fs.StringVar(format, "format", "ascii", "Output format (ascii/mermaid/json)")
 	_ = fs.Parse(args)
 
 	blobStore, graphEngine, err := openStorage()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Storage error: %v\n", err)
+		if *format == "json" {
+			res, _ := json.Marshal(map[string]interface{}{"status": "ERROR", "error": err.Error()})
+			fmt.Println(string(res))
+		} else {
+			fmt.Fprintf(os.Stderr, "Storage error: %v\n", err)
+		}
 		os.Exit(1)
 	}
 	defer graphEngine.Close()
@@ -554,7 +649,12 @@ func runTopology(args []string) {
 	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
 	head, err := universeMgr.GetUniverseManifest(*universeID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Getting universe manifest: %v\n", err)
+		if *format == "json" {
+			res, _ := json.Marshal(map[string]interface{}{"status": "ERROR", "error": err.Error()})
+			fmt.Println(string(res))
+		} else {
+			fmt.Fprintf(os.Stderr, "Getting universe manifest: %v\n", err)
+		}
 		return
 	}
 
@@ -564,6 +664,9 @@ func runTopology(args []string) {
 
 	if *format == "mermaid" {
 		fmt.Println(vis.RenderMermaid(topGraph))
+	} else if *format == "json" {
+		data, _ := json.MarshalIndent(topGraph, "", "  ")
+		fmt.Println(string(data))
 	} else {
 		fmt.Println(vis.RenderASCII(topGraph))
 	}
@@ -602,15 +705,25 @@ func runLineage(args []string) {
 }
 
 func runBlastRadius(args []string) {
-	if len(args) == 0 {
-		fmt.Println("Usage: cosm blast-radius <agent_or_model>")
+	fs := flag.NewFlagSet("blast-radius", flag.ExitOnError)
+	format := fs.String("format", "text", "Output format (text, json)")
+	fs.StringVar(format, "f", "text", "Alias for --format")
+	_ = fs.Parse(args)
+
+	if fs.NArg() == 0 {
+		fmt.Println("Usage: cosm blast-radius [flags] <agent_or_model>")
 		return
 	}
-	agent := args[0]
+	agent := fs.Arg(0)
 
 	_, graphEngine, err := openStorage()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Storage error: %v\n", err)
+		if *format == "json" {
+			res, _ := json.Marshal(map[string]interface{}{"status": "ERROR", "error": err.Error()})
+			fmt.Println(string(res))
+		} else {
+			fmt.Fprintf(os.Stderr, "Storage error: %v\n", err)
+		}
 		os.Exit(1)
 	}
 	defer graphEngine.Close()
@@ -618,9 +731,21 @@ func runBlastRadius(args []string) {
 	auditor := lineage.NewAuditEngine(graphEngine)
 	report, err := auditor.ComputeBlastRadius(lineage.AuditFilter{ExecutingAgentID: agent}, 5)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Blast radius error: %v\n", err)
+		if *format == "json" {
+			res, _ := json.Marshal(map[string]interface{}{"status": "ERROR", "error": err.Error()})
+			fmt.Println(string(res))
+		} else {
+			fmt.Fprintf(os.Stderr, "Blast radius error: %v\n", err)
+		}
 		return
 	}
+
+	if *format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Println(string(data))
+		return
+	}
+
 	fmt.Printf("=== Blast Radius Audit Report ===\n")
 	fmt.Printf("Summary: %s\n", report.Summary)
 	fmt.Printf("Total Direct Nodes:     %d\n", report.TotalDirectNodes)
@@ -785,7 +910,18 @@ func runUniverse(args []string) {
 	sub := args[0]
 	switch sub {
 	case "list":
+		fs := flag.NewFlagSet("universe list", flag.ExitOnError)
+		format := fs.String("format", "text", "Output format (text, json)")
+		fs.StringVar(format, "f", "text", "Alias for --format")
+		_ = fs.Parse(args[1:])
+
 		universes := universeMgr.ListUniverses()
+		if *format == "json" {
+			data, _ := json.MarshalIndent(universes, "", "  ")
+			fmt.Println(string(data))
+			return
+		}
+
 		fmt.Println("🌌 Active Micro-Universes:")
 		for _, u := range universes {
 			fmt.Printf("  * %s (Head: %s, Status: %s)\n", u.UniverseID, u.HeadManifestHash[:12], u.Status)
@@ -1752,9 +1888,102 @@ func runGit(args []string) {
 		for _, e := range entries {
 			fmt.Printf("commit %s\nAuthor: %s\nDate:   %s\n\n    %s\n\n", e.CommitHash, e.Author, e.Date.Format(time.RFC1123), e.Message)
 		}
+	case "init-bridge":
+		fs := flag.NewFlagSet("git init-bridge", flag.ExitOnError)
+		universeID := fs.String("u", "universe-main", "Universe ID")
+		dir := fs.String("d", ".", "Workspace directory")
+		_ = fs.Parse(args[1:])
+		absDir, err := filepath.Abs(*dir)
+		if err != nil {
+			absDir = *dir
+		}
+		if err := gitshim.InitGitBridge(absDir, *universeID); err != nil {
+			fmt.Fprintf(os.Stderr, "git init-bridge error: %v\n", err)
+			return
+		}
+		fmt.Printf("✓ Initialized synthetic .git bridge in %s for universe '%s'\n", absDir, *universeID)
 	default:
 		fmt.Printf("Executed 'cosm git %s'\n", sub)
 	}
+}
+
+func runMCP(args []string) {
+	fs := flag.NewFlagSet("mcp", flag.ExitOnError)
+	dir := fs.String("d", ".", "Workspace directory")
+	_ = fs.Parse(args)
+
+	absDir, err := filepath.Abs(*dir)
+	if err != nil {
+		absDir = *dir
+	}
+
+	srv, err := mcp.NewServer(absDir, os.Stdin, os.Stdout)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to initialize MCP server: %v\n", err)
+		os.Exit(1)
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	if err := srv.Run(ctx); err != nil && err != io.EOF && err != context.Canceled {
+		fmt.Fprintf(os.Stderr, "MCP server exited with error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runLSP(args []string) {
+	fs := flag.NewFlagSet("lsp", flag.ExitOnError)
+	dir := fs.String("d", ".", "Workspace directory")
+	_ = fs.Parse(args)
+
+	absDir, err := filepath.Abs(*dir)
+	if err != nil {
+		absDir = *dir
+	}
+
+	srv, err := lsp.NewServer(absDir, os.Stdin, os.Stdout)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to initialize LSP server: %v\n", err)
+		os.Exit(1)
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	if err := srv.Run(ctx); err != nil && err != io.EOF && err != context.Canceled {
+		fmt.Fprintf(os.Stderr, "LSP server exited with error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runWatch(args []string) {
+	fs := flag.NewFlagSet("watch", flag.ExitOnError)
+	dir := fs.String("d", ".", "Workspace directory")
+	intervalMs := fs.Int("interval", 250, "Polling interval in milliseconds")
+	universeID := fs.String("u", "universe-main", "Universe ID")
+	_ = fs.Parse(args)
+
+	absDir, err := filepath.Abs(*dir)
+	if err != nil {
+		absDir = *dir
+	}
+
+	w, err := watcher.NewWatcher(absDir, time.Duration(*intervalMs)*time.Millisecond)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to initialize watcher: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Cosm Watcher running on %s (universe: %s, interval: %dms)...\n", absDir, *universeID, *intervalMs)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	if err := w.Start(ctx); err != nil && err != context.Canceled {
+		fmt.Fprintf(os.Stderr, "watcher stopped with error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("\nWatcher stopped.")
 }
 
 func openStorage() (*storage.BlobStore, *storage.GraphEngine, error) {

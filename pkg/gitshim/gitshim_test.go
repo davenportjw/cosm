@@ -199,3 +199,35 @@ func TestRemoteBridge_PushAndPull(t *testing.T) {
 		t.Fatalf("unexpected pull result: %+v", pullRes)
 	}
 }
+
+func TestInitGitBridge(t *testing.T) {
+	tempDir := t.TempDir()
+
+	err := InitGitBridge(tempDir, "universe-main")
+	if err != nil {
+		t.Fatalf("InitGitBridge failed: %v", err)
+	}
+
+	// Verify standard .git directory structure
+	gitDir := filepath.Join(tempDir, ".git")
+	headPath := filepath.Join(gitDir, "HEAD")
+	if _, err := os.Stat(headPath); err != nil {
+		t.Fatalf("expected .git/HEAD to exist: %v", err)
+	}
+
+	headContent, err := os.ReadFile(headPath)
+	if err != nil || string(headContent) != "ref: refs/heads/main\n" {
+		t.Fatalf("unexpected .git/HEAD content: %s", string(headContent))
+	}
+
+	configPath := filepath.Join(gitDir, "config")
+	if _, err := os.Stat(configPath); err != nil {
+		t.Fatalf("expected .git/config to exist: %v", err)
+	}
+
+	excludePath := filepath.Join(gitDir, "info", "exclude")
+	if _, err := os.Stat(excludePath); err != nil {
+		t.Fatalf("expected .git/info/exclude to exist: %v", err)
+	}
+}
+

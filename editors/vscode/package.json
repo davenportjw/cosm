@@ -1,0 +1,214 @@
+{
+  "name": "cosm-vscode",
+  "displayName": "Cosm AST SCM & Polyglot Architecture",
+  "description": "AI-Native Polyglot AST Source Control, Micro-Universes, and 3-Tier Topology for VS Code & Antigravity IDE",
+  "version": "0.1.0",
+  "publisher": "cosmscm",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Source Control",
+    "Programming Languages",
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "ast",
+    "scm",
+    "polyglot",
+    "merkle",
+    "micro-universe",
+    "lineage",
+    "topocosm"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "workspaceContains:.cosm"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cosm-explorer",
+          "title": "Cosm AST",
+          "icon": "$(globe)"
+        }
+      ]
+    },
+    "views": {
+      "cosm-explorer": [
+        {
+          "id": "cosm.topologyView",
+          "name": "Architecture Topology (Frontend → Backend → Infra)",
+          "type": "webview"
+        }
+      ],
+      "scm": [
+        {
+          "id": "cosm.scmView",
+          "name": "Cosm Micro-Universes",
+          "type": "list"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "cosm.switchUniverse",
+        "title": "Cosm: Switch Micro-Universe",
+        "category": "Cosm",
+        "icon": "$(git-branch)"
+      },
+      {
+        "command": "cosm.createUniverse",
+        "title": "Cosm: Create Micro-Universe (Zero-Copy Branch)",
+        "category": "Cosm",
+        "icon": "$(add)"
+      },
+      {
+        "command": "cosm.openTopology",
+        "title": "Cosm: Open Cross-Domain Topology Canvas",
+        "category": "Cosm",
+        "icon": "$(type-hierarchy-sub)"
+      },
+      {
+        "command": "cosm.commitWithPrompt",
+        "title": "Cosm: Commit AST Symbols (Intent & Prompt)",
+        "category": "Cosm",
+        "icon": "$(check)"
+      },
+      {
+        "command": "cosm.shipPreview",
+        "title": "Cosm: Ship Target & Ephemeral Preview",
+        "category": "Cosm",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "cosm.blastRadius",
+        "title": "Cosm: Audit Blast Radius & Downstream Contracts",
+        "category": "Cosm",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "cosm.refreshSCM",
+        "title": "Cosm: Refresh Workspace & Micro-Universe State",
+        "category": "Cosm",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "cosm.stageFile",
+        "title": "Cosm: Stage AST Component",
+        "category": "Cosm",
+        "icon": "$(plus)"
+      },
+      {
+        "command": "cosm.unstageFile",
+        "title": "Cosm: Unstage AST Component",
+        "category": "Cosm",
+        "icon": "$(remove)"
+      },
+      {
+        "command": "cosm.diffSymbol",
+        "title": "Cosm: Compare Symbol AST with Head",
+        "category": "Cosm"
+      },
+      {
+        "command": "cosm.resolveSymbol",
+        "title": "Cosm: Resolve Symbol AST Details",
+        "category": "Cosm"
+      }
+    ],
+    "menus": {
+      "scm/title": [
+        {
+          "command": "cosm.commitWithPrompt",
+          "group": "navigation",
+          "when": "scmProvider == cosm"
+        },
+        {
+          "command": "cosm.refreshSCM",
+          "group": "navigation",
+          "when": "scmProvider == cosm"
+        },
+        {
+          "command": "cosm.switchUniverse",
+          "group": "navigation",
+          "when": "scmProvider == cosm"
+        }
+      ],
+      "scm/resourceGroup/context": [
+        {
+          "command": "cosm.stageFile",
+          "when": "scmResourceGroup == modified"
+        }
+      ],
+      "scm/resourceState/context": [
+        {
+          "command": "cosm.stageFile",
+          "when": "scmResourceGroup == modified"
+        },
+        {
+          "command": "cosm.unstageFile",
+          "when": "scmResourceGroup == staged"
+        },
+        {
+          "command": "cosm.diffSymbol"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "cosm.openTopology",
+          "group": "cosm@1"
+        },
+        {
+          "command": "cosm.blastRadius",
+          "group": "cosm@2"
+        }
+      ]
+    },
+    "configuration": {
+      "type": "object",
+      "title": "Cosm AST SCM & Polyglot Architecture",
+      "properties": {
+        "cosm.binaryPath": {
+          "type": "string",
+          "default": "cosm",
+          "description": "Path to the cosm CLI binary (or 'cosm' if in PATH, or relative path to repo bin)."
+        },
+        "cosm.autoSync": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically synchronize workspace source files to disk on AST mutations."
+        },
+        "cosm.enableCodeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show causal lineage and agent pedigree CodeLens above AST symbols."
+        },
+        "cosm.topocosmUrl": {
+          "type": "string",
+          "default": "https://topocosm.dev",
+          "description": "Topocosm cloud distribution hub URL."
+        },
+        "cosm.previewTarget": {
+          "type": "string",
+          "default": "local-preview",
+          "description": "Target profile to use for 'cosm ship' ephemeral builds."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "npx tsc -p ./",
+    "watch": "npx tsc -watch -p ./",
+    "package": "npx @vscode/vsce package",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.3"
+  }
+}

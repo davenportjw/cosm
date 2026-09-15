@@ -56,11 +56,24 @@ Cosm projects the AST DAG into the editor via a virtual filesystem scheme (`cosm
 - **Save**: When you press `Ctrl+S` / `Cmd+S`, Cosm parses only the modified symbols, computes their new SHA-256 hashes, links cross-domain contracts, and commits the new Merkle root in $< 5\text{ms}$.
 - **Zero Disk Mutation**: You can switch between 100 micro-universes in the VS Code status bar without triggering filesystem file watcher storms or rebuilding node_modules.
 
-### B. Language Server Protocol (LSP) AST Bridge
+### B. Language Server Protocol (LSP) AST Bridge (`cosm lsp`)
 The Cosm LSP server communicates directly with VS Code's editor features:
 - **Symbol Outline**: The editor outline pane displays the live AST hierarchy directly from `.cosm/graph.db`.
 - **Go to Definition / Find References**: Traces semantic edges across languages (e.g. clicking a FastAPI route jumps directly to the React `fetch()` call or Terraform IAM binding).
-- **Diagnostics**: Flags broken cross-boundary contracts in real-time before you compile or test.
+- **Diagnostics**: Flags broken cross-boundary contracts in real-time before you compile or test via `core.DetectContractBreakages`.
+- **Causal CodeLens**: Renders prompt, session, agent model, and cryptographic verification status directly above symbol definitions.
+
+### C. Model Context Protocol (MCP) Server for AI Agents (`cosm mcp`)
+For AI agents operating inside Antigravity IDE, Cursor, Claude Code, and Windsurf, Cosm provides a stdio JSON-RPC MCP server (`cosm mcp`):
+- **Structured Tool Calling**: Replaces fragile shell quoting with type-safe JSON tools (`cosm_status`, `cosm_ast_resolve`, `cosm_ast_edit`, `cosm_blast_radius`, `cosm_topology`, `cosm_universe_create`, `cosm_commit`, `cosm_ship`).
+- **Zero-Escape AST Surgery**: Agents mutate code using structured parameters, automatically keeping workspace disk files and AST Merkle-DAG in sync.
+- **Configured via `.agents/mcp_config.json`**: Auto-discovered by Antigravity IDE and modern agent frameworks.
+
+### D. Native VS Code / Antigravity Extension (`cosm-vscode`)
+The official extension (`cosm/editors/vscode`) brings the full AST experience into the IDE UI:
+- **Custom Source Control (`vscode.SourceControl`)**: View staged and modified AST symbols, review fine-grained syntax diffs, and commit with intent and prompt provenance.
+- **Status Bar Micro-Universe Controller**: Zero-copy micro-universe switching and branching (`[🌌 universe-main]`).
+- **Interactive Cross-Domain Topology Canvas**: Webview panel rendering Frontend $\to$ Backend $\to$ Cloud Infra dependency swimlanes with real-time blast-radius highlighting.
 
 ---
 

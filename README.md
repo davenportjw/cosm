@@ -63,6 +63,26 @@ go build -o cosm-agent-harness ./cmd/cosm-agent-harness
 sudo mv cosm-agent-harness /usr/local/bin/
 ```
 
+### Option 3: VS Code & Google Antigravity Extension (`cosm-vscode`)
+To compile and install the official AST-native extension from the repository:
+
+```bash
+# 1. Compile the Cosm core binary (required by extension)
+go build -o cosm ./cmd/cosm
+sudo cp cosm /usr/local/bin/
+
+# 2. Compile and package the extension VSIX
+cd editors/vscode
+npm install && npm run compile
+npx @vscode/vsce package
+
+# 3. Install into your IDE
+code --install-extension cosm-vscode-0.1.0.vsix          # VS Code
+antigravity --install-extension cosm-vscode-0.1.0.vsix   # Antigravity IDE
+cursor --install-extension cosm-vscode-0.1.0.vsix        # Cursor
+```
+*(For live dev symlink mode, see [editors/vscode/README.md](file:///Users/jasondavenport/GitHub/cosm/editors/vscode/README.md) and [IDE Quickstart Guide](file:///Users/jasondavenport/GitHub/cosm/docs/guides/ide-quickstart-for-developers.md)).*
+
 ### Verify Installation
 ```bash
 cosm --help

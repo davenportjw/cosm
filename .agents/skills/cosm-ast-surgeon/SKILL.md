@@ -180,3 +180,38 @@ When operating in an interactive developer environment (such as VS Code, Cursor,
      cosm export -u universe-main -d .
      ```
 
+---
+
+## 8. Multi-Agent Swarm Discipline: Pre-Mutation Leases & Contract Blast Radius
+
+When operating as an autonomous agent within a multi-agent swarm:
+
+1. **Acquire Blackboard Domain Leases First**:
+   - Before mutating shared components or interface contracts, claim the target domain:
+     ```bash
+     cosm claim services/billing --ttl 600 --agent "$AGENT_DID" --goal "Refactoring Stripe webhook"
+     ```
+   - If the claim returns conflict (`409`), yield and re-queue rather than attempting concurrent edits on the same component.
+   - Release the lease immediately upon proposal submission or failure (`cosm release services/billing`).
+
+2. **Audit Cross-Boundary Blast Radius**:
+   - Before modifying any function signature or interface, inspect connected edges:
+     ```bash
+     cosm blast-radius <symbol_id>
+     ```
+   - Check for incoming `CONSUMES_API` or `CALLS` dependencies. Modifying a signature without updating consumer contracts will trigger a `ROUTE_CONTRACT_BROKEN` or `API_CONTRACT_MISMATCH` semantic conflict.
+
+3. **Always Mutate in an Isolated Micro-Universe**:
+   - Never apply AST edits directly to `universe-main`. Fork a micro-universe:
+     ```bash
+     cosm universe create u/agent-task -p universe-main
+     ```
+   - All AST mutations, disk synchronization, and target preview tests occur within this isolated frontier.
+
+4. **Resolving AST Conflicts**:
+   - If an edge or symbol collision occurs during proposal merge, Cosm writes an `ASTConflictNode` to the DAG. Resolve it surgically:
+     ```bash
+     cosm ast resolve --conflict <conflict_id> --choose-version 0
+     ```
+
+

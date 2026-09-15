@@ -135,3 +135,92 @@ func DoService() string { return "ok" }`), 0644)
 		t.Errorf("Expected main.go on disk to reflect AST edit, got: %s", string(updatedGo))
 	}
 }
+
+func TestCLI_IgnoreAndSecrets(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "cosm_cli_ignore_test_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd failed: %v", err)
+	}
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("Chdir failed: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	// 1. Initialize repository
+	runInit([]string{"-u", "universe-test"})
+
+	// 2. Create .cosmignore
+	ignoreContent := `# Ignore patterns
+custom.log
+temp_data/
+*.ignored
+`
+	if err := os.WriteFile(".cosmignore", []byte(ignoreContent), 0644); err != nil {
+		t.Fatalf("Failed to write .cosmignore: %v", err)
+	}
+
+	// 3. Create test files
+	_ = os.WriteFile("custom.log", []byte("application logs"), 0644)
+	_ = os.WriteFile("file.ignored", []byte("ignore me"), 0644)
+	_ = os.WriteFile(".env", []byte("DB_HOST=localhost"), 0644) // Default secret filename
+	_ = os.WriteFile("clean.go", []byte("package main\nfunc Clean() {}\n"), 0644)
+
+	// 4. Adding ignored file without --force should fail
+	err = runAddE([]string{"custom.log"})
+	if err == nil || !strings.Contains(err.Error(), "ignored") {
+		t.Errorf("Expected runAdd on custom.log to fail with ignored error, got %v", err)
+	}
+
+	// 5. Adding default-ignored file without --force should fail
+	err = runAddE([]string{".env"})
+	if err == nil || !strings.Contains(err.Error(), "ignored") {
+		t.Errorf("Expected runAdd on .env to fail with ignored error, got %v", err)
+	}
+
+	// 6. Adding with --force should succeed for non-secret ignored file
+	err = runAddE([]string{"--force", "custom.log"})
+	if err != nil {
+		t.Errorf("Expected runAdd --force on custom.log to succeed, got %v", err)
+	}
+
+	// 7. Adding file with plaintext secret should fail
+	secretFile := "secret.go"
+	secretCode := `package main
+var apiKey = "AIzaSyDUMMYKEY1234567890123456789012345"
+`
+	_ = os.WriteFile(secretFile, []byte(secretCode), 0644)
+
+	err = runAddE([]string{secretFile})
+	if err == nil || !strings.Contains(err.Error(), "secret detected") {
+		t.Errorf("Expected runAdd on secret.go to fail with secret detected, got %v", err)
+	}
+
+	// 8. Adding file with secret and --allow-secrets should succeed
+	err = runAddE([]string{"--allow-secrets", secretFile})
+	if err != nil {
+		t.Errorf("Expected runAdd --allow-secrets on secret.go to succeed, got %v", err)
+	}
+
+	// 9. Adding file with inline cosm:allow-secret suppression should succeed without flag
+	suppressedFile := "suppressed.go"
+	suppressedCode := `package main
+var apiKey = "AIzaSyDUMMYKEY1234567890123456789012345" // cosm:allow-secret
+`
+	_ = os.WriteFile(suppressedFile, []byte(suppressedCode), 0644)
+	err = runAddE([]string{suppressedFile})
+	if err != nil {
+		t.Errorf("Expected runAdd on suppressed.go to succeed with inline annotation, got %v", err)
+	}
+
+	// 10. Clean file should succeed
+	err = runAddE([]string{"clean.go"})
+	if err != nil {
+		t.Errorf("Expected runAdd on clean.go to succeed, got %v", err)
+	}
+}

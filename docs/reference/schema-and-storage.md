@@ -386,6 +386,25 @@ CREATE TABLE IF NOT EXISTS universe_heads (
 
 ---
 
+### Edge Mutation Concurrency & Collision Lifecycle
+Cosm strictly bifurcates storage-level physical synchronization from semantic graph collaboration:
+
+1. **Storage Serialization (`GraphEngine.PutEdge`)**:
+   - `executeMutation` acquires `g.mu.Lock()` on `GraphEngine`.
+   - Standalone mutations write framed binary WAL records (`walRecordTxBegin` $\rightarrow$ `walRecordMutation` $\rightarrow$ `walRecordTxCommit`) with IEEE CRC32 checksums.
+   - Synchronous `g.walFile.Sync()` (`fsync`) guarantees persistence before in-memory maps (`g.edges`, `g.outgoingEdges`, `g.incomingEdges`) update.
+   - Edges are composite-addressed: `EdgeKey() = fmt.Sprintf("%s|%s|%s", e.SourceID, e.TargetID, e.EdgeType)`. Writes to identical keys are strictly idempotent.
+2. **Micro-Universe Optimistic Concurrency**:
+   - Concurrent agents do not hold locks on shared branches or working files. Each agent mutates its own micro-universe manifest (`WorkspaceManifestNode`), committing cross-boundary edges into its isolated head pointer.
+3. **Merge-Time Edge Union & Contract Breakage Detection**:
+   - During `UniverseManager.MergeUniverse`, edges are merged using set union:
+     $$\mathcal{E}_{\text{merged}} = \mathcal{E}_A \cup \mathcal{E}_B$$
+   - When edges link to symbols whose contracts or signatures have mutated incompatibly, `core.DetectContractBreakages` and `ConflictEngine.CheckConflicts` flag a `SemanticConflict` (`SeverityError`, e.g. `ROUTE_CONTRACT_BROKEN` or `API_CONTRACT_MISMATCH`).
+4. **AST Conflict Reification**:
+   - Conflicting endpoints or schemas are stored directly in the Merkle-DAG as an `ASTConflictNode` containing all `ConflictingVersion` entries. The graph remains traversable and non-blocking until resolved via proposal review or autonomous critic scoring.
+
+---
+
 ### Event-Sourced Oplog Engine (`pkg/storage/oplog.go`)
 Every transaction logs reversible `OplogEvent` records supporting deterministic replay, rollbacks, and undo trees:
 ```go
@@ -408,3 +427,83 @@ type OplogEvent struct {
 - **Offline Generation**: Built-in `DeterministicEmbedder` hashes character trigrams and subword tokens into L2-normalized float arrays without external model API calls.
 - **Similarity Metric**: Cosine Similarity:
   $$\text{Sim}(\vec{u}, \vec{v}) = \frac{\vec{u} \cdot \vec{v}}{\|\vec{u}\|_2 \|\vec{v}\|_2}$$
+
+---
+
+## 7. Exclusion Engine, Secret Filtering & Edge Ignoring (`pkg/ignore/`)
+
+Cosm integrates a multi-layered exclusion and credential protection engine across its CLI, onboarding migrator, workspace watcher, and MCP server.
+
+### 1. Ignore Engine & `.cosmignore` Specification (`pkg/ignore/ignore.go`)
+
+- **File Precedence**: Cosm evaluates `.cosmignore` first; if absent, it falls back to `.gitignore`.
+- **Default Hardcoded Exclusions**: Always active even if neither ignore file exists:
+  - **Directories**: `.cosm`, `.git`, `node_modules`, `vendor`, `dist`, `target`, `build`, `__pycache__`, `.terraform`.
+  - **Sensitive Files**: `.env*`, `*.pem`, `*.key`, `*id_rsa*`, `*credentials*.json`, `*.tfvars`, `*.p12`, `*.pfx`.
+- **Syntax Rules**:
+  - `#` or `//`: Comments.
+  - `!`: Negation rule (un-ignores a previously matched path).
+  - Trailing `/`: Directory-only match.
+  - `*`, `?`, `**`: Standard glob expressions.
+  - `[edges]`: Marks transition to edge ignoring rules.
+
+### 2. Secret Detector (`pkg/ignore/secrets.go`)
+
+Pre-commit AST and raw-blob credential scanner scanning files before ingestion:
+
+```go
+type SecretFinding struct {
+    Type        string `json:"type"`
+    Description string `json:"description"`
+    LineNumber  int    `json:"line_number"`
+    Snippet     string `json:"snippet"`
+}
+```
+
+- **Built-in Signatures**:
+  - Google AI / Cloud API Keys: `AIza[0-9A-Za-z-_]{35}`
+  - AWS Access Key IDs: `AKIA[0-9A-Z]{16}`
+  - GitHub PATs: `gh[pousr]_[0-9a-zA-Z]{36}`
+  - Slack API Tokens: `xox[baprs]-[0-9a-zA-Z]{10,48}`
+  - Cryptographic Private Keys: `-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----`
+  - Hardcoded Credential Assignments: `(?i)(?:api_key|apikey|secret_key|auth_token|client_secret|password)\s*[:=]\s*["']([^"']{8,})["']`
+- **Inline Suppression**: Adding `// cosm:allow-secret` or `# cosm:allow-secret` on the same line suppresses the finding.
+- **CLI Override**: `cosm add --allow-secrets <file>` allows explicit bypass.
+
+### 3. Declarative & Inline Edge Ignoring (`pkg/ignore/edge.go`)
+
+Cross-boundary semantic edges (e.g. `CONSUMES_API`, `DEPLOYS_TO`, `QUERIES_TABLE`) can be pruned declaratively or via inline AST source comments.
+
+#### Declarative `.cosmignore` `[edges]` Block
+```ini
+[edges]
+CONSUMES_API where endpoint=/health
+BINDS_ENV where env=STAGING_*
+QUERIES_TABLE where target=audit_logs
+* where source=test_*
+```
+
+- **Predicate Grammar**:
+  $$\text{Rule} ::= \text{EdgeType} \quad [\text{WHERE} \quad \text{Field} = \text{Pattern}]$$
+  Supported fields: `env`, `endpoint`, `source`, `target`.
+  Wildcard `*` matches all edge types.
+
+#### Inline AST Directives
+Developers can annotate symbols directly in source code:
+```go
+// cosm:ignore-edge
+// cosm:ignore-edge:CONSUMES_API
+// cosm:ignore-edge:where env=DEBUG
+func InternalDiagnostic() { ... }
+```
+When parsed by language codecs, directives are stored in `ASTSymbolNode.ASTMetadata["cosm:ignore-edge"]`. `CrossBoundaryLinker` queries `EdgeFilterPredicate` before adding inferred links to the Merkle-DAG.
+
+### 4. CLI Protection Summary
+
+| CLI Command | Flag | Behavior |
+| :--- | :--- | :--- |
+| `cosm add <files...>` | `--force`, `-f` | Overrides `.cosmignore` and default path exclusions |
+| `cosm add <files...>` | `--allow-secrets` | Overrides secret detector rejection and stages file |
+| `cosm commit` | (Automatic) | Applies `.cosmignore` `[edges]` filter during cross-boundary linking |
+| `cosm import-repo` | (Automatic) | Skips ignored paths and blocks secret raw files during onboarding |
+

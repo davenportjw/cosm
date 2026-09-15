@@ -41,20 +41,67 @@ type ContractBreakage struct {
 	Description  string           `json:"description"`
 }
 
+// EdgeFilterPredicate defines an optional filter to suppress cross-boundary edges.
+type EdgeFilterPredicate interface {
+	ShouldIgnoreEdge(edge CrossBoundaryEdge, sourceNode, targetNode *ASTSymbolNode, sourcePath, targetPath string) bool
+}
+
 // CrossBoundaryLinker resolves multi-language dependencies and builds semantic cross-boundary edges.
-type CrossBoundaryLinker struct{}
+type CrossBoundaryLinker struct {
+	filter EdgeFilterPredicate
+}
 
 // NewCrossBoundaryLinker creates a new instance of CrossBoundaryLinker.
 func NewCrossBoundaryLinker() *CrossBoundaryLinker {
 	return &CrossBoundaryLinker{}
 }
 
+// SetFilter configures an EdgeFilterPredicate to suppress unwanted edges.
+func (l *CrossBoundaryLinker) SetFilter(f EdgeFilterPredicate) {
+	l.filter = f
+}
+
 // LinkWorkspace inspects components and symbol nodes across all languages to produce valid CrossBoundaryEdge instances.
 func (l *CrossBoundaryLinker) LinkWorkspace(components []*ComponentNode, symbolNodes map[string]*ASTSymbolNode) ([]CrossBoundaryEdge, error) {
+	return l.LinkWorkspaceWithFilter(components, symbolNodes, l.filter)
+}
+
+// LinkWorkspaceWithFilter inspects components and symbol nodes with an explicit EdgeFilterPredicate.
+func (l *CrossBoundaryLinker) LinkWorkspaceWithFilter(components []*ComponentNode, symbolNodes map[string]*ASTSymbolNode, filter EdgeFilterPredicate) ([]CrossBoundaryEdge, error) {
 	var edges []CrossBoundaryEdge
 	edgeSet := make(map[string]bool)
 
+	// Map symbol node IDs and component IDs to file paths
+	nodePathMap := make(map[string]string)
+	for _, comp := range components {
+		p := comp.Metadata["file_path"]
+		if p == "" {
+			p = comp.Name
+		}
+		nodePathMap[comp.ComponentID] = p
+		for _, symID := range comp.SymbolNodes {
+			nodePathMap[symID] = p
+		}
+	}
+
 	addEdge := func(edge CrossBoundaryEdge) {
+		srcNode := symbolNodes[edge.SourceNodeID]
+		tgtNode := symbolNodes[edge.TargetNodeID]
+
+		// 1. Check inline comment metadata on source or target node
+		if checkInlineMetadata(srcNode, edge) || checkInlineMetadata(tgtNode, edge) {
+			return
+		}
+
+		// 2. Check external filter if provided
+		if filter != nil {
+			srcPath := nodePathMap[edge.SourceNodeID]
+			tgtPath := nodePathMap[edge.TargetNodeID]
+			if filter.ShouldIgnoreEdge(edge, srcNode, tgtNode, srcPath, tgtPath) {
+				return
+			}
+		}
+
 		key := HashCrossBoundaryEdge(&edge)
 		if !edgeSet[key] {
 			edgeSet[key] = true
@@ -604,3 +651,44 @@ func collectEnvsRecursive(data map[string]interface{}, out map[string]string) {
 		}
 	}
 }
+
+func checkInlineMetadata(node *ASTSymbolNode, edge CrossBoundaryEdge) bool {
+	if node == nil || node.ASTMetadata == nil {
+		return false
+	}
+	directive := node.ASTMetadata["cosm:ignore-edge"]
+	if directive == "" {
+		directive = node.ASTMetadata["ignore-edge"]
+	}
+	if directive == "" {
+		return false
+	}
+	parts := strings.Split(directive, ",")
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if strings.EqualFold(p, "ALL") || strings.EqualFold(p, "*") {
+			return true
+		}
+		if strings.EqualFold(p, string(edge.Type)) {
+			return true
+		}
+		subParts := strings.SplitN(p, ":", 2)
+		if len(subParts) == 2 {
+			t := strings.TrimSpace(subParts[0])
+			spec := strings.TrimSpace(subParts[1])
+			if strings.EqualFold(t, string(edge.Type)) {
+				if edge.Type == EdgeBindsEnv && (edge.Metadata["env_var"] == spec || spec == "*") {
+					return true
+				}
+				if edge.Type == EdgeConsumesAPI && (edge.Metadata["consumer_endpoint"] == spec || edge.Metadata["backend_endpoint"] == spec || spec == "*") {
+					return true
+				}
+				if edge.Type == EdgeQueriesTable && (edge.Metadata["table_name"] == spec || spec == "*") {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+

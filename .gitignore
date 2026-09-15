@@ -174,3 +174,11 @@ Thumbs.db
 *~
 *.sublime-project
 *.sublime-workspace
+
+# Cosm VS Code Extension Build & Packaging
+editors/vscode/out/
+editors/vscode/node_modules/
+*.vsix
+*.vsixmanifest
+.vscode-test/
+

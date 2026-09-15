@@ -234,3 +234,49 @@ func TestRepositoryMigrator_AllPolyglotCodecs(t *testing.T) {
 	}
 }
 
+func TestRepositoryMigrator_ExclusionsAndSecrets(t *testing.T) {
+	repoDir := t.TempDir()
+	fgDir := t.TempDir()
+
+	// Write .cosmignore
+	cosmIgnore := `*.ignored
+custom_cache/
+`
+	_ = os.WriteFile(filepath.Join(repoDir, ".cosmignore"), []byte(cosmIgnore), 0644)
+
+	// Valid files
+	_ = os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\nfunc main() {}"), 0644)
+	_ = os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Hello"), 0644)
+
+	// Files that MUST be ignored
+	_ = os.WriteFile(filepath.Join(repoDir, ".env"), []byte("SECRET_KEY=1234567890"), 0644)
+	_ = os.WriteFile(filepath.Join(repoDir, "id_rsa"), []byte("-----BEGIN RSA PRIVATE KEY-----\nMIIE..."), 0644)
+	_ = os.WriteFile(filepath.Join(repoDir, "test.ignored"), []byte("skip me"), 0644)
+	_ = os.MkdirAll(filepath.Join(repoDir, "custom_cache"), 0755)
+	_ = os.WriteFile(filepath.Join(repoDir, "custom_cache", "cache.dat"), []byte("cached"), 0644)
+
+	blobStore, _ := storage.NewBlobStore(filepath.Join(fgDir, "objects"))
+	graphEngine, _ := storage.NewGraphEngine(filepath.Join(fgDir, "graph.db"))
+	defer graphEngine.Close()
+
+	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
+	_, _ = universeMgr.CreateUniverse("universe-main", "")
+
+	migrator := NewRepositoryMigrator(blobStore, graphEngine, universeMgr)
+	report, err := migrator.ImportRepositorySnapshot(repoDir, "universe-main", "Test exclusions", "agent-test")
+	if err != nil {
+		t.Fatalf("Import failed: %v", err)
+	}
+
+	// Only main.go is code
+	if report.CodeFilesParsed != 1 {
+		t.Errorf("expected 1 code file parsed, got %d", report.CodeFilesParsed)
+	}
+
+	// README.md and .cosmignore are preserved (.env, id_rsa, test.ignored, custom_cache ignored)
+	if report.RawFilesPreserved != 2 {
+		t.Errorf("expected 2 raw files preserved (README.md, .cosmignore), got %d", report.RawFilesPreserved)
+	}
+}
+
+

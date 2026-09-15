@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/cosmscm/cosm/pkg/core"
+	"github.com/cosmscm/cosm/pkg/ignore"
 )
 
 // ProjectManifestInfo holds detected polyglot project markers in a directory.
@@ -22,6 +23,7 @@ type ProjectManifestInfo struct {
 // DirectoryScanner scans an existing repository directory, honoring exclusions and detecting polyglot boundaries.
 type DirectoryScanner struct {
 	ExcludedDirs map[string]bool
+	IgnoreEngine *ignore.IgnoreEngine
 }
 
 // NewDirectoryScanner initializes a new scanner with default exclusions.
@@ -39,6 +41,7 @@ func NewDirectoryScanner() *DirectoryScanner {
 			"dist":          true,
 			"build":         true,
 		},
+		IgnoreEngine: ignore.NewIgnoreEngine(""),
 	}
 }
 
@@ -46,6 +49,15 @@ func NewDirectoryScanner() *DirectoryScanner {
 func (s *DirectoryScanner) ScanDirectory(rootDir string) ([]string, []string, error) {
 	var codeFiles []string
 	var rawFiles []string
+
+	engine := s.IgnoreEngine
+	if engine == nil || engine.WorkspaceDir != rootDir {
+		if loaded, err := ignore.LoadWorkspaceRules(rootDir); err == nil {
+			engine = loaded
+		} else {
+			engine = ignore.NewIgnoreEngine(rootDir)
+		}
+	}
 
 	err := filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -61,9 +73,13 @@ func (s *DirectoryScanner) ScanDirectory(rootDir string) ([]string, []string, er
 
 		if info.IsDir() {
 			base := filepath.Base(path)
-			if s.ExcludedDirs[base] {
+			if s.ExcludedDirs[base] || engine.ShouldIgnorePath(rel, true) {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+
+		if engine.ShouldIgnorePath(rel, false) {
 			return nil
 		}
 

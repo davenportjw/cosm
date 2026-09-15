@@ -63,16 +63,18 @@ cosm commit -i <intent> [-u <universe>] [-a <agent>]
 ### 4. `cosm status`
 Displays the active micro-universe head Merkle hash, component counts, and working tree modification status.
 ```bash
-cosm status [-u <universe>]
+cosm status [-u <universe>] [-format json|-f json]
 ```
+Returns structured JSON containing `status`, `universe_id`, `merkle_root`, `components_count`, `cross_edges_count`, and array of `components`.
 
 ---
 
 ### 5. `cosm topology`
-Renders the multi-domain cross-boundary dependency map across Frontend, Backend, and Infrastructure tiers in ASCII or Mermaid format.
+Renders the multi-domain cross-boundary dependency map across Frontend, Backend, and Infrastructure tiers in ASCII, Mermaid, or machine JSON.
 ```bash
-cosm topology [-u <universe>] [--mermaid]
+cosm topology [-u <universe>] [--mermaid] [-format json|-f json]
 ```
+Returns structured JSON with arrays of `frontend_nodes`, `backend_nodes`, `infra_nodes`, and aggregate counts.
 
 ---
 
@@ -87,8 +89,9 @@ cosm lineage <node_id> [-u <universe>]
 ### 7. `cosm blast-radius`
 Audits the downstream blast radius, affected services, and contract risks for code produced by a specific agent or LLM model version.
 ```bash
-cosm blast-radius <agent_id> [-u <universe>]
+cosm blast-radius <agent_id> [-u <universe>] [-format json|-f json]
 ```
+Returns structured JSON with `agent_id`, `total_nodes`, `affected_components`, `risk_score`, and `contracts_at_risk`.
 
 ---
 
@@ -291,5 +294,57 @@ cosm blackboard [flags] [hub_url/org/cosm]
 cosm blackboard
 cosm blackboard http://127.0.0.1:51204/demo-org/cloud-platform
 ```
+
+---
+
+### 24. `cosm mcp`
+Launches the Model Context Protocol (MCP) JSON-RPC 2.0 stdio server for AI agents and IDE extensions (Antigravity IDE, Cursor, Windsurf, Claude Desktop).
+```bash
+cosm mcp [-d <dir>]
+```
+* **Protocol**: MCP JSON-RPC 2.0 over standard I/O (stdin/stdout).
+* **Tools Exposed**:
+  * `cosm_status`: Query active universe, staged components, untracked files, and cross-boundary edges.
+  * `cosm_ast_resolve`: Scoped symbol resolution (`path::Class.Method`).
+  * `cosm_ast_edit`: Surgical AST operations (the 9 Geometric verbs) with workspace disk synchronization.
+  * `cosm_blast_radius`: Multi-tier downstream dependency impact analysis.
+  * `cosm_topology`: Cross-boundary topology visualization (ASCII/Mermaid).
+  * `cosm_universe_create`: Zero-copy micro-universe branching.
+  * `cosm_commit`: Causal lineage-stamped manifest commit.
+  * `cosm_ship`: Autonomous isolated target build & preview sidecar.
+
+---
+
+### 25. `cosm lsp`
+Launches the Language Server Protocol (LSP) stdio server (`Content-Length` framed JSON-RPC 2.0) providing real-time cross-boundary contract diagnostics, cross-language definition jumps, and causal lineage CodeLens annotations.
+```bash
+cosm lsp [-d <dir>]
+```
+* **Supported Methods**: `initialize`, `initialized`, `shutdown`, `exit`, `textDocument/didOpen`, `textDocument/didSave`, `textDocument/definition`, `textDocument/codeLens`.
+* **Diagnostics**: Live contract validation on save via `core.DetectContractBreakages` across polyglot AST edges.
+* **Definition**: Cross-language jumps (Frontend API endpoint $\rightarrow$ Backend route handler $\rightarrow$ Cloud infrastructure resource).
+* **CodeLens**: Displays agent DID, intent description, and commit timestamp directly above AST symbol declarations.
+
+---
+
+### 26. `cosm watch`
+Runs the background filesystem monitoring daemon that auto-detects source code mutations, parses AST symbol nodes via `codecs.ParseSourceFile`, re-links cross-boundary edges, and commits updated working manifests to the active micro-universe.
+```bash
+cosm watch [-d <dir>] [-u <universe>] [--interval <ms>]
+```
+* `--interval <ms>`: File polling interval in milliseconds (default: `250`).
+* `--universe <id>`: Target micro-universe to synchronize (default: `universe-main`).
+* **Ignore Rules**: Automatically skips `.cosm/`, `.git/`, `node_modules/`, `dist/`, `build/`, `.venv/`, `vendor/`, and hidden directories.
+
+---
+
+### 27. `cosm git init-bridge`
+Initializes a synthetic `.git` directory structure (`.git/HEAD`, `.git/config`, `.git/objects/`, `refs/`) synchronized with the active micro-universe so standard Git-aware IDEs and toolchains identify the workspace as a valid repository.
+```bash
+cosm git init-bridge [-d <dir>] [-u <universe>]
+```
+* **Synthetic Objects**: Converts active AST manifest components and symbols into virtual loose Git commit and tree objects with SHA-1 addressing.
+* **Workspace Isolation**: Configures `.git/info/exclude` to ignore `.cosm/` storage engine files.
+
 
 

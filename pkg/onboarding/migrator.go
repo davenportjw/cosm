@@ -12,6 +12,7 @@ import (
 
 	"github.com/cosmscm/cosm/pkg/codecs"
 	"github.com/cosmscm/cosm/pkg/core"
+	"github.com/cosmscm/cosm/pkg/ignore"
 	"github.com/cosmscm/cosm/pkg/storage"
 )
 
@@ -33,6 +34,7 @@ type RepositoryMigrator struct {
 	graphEngine *storage.GraphEngine
 	universeMgr *storage.UniverseManager
 	scanner     *DirectoryScanner
+	detector    *ignore.SecretDetector
 }
 
 // NewRepositoryMigrator initializes a new migrator instance.
@@ -46,6 +48,7 @@ func NewRepositoryMigrator(
 		graphEngine: graphEngine,
 		universeMgr: universeMgr,
 		scanner:     NewDirectoryScanner(),
+		detector:    ignore.NewSecretDetector(),
 	}
 }
 
@@ -173,6 +176,10 @@ func (m *RepositoryMigrator) ImportRepositorySnapshot(
 			continue
 		}
 		relPath, _ := filepath.Rel(repoPath, file)
+		if m.detector != nil && len(m.detector.DetectSecrets(relPath, content)) > 0 {
+			// Skip raw files containing detected plaintext secrets
+			continue
+		}
 		rawSymID := fmt.Sprintf("raw:%s", sanitizeID(relPath))
 
 		rawSym := &core.ASTSymbolNode{
@@ -226,7 +233,11 @@ func (m *RepositoryMigrator) ImportRepositorySnapshot(
 	report.ComponentsCreated = len(allComponents)
 
 	// 3. Discover Cross-Boundary Contract Edges
+	engine, _ := ignore.LoadWorkspaceRules(repoPath)
 	linker := core.NewCrossBoundaryLinker()
+	if engine != nil && engine.EdgeFilter != nil {
+		linker.SetFilter(engine.EdgeFilter)
+	}
 	discoveredEdges, err := linker.LinkWorkspace(allComponents, allSymbols)
 	if err == nil {
 		report.EdgesDiscovered = len(discoveredEdges)

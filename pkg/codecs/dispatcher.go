@@ -58,6 +58,35 @@ func IsDockerfile(filename string) bool {
 
 // ParseSourceFile parses a source file into a ComponentNode and ASTSymbolNodes using the appropriate codec.
 func ParseSourceFile(relPath string, content []byte, lineageEnv core.LineageEnvelope) (*ParsedFileResult, error) {
+	res, err := parseSourceFileInternal(relPath, content, lineageEnv)
+	if err != nil {
+		return nil, err
+	}
+	return attachFilePath(res, relPath), nil
+}
+
+func attachFilePath(res *ParsedFileResult, relPath string) *ParsedFileResult {
+	if res == nil {
+		return nil
+	}
+	if res.Component != nil {
+		if res.Component.Metadata == nil {
+			res.Component.Metadata = make(map[string]string)
+		}
+		res.Component.Metadata["file_path"] = relPath
+	}
+	for _, s := range res.Symbols {
+		if s != nil {
+			if s.ASTMetadata == nil {
+				s.ASTMetadata = make(map[string]string)
+			}
+			s.ASTMetadata["file_path"] = relPath
+		}
+	}
+	return res
+}
+
+func parseSourceFileInternal(relPath string, content []byte, lineageEnv core.LineageEnvelope) (*ParsedFileResult, error) {
 	baseName := filepath.Base(relPath)
 	ext := strings.ToLower(filepath.Ext(relPath))
 
