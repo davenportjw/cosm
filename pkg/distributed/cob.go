@@ -311,11 +311,126 @@ func (b *BlackboardCOB) MergeCRDT(other *BlackboardCOB) {
 	}
 }
 
-// MarshalJSON helper for ProposalCOB
+// SetStatus updates the proposal review status with concurrency synchronization.
+func (p *ProposalCOB) SetStatus(status ReviewStatus) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.Status = status
+	p.LamportClock++
+}
+
+// SetFitnessScore updates the autonomous critic score with concurrency synchronization.
+func (p *ProposalCOB) SetFitnessScore(score float64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.FitnessScore = score
+}
+
+// SetAnnotation records an annotation key-value metadata entry with concurrency synchronization.
+func (p *ProposalCOB) SetAnnotation(key, value string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.Annotations == nil {
+		p.Annotations = make(map[string]string)
+	}
+	p.Annotations[key] = value
+}
+
+// SetAnnotations records multiple annotation metadata entries with concurrency synchronization.
+func (p *ProposalCOB) SetAnnotations(annotations map[string]string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.Annotations == nil {
+		p.Annotations = make(map[string]string)
+	}
+	for k, v := range annotations {
+		p.Annotations[k] = v
+	}
+}
+
+// GetStatus returns the current review status thread-safely.
+func (p *ProposalCOB) GetStatus() ReviewStatus {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.Status
+}
+
+// GetFitnessScore returns the current fitness score thread-safely.
+func (p *ProposalCOB) GetFitnessScore() float64 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.FitnessScore
+}
+
+// MarshalJSON safely marshals ProposalCOB with read synchronization.
+func (p *ProposalCOB) MarshalJSON() ([]byte, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	type Alias ProposalCOB
+	alias := (*Alias)(p)
+
+	revs := make([]ProposalRevision, len(p.Revisions))
+	copy(revs, p.Revisions)
+
+	comms := make([]ReviewComment, len(p.Comments))
+	copy(comms, p.Comments)
+
+	apps := make(map[string]bool, len(p.Approvals))
+	for k, v := range p.Approvals {
+		apps[k] = v
+	}
+
+	annos := make(map[string]string, len(p.Annotations))
+	for k, v := range p.Annotations {
+		annos[k] = v
+	}
+
+	return json.Marshal(&struct {
+		*Alias
+		Revisions   []ProposalRevision `json:"revisions"`
+		Comments    []ReviewComment    `json:"comments"`
+		Approvals   map[string]bool    `json:"approvals"`
+		Annotations map[string]string  `json:"annotations,omitempty"`
+	}{
+		Alias:       alias,
+		Revisions:   revs,
+		Comments:    comms,
+		Approvals:   apps,
+		Annotations: annos,
+	})
+}
+
+// ToJSON returns a formatted JSON representation of ProposalCOB.
 func (p *ProposalCOB) ToJSON() ([]byte, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return json.MarshalIndent(p, "", "  ")
+}
+
+// MarshalJSON safely marshals BlackboardCOB with read synchronization.
+func (b *BlackboardCOB) MarshalJSON() ([]byte, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	claims := make(map[string]string, len(b.DomainClaims))
+	for k, v := range b.DomainClaims {
+		claims[k] = v
+	}
+	goals := make(map[string]string, len(b.ActiveGoals))
+	for k, v := range b.ActiveGoals {
+		goals[k] = v
+	}
+
+	return json.Marshal(&struct {
+		DomainClaims map[string]string `json:"domain_claims"`
+		ActiveGoals  map[string]string `json:"active_goals"`
+		LamportClock uint64            `json:"lamport_clock"`
+	}{
+		DomainClaims: claims,
+		ActiveGoals:  goals,
+		LamportClock: b.LamportClock,
+	})
 }
 
 func shortenHash(h string) string {
@@ -324,3 +439,4 @@ func shortenHash(h string) string {
 	}
 	return h[:8]
 }
+

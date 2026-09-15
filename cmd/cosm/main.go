@@ -110,6 +110,9 @@ func main() {
 	case "help", "--help", "-h":
 		printHelp()
 
+	case "version", "--version", "-v":
+		fmt.Println("cosm version 0.1.0-dev (AST Source Control Management & Compiler)")
+
 	case "init":
 		runInit(args)
 
@@ -449,11 +452,14 @@ func runCommit(args []string) {
 	params := fs.String("params", "", "JSON string of generation parameters")
 	promptTokens := fs.Int64("prompt-tokens", 0, "Prompt tokens")
 	compTokens := fs.Int64("completion-tokens", 0, "Completion tokens")
+	fs.Int64Var(compTokens, "comp-tokens", 0, "Alias for --completion-tokens")
 	reasonTokens := fs.Int64("reasoning-tokens", 0, "Reasoning / thinking tokens")
 	cachedTokens := fs.Int64("cached-tokens", 0, "Cached prompt tokens")
 	costUSD := fs.Float64("cost-usd", 0.0, "Estimated cost in USD")
+	fs.Float64Var(costUSD, "cost", 0.0, "Alias for --cost-usd")
 	latencyMs := fs.Int64("latency-ms", 0, "Latency in milliseconds")
 	traceID := fs.String("trace-id", "", "W3C Trace ID")
+	fs.StringVar(traceID, "trace", "", "Alias for --trace-id")
 	spanID := fs.String("span-id", "", "W3C Span ID")
 	_ = fs.Parse(args)
 
@@ -894,6 +900,13 @@ func runShip(args []string) {
 	}
 }
 
+func shortHash(s string) string {
+	if len(s) <= 12 {
+		return s
+	}
+	return s[:12]
+}
+
 func runUniverse(args []string) {
 	if len(args) == 0 {
 		fmt.Println("Usage: cosm universe <list|create|diff|merge> [flags]")
@@ -924,7 +937,7 @@ func runUniverse(args []string) {
 
 		fmt.Println("🌌 Active Micro-Universes:")
 		for _, u := range universes {
-			fmt.Printf("  * %s (Head: %s, Status: %s)\n", u.UniverseID, u.HeadManifestHash[:12], u.Status)
+			fmt.Printf("  * %s (Head: %s, Status: %s)\n", u.UniverseID, shortHash(u.HeadManifestHash), u.Status)
 		}
 	case "create":
 		fs := flag.NewFlagSet("universe create", flag.ExitOnError)
@@ -940,7 +953,7 @@ func runUniverse(args []string) {
 			fmt.Fprintf(os.Stderr, "Error creating universe: %v\n", err)
 			return
 		}
-		fmt.Printf("✨ Created micro-universe '%s' branched from '%s' (Head: %s)\n", rec.UniverseID, *parent, rec.HeadManifestHash[:12])
+		fmt.Printf("✨ Created micro-universe '%s' branched from '%s' (Head: %s)\n", rec.UniverseID, *parent, shortHash(rec.HeadManifestHash))
 	case "diff":
 		if len(args) < 3 {
 			fmt.Println("Usage: cosm universe diff <universeA> <universeB>")
@@ -1019,7 +1032,7 @@ func runProposal(args []string) {
 		fmt.Println("📋 Active Proposals & Micro-Universe Branches:")
 		for _, u := range universes {
 			if u.UniverseID != "universe-main" {
-				fmt.Printf("   * %s (Head: %s, Status: %s)\n", u.UniverseID, u.HeadManifestHash[:12], u.Status)
+				fmt.Printf("   * %s (Head: %s, Status: %s)\n", u.UniverseID, shortHash(u.HeadManifestHash), u.Status)
 			}
 		}
 
@@ -1243,7 +1256,7 @@ func runStack(args []string) {
 			return
 		}
 		for idx, c := range stack {
-			fmt.Printf("   [%d] 🔹 %-20s (Universe: %s, Head: %s)\n", idx+1, c.ChangeID, c.UniverseID, c.ManifestHash[:12])
+			fmt.Printf("   [%d] 🔹 %-20s (Universe: %s, Head: %s)\n", idx+1, c.ChangeID, c.UniverseID, shortHash(c.ManifestHash))
 			fmt.Printf("       Parent: %s | Auto-Rebase: Active\n", c.ParentChangeID)
 		}
 
@@ -2535,11 +2548,11 @@ func runClaim(args []string) {
 	ok, err := client.ClaimDomain(ctx, orgSlug, cosmName, domain, *goal, *ttl)
 	if err != nil {
 		fmt.Printf("❌ Failed to acquire domain lease for %q on %s/%s: %v\n", domain, orgSlug, cosmName, err)
-		os.Exit(1)
+		return
 	}
 	if !ok {
 		fmt.Printf("⚠️ Domain %q on %s/%s is currently locked by another agent or contested.\n", domain, orgSlug, cosmName)
-		os.Exit(1)
+		return
 	}
 
 	fmt.Println("=====================================================================")
@@ -2603,7 +2616,7 @@ func runRelease(args []string) {
 
 	if err := client.ReleaseDomain(ctx, orgSlug, cosmName, domain); err != nil {
 		fmt.Printf("❌ Failed to release domain lease %q: %v\n", domain, err)
-		os.Exit(1)
+		return
 	}
 
 	fmt.Printf("✅ Successfully released blackboard domain lease: %s\n", domain)
@@ -2643,7 +2656,7 @@ func runBlackboard(args []string) {
 	data, err := client.GetBlackboard(ctx, orgSlug, cosmName)
 	if err != nil {
 		fmt.Printf("❌ Failed to inspect blackboard at %s: %v\n", hubURL, err)
-		os.Exit(1)
+		return
 	}
 
 	claimsRaw, ok := data["claims"]
@@ -2767,10 +2780,10 @@ func runAuth(args []string) {
 		fmt.Printf("   • Role:   %v\n", who["role"])
 		fmt.Printf("   • DID:    %v\n", cfg.CallerDID)
 
-	case "whoami":
+	case "whoami", "status":
 		if cfg.Token == "" {
 			fmt.Println("Not logged in. Run 'cosm auth login' or 'cosm auth token set <pat>' to authenticate.")
-			os.Exit(1)
+			return
 		}
 
 		client := topocosm.NewHubClient(cfg.HubURL, cfg.CallerDID)

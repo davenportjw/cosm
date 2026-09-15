@@ -191,7 +191,7 @@ cosm topology
 
 ---
 
-### Step 6: Proposals & Jujutsu-Style Stacking (PR Replacement)
+### Step 6: Proposals & Jujutsu-Style Stacking (PR & Rebase Replacement)
 
 In GitHub, stacked PRs require messy rebasing. In Cosm, proposal stacks auto-evolve using CRDTs:
 
@@ -208,6 +208,26 @@ cosm proposal create \
 # List and inspect proposals
 cosm proposal list
 cosm proposal view prop-101
+```
+
+#### How-To Rebase: Auto-Evolving Stacked Changes (`git rebase` Replacement)
+When upstream parent `ch-initial-scaffold` mutates, rebase all downstream changes automatically:
+```bash
+cosm stack evolve -c ch-initial-scaffold
+# Output:
+# ⚡ Auto-evolved 1 descendant change in stack:
+#    ✓ Rebased ch-auth-jwt onto new parent AST root without conflict
+```
+
+#### How-To Fix History & Mistakes (`git commit --amend` Replacement)
+Instead of destructive history rewriting or interactive git rebases (`git rebase -i`), surgically edit the exact AST symbol in-place:
+```bash
+# Surgically fix symbol without rewriting commit trees
+cosm ast edit --op replace_function_body --target "backend/auth.py::validate_jwt" \
+  --content "    return jwt.decode(token, secret, algorithms=['RS256'])" -u u/auth-service -w
+
+# Re-commit with updated causal lineage
+cosm commit -u u/auth-service -i "Fix RS256 algorithm enforcement" -p "Enforce RS256 algorithm in validate_jwt"
 ```
 
 **Proposal Card Output:**
@@ -287,11 +307,14 @@ cosm git log
 | `git status` | `cosm status` or `cosm git status` | Displays AST symbol modifications and cross-domain contract changes. |
 | `git add <files>` | `cosm add <files>` | Parses source into typed AST nodes and stores content-addressed blobs. |
 | `git commit -m "<msg>"` | `cosm commit -i "<msg>" -p "<prompt>"` | Records unbroken causal lineage with Ed25519 digital signature. |
+| `git commit --amend` | `cosm ast edit` / `cosm symbol edit` | Surgically edits AST symbol in-place; preserves lineage without rewriting ancestor Merkle hashes. |
 | `git branch <name>` | `cosm universe create <name>` | Zero-copy micro-universe branching with zero disk overhead. |
 | `git checkout <name>` | `cosm universe switch <name>` | Switches active universe pointer without touching disk files. |
+| `git reset --hard` | `cosm universe switch <parent>` | Discards uncommitted or branched pointer changes with zero disk churn. |
 | `git diff` | `cosm view <node_id>` or `cosm git diff` | Reconstitutes exact AST symbol syntax with semantic highlighting. |
 | `gh pr create` | `cosm proposal create` | Generates semantic AST delta cards with blast-radius scoring. |
 | `git rebase` / `jj evolve` | `cosm stack evolve -c <change_id>` | Auto-evolves stacked proposals over new AST parents using CRDTs. |
+| `git rebase -i` (squash/fixup) | `cosm ast edit --batch <batch.json>` | Executes batched declarative AST transformations with atomic Merkle commit. |
 | GitHub Actions CI | `cosm ship -t <target>` | Compiles and validates targets directly from AST Merkle root. |
 | `git push origin main` | `cosm git push origin universe-main:main` | Synthesizes Git trees on-the-fly and pushes to GitHub. |
 | `git export` | `cosm export -d dist/` | Reconstitutes full AST DAG back into standard directory files on disk. |

@@ -85,3 +85,47 @@ graph TD
    ```bash
    cosm universe merge --source u/agent-2 --target universe-main
    ```
+
+---
+
+## 3. How-To: Non-Destructive History Repair & Mistake Isolation
+
+In traditional Git, repairing a flawed commit sequence requires destructive operations: `git reset --hard`, `git checkout -f`, or interactive rebase drop/squash commands. These risk data loss, invalidate remote references, and destroy causal lineage.
+
+Cosm solves this by isolating all exploratory work and fixes within zero-copy micro-universes:
+
+### Step 1: Fork an Isolated Micro-Universe
+Create an isolated frontier from the known-good universe head without touching working directory files on disk:
+```bash
+cosm universe create u/hotfix-patch -p universe-main
+```
+
+### Step 2: Surgically Mutate or Stage Fixes
+Mutate the exact AST symbol nodes in the isolated micro-universe:
+```bash
+# In-place surgical function body replacement
+cosm ast edit \
+  --op replace_function_body \
+  --target "services/billing::ProcessPayment" \
+  --content "return p.Gateway.Charge(ctx, amount)" \
+  -u u/hotfix-patch -w
+```
+
+### Step 3: Verify Isolated Staging Build
+Validate compilation, Terraform syntax, and test suites via the shipping sidecar:
+```bash
+cosm ship -u u/hotfix-patch -t target:local-preview
+```
+
+### Step 4: Merge Fix into Canonical Universe
+Reconcile the validated AST Merkle root into the target universe:
+```bash
+# Union merge preserves non-conflicting concurrent mutations
+cosm universe merge u/hotfix-patch -t universe-main -s union
+```
+
+### Step 5: Propagate Fix to Stacked Dependents (Rebase)
+If other proposal changes branch from `universe-main`, rebase them automatically:
+```bash
+cosm stack evolve -c universe-main
+```

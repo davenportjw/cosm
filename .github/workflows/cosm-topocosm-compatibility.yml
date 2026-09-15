@@ -55,7 +55,7 @@ jobs:
       - name: Checkout Topocosm
         uses: actions/checkout@v4
         with:
-          repository: cosmscm/topocosm
+          repository: davenportjw/topocosm
           path: topocosm
         continue-on-error: true
 
@@ -66,7 +66,7 @@ jobs:
 
       - name: Test Topocosm Hub (if present)
         run: |
-          if [ -d "topocosm" ]; then
+          if [ -d "topocosm/pkg" ]; then
             cd topocosm
             go test -v ./pkg/...
             CGO_ENABLED=0 go build -o bin/topocosm ./cmd/topocosm

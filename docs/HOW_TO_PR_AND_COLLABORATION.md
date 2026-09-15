@@ -125,39 +125,102 @@ sequenceDiagram
 
 ---
 
-## 4. Jujutsu-Style Stacked Proposals (`cosm stack`)
+## 4. Jujutsu-Style Stacked Proposals & History Evolution (`cosm stack`)
 
 Large features are easiest to review when broken into small, discrete, stacked changes (e.g., Data Model $\rightarrow$ API Route $\rightarrow$ Frontend UI $\rightarrow$ Cloud Infra).
 
-1. **Register a Stack of Dependent Changes**:
-   ```bash
-   ./cosm stack create -c c/auth-model -u u/auth-model -p universe-main --title "Step 1: Auth Model"
-   ./cosm stack create -c c/auth-api -u u/auth-api -p c/auth-model --title "Step 2: Auth Route API"
-   ./cosm stack create -c c/auth-ui -u u/auth-ui -p c/auth-api --title "Step 3: Auth React UI"
-   ```
+### 4.1. Registering a Stack of Dependent Changes
 
-2. **List the Active Stack**:
-   ```bash
-   ./cosm stack list
-   # Output:
-   # 🥞 Jujutsu-Style Stacked Proposals & Change Chains:
-   #    [1] 🔹 c/auth-model         (Universe: u/auth-model, Head: a93b1e84)
-   #        Parent: universe-main | Auto-Rebase: Active
-   #    [2] 🔹 c/auth-api           (Universe: u/auth-api, Head: c4109fa2)
-   #        Parent: c/auth-model | Auto-Rebase: Active
-   #    [3] 🔹 c/auth-ui            (Universe: u/auth-ui, Head: e82b7190)
-   #        Parent: c/auth-api | Auto-Rebase: Active
-   ```
+```bash
+# 1. Base data model change
+./cosm stack create -c c/auth-model -u u/auth-model -p universe-main --title "Step 1: Auth Model"
 
-3. **Auto-Evolve Descendants When Parent Changes**:
-   When you modify `c/auth-model`, all descendant changes automatically rebase their AST subtrees without conflict:
-   ```bash
-   ./cosm stack evolve -c c/auth-model
-   # Output:
-   # ⚡ Auto-evolved 2 descendant changes in stack:
-   #    ✓ Rebased c/auth-api onto new parent AST root without conflict
-   #    ✓ Rebased c/auth-ui onto new parent AST root without conflict
-   ```
+# 2. Dependent API route change (parent is c/auth-model)
+./cosm stack create -c c/auth-api -u u/auth-api -p c/auth-model --title "Step 2: Auth Route API"
+
+# 3. Dependent React UI change (parent is c/auth-api)
+./cosm stack create -c c/auth-ui -u u/auth-ui -p c/auth-api --title "Step 3: Auth React UI"
+```
+
+Inspect active stacks:
+```bash
+./cosm stack list
+# Output:
+# 🥞 Jujutsu-Style Stacked Proposals & Change Chains:
+#    [1] 🔹 c/auth-model         (Universe: u/auth-model, Head: a93b1e84)
+#        Parent: universe-main | Auto-Rebase: Active
+#    [2] 🔹 c/auth-api           (Universe: u/auth-api, Head: c4109fa2)
+#        Parent: c/auth-model | Auto-Rebase: Active
+#    [3] 🔹 c/auth-ui            (Universe: u/auth-ui, Head: e82b7190)
+#        Parent: c/auth-api | Auto-Rebase: Active
+```
+
+---
+
+### 4.2. How-To: Rebasing Stacked Changes (`cosm stack evolve`)
+
+In traditional Git, modifying a base branch or parent commit breaks all downstream branches, triggering manual interactive rebases (`git rebase --onto`) and textual conflict cascades.
+
+Cosm solves this with **AST-level CRDT auto-evolution**:
+```bash
+# Execute evolution rebase across all downstream dependents of c/auth-model
+./cosm stack evolve -c c/auth-model
+```
+
+**What Cosm Executes**:
+1. Locates all descendant stacked changes (`c/auth-api`, `c/auth-ui`) ordered by stack topological depth.
+2. For each descendant, fetches its AST delta ($\Delta_{\text{AST}}$) and computes the semilattice union join with the updated parent manifest root:
+   $$H_C' = \text{MerkleRoot}(H_P' \sqcup \Delta_{\text{AST}}(C))$$
+3. Advances each child's manifest pointer to the new Merkle root with zero text merge collisions.
+
+**Output**:
+```
+⚡ Auto-evolved 2 descendant changes in stack:
+   ✓ Rebased c/auth-api onto new parent AST root without conflict
+   ✓ Rebased c/auth-ui onto new parent AST root without conflict
+```
+
+---
+
+### 4.3. How-To: Fixing History & Amending Code Mistakes
+
+Traditional Git requires destructive history rewriting (`git commit --amend`, `git rebase -i` squash/edit/drop, or `git reset`). Cosm preserves cryptographically signed causal lineage envelopes while providing three non-destructive mechanisms to fix code or correct history:
+
+#### Method 1: Surgical In-Place AST Repair (Replaces `git commit --amend`)
+Instead of rewriting commit logs, modify the exact AST symbol node directly in the active micro-universe:
+```bash
+# Surgically replace a function body in-place (updates AST DAG and workspace file)
+cosm ast edit \
+  --op replace_function_body \
+  --target "services/auth::ValidateToken" \
+  --content "return token.Valid && !token.Expired()" \
+  -u universe-main -w
+
+# Commit the surgical correction with lineage provenance
+cosm commit -u universe-main -i "Fix token expiration boundary check" -p "Correct JWT expiry validation"
+```
+* **Advantage**: Untouched symbols retain identical content-addressed hashes. Downstream contracts remain intact without invalidating the Merkle-DAG ancestry.
+
+#### Method 2: Non-Destructive Micro-Universe Branch & Merge (Replaces `git reset` / cherry-pick)
+If an agent or developer introduced unwanted mutations or needs to pivot without corrupting `universe-main`:
+```bash
+# 1. Fork an isolated micro-universe from known good parent
+cosm universe create u/hotfix-auth -p universe-main
+
+# 2. Stage only desired changes
+cosm add services/auth/jwt.go -u u/hotfix-auth -i "Apply correct token parsing"
+
+# 3. Validate compilation and test suites via shipping sidecar
+cosm ship -u u/hotfix-auth -t target:cosm
+
+# 4. Collapse and merge cleanly into main universe
+cosm universe merge u/hotfix-auth -t universe-main -s union
+```
+
+#### Method 3: First-Class Conflict Reification (Non-Blocking Divergence)
+When concurrent agents mutate intersecting contracts, Cosm does not halt pipelines or drop commits. Discrepancies are reified as first-class `ASTConflictNode`s in the Merkle-DAG:
+* Inspect unresolved conflicts via `cosm status`.
+* Resolve by running `cosm ast edit` on the conflicting symbol node, then commit the resolution.
 
 ---
 

@@ -31,8 +31,9 @@ This file contains durable project rules and contextual memory for Antigravity p
    - Always format and validate Terraform files with `terraform fmt` and `terraform validate`.
 4. **Containerization / Infrastructure**:
    - Docker is NOT installed on this machine. Use local services or Apple containers for infrastructure and preview shipping.
-5. **Continuous Documentation Updates & Direct Style**:
+5. **Continuous Documentation Updates & Doc-Code-Test Parity**:
    - ALWAYS update docs in `docs/` (`docs/reference/schema-and-storage.md`, `docs/reference/federation-and-multi-repo.md`, `docs/reference/topocosm.md`, `docs/roadmaps/topocosm-spin-off-plan.md`, etc.) whenever data models, APIs, codecs, or CLI commands change.
+   - **Continuous Parity Invariant**: Every documented CLI command, example snippet, and workflow must have an automated test in the repository test suite (e.g. `cmd/cosm/doc_examples_test.go`). Code, documentation, and tests MUST always be kept strictly in sync and pass in CI (`go test -v ./...`).
    - Documentation style MUST be **very direct, precise, and concise** (zero fluff, exact type definitions, clear markdown tables, and explicit formulas).
 6. **IDE & Workspace Auto-Synchronization**:
    - `cosm ast edit` automatically updates workspace disk files (`--write-disk` / `-w`, default `true`) so open VS Code buffers, Language Server Protocols (`gopls`, `tsserver`, `pyright`), linters, and test runners immediately see AST mutations.

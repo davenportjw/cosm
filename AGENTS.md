@@ -38,8 +38,9 @@ This document establishes durable conventions, architectural invariants, environ
    - Cross-repository contracts use content-addressed URIs (`cosm://org/repo/component@hash`).
    - Replication orders events via Lamport Logical Clocks + DID tiebreakers, converging via CRDT semilattice joins ($\sqcup$).
 
-5. **Always Update Documentation & Maintain Direct Style**:
+5. **Always Update Documentation & Maintain Direct Style (Doc-Code-Test Parity)**:
    - Whenever schemas, storage engines, APIs, CLI commands, codecs, or distributed models are created or altered, corresponding reference documents under `docs/` (`docs/reference/schema-and-storage.md`, `docs/reference/agent-api.md`, `docs/reference/codecs.md`, `docs/reference/federation-and-multi-repo.md`, `docs/reference/topocosm.md`, etc.) MUST be updated immediately in the same change.
+   - **Continuous Parity Invariant**: Every documented CLI command, example snippet, and workflow must have an automated test in the repository test suite (e.g. `cmd/cosm/doc_examples_test.go`). Code, documentation, and tests MUST always be kept strictly in sync and pass in CI (`go test -v ./...`).
    - Documentation style MUST be **very direct, concise, and technically rigorous**—avoiding filler, marketing fluff, or conversational tangents, and emphasizing exact data structures, mathematical equations, wire DTO schemas, and executable code snippets.
 
 6. **Test Agent & Rater Harness Isolation**:

@@ -897,7 +897,7 @@ func (s *HubServer) handleProposals(w http.ResponseWriter, r *http.Request, orgS
 			cob.SetApproval(rev.ReviewerDID, rev.Approved)
 		}
 		if rev.FitnessScore > 0 {
-			cob.FitnessScore = rev.FitnessScore
+			cob.SetFitnessScore(rev.FitnessScore)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -921,7 +921,7 @@ func (s *HubServer) handleProposals(w http.ResponseWriter, r *http.Request, orgS
 			return
 		}
 
-		cob.Status = distributed.StatusMerged
+		cob.SetStatus(distributed.StatusMerged)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"success":          true,

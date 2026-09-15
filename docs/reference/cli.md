@@ -136,7 +136,27 @@ cosm proposal merge <proposal_id>
 
 ---
 
-### 12. `cosm symbol`
+### 12. `cosm stack`
+Manages Jujutsu-style stacked proposals and executes automatic AST-level rebasing across dependent proposal chains.
+```bash
+# List all active stacked changes and auto-rebase statuses
+cosm stack list
+
+# Register a stacked proposal change
+cosm stack create -c <change_id> -u <universe_id> [-p <parent_change_id>] [--title "<title>"]
+
+# Auto-evolve and rebase descendant changes onto updated parent AST root
+cosm stack evolve -c <parent_change_id>
+```
+* `-c <change_id>`: Unique change identifier (e.g. `c/auth-model`).
+* `-u <universe_id>`: Underlying micro-universe ID backing the proposal.
+* `-p <parent_change_id>`: Parent change ID or base branch (default: `universe-main`).
+* `--title "<title>"`: Descriptive title for proposal presentation cards.
+* **Auto-Rebase Mechanism**: When an upstream parent change mutates, `cosm stack evolve` visits descendant micro-universes in topological order, applies the child's AST delta onto the updated parent manifest root using semilattice union joins ($H_C' = \text{MerkleRoot}(H_P' \sqcup \Delta_{\text{AST}}(C))$), and updates child manifest heads without textual merge collisions.
+
+---
+
+### 13. `cosm symbol`
 Inspects, edits, and audits individual AST symbol nodes in the content-addressed DAG.
 ```bash
 cosm symbol view <symbol_id> [--format terminal|ast|code|contract]
@@ -146,7 +166,7 @@ cosm symbol impact --id <symbol_id> [-u <universe>]
 
 ---
 
-### 13. `cosm ast`
+### 14. `cosm ast`
 Executes high-precision declarative AST mutation operations (9 Geometric AST verbs) and scoped symbol resolution without whole-file serialization roundtrips.
 ```bash
 # Resolve symbol by scoped dotted identifier or name
@@ -177,7 +197,7 @@ cosm ast edit --batch <batch.json> [-u <universe>] [--write-disk=true|-w]
 
 ---
 
-### 14. `cosm import-repo` (alias: `cosm onboard`)
+### 15. `cosm import-repo` (alias: `cosm onboard`)
 Recursively scans an existing polyglot codebase, extracts AST symbols across all supported languages, infers cross-domain contracts, and commits the initial Merkle DAG.
 ```bash
 cosm import-repo -d <directory_path> [-u <universe>]
@@ -185,7 +205,7 @@ cosm import-repo -d <directory_path> [-u <universe>]
 
 ---
 
-### 14. `cosm import`
+### 16. `cosm import`
 Recursively ingests files from a directory into the active micro-universe.
 ```bash
 cosm import -d <directory_path> [-u <universe>]
@@ -193,7 +213,7 @@ cosm import -d <directory_path> [-u <universe>]
 
 ---
 
-### 15. `cosm export`
+### 17. `cosm export`
 Reconstitutes the entire active universe AST Merkle-DAG back into standard source code files on disk.
 ```bash
 cosm export -d <target_directory> [-u <universe>]
@@ -201,7 +221,7 @@ cosm export -d <target_directory> [-u <universe>]
 
 ---
 
-### 16. `cosm dashboard` (alias: `cosm tui`)
+### 18. `cosm dashboard` (alias: `cosm tui`)
 Launches the full-screen interactive terminal user interface (Bubble Tea TUI) to explore universes, topology graphs, and prompt lineage.
 ```bash
 cosm dashboard
@@ -209,7 +229,7 @@ cosm dashboard
 
 ---
 
-### 17. `cosm git`
+### 19. `cosm git`
 Git compatibility proxy translating Git CLI commands (`status`, `log`, `diff`, `push`, `pull`) into AST Merkle queries.
 ```bash
 cosm git <status|log|diff|push|pull> [args...]
@@ -217,7 +237,7 @@ cosm git <status|log|diff|push|pull> [args...]
 
 ---
 
-### 18. `cosm topocosm`
+### 20. `cosm topocosm`
 Manages the local zero-Docker Topocosm Hub daemon, fixture seeding, multi-agent simulation benchmarks, and hub status.
 ```bash
 # Start local hub daemon on port 51204
@@ -235,7 +255,7 @@ cosm topocosm status [--url http://127.0.0.1:51204]
 
 ---
 
-### 19. `cosm publish`
+### 21. `cosm publish`
 Streams and commits the local universe AST Merkle-DAG and content-addressed blobs to a Topocosm Hub (`topocosm.dev` or local daemon).
 ```bash
 cosm publish [flags] <hub_url>/<org>/<cosm>
@@ -245,7 +265,7 @@ cosm publish http://127.0.0.1:51204/demo-org/cloud-platform -u universe-main -i 
 
 ---
 
-### 20. `cosm clone`
+### 22. `cosm clone`
 Clones or sparse-pulls a cosm repository from Topocosm Hub, initializing local storage and materializing source code onto disk.
 ```bash
 cosm clone [flags] <hub_url>/<org>/<cosm> [dest_dir]
@@ -258,7 +278,7 @@ cosm clone http://127.0.0.1:51204/demo-org/cloud-platform ./billing --sparse "se
 
 ---
 
-### 21. `cosm claim`
+### 23. `cosm claim`
 Acquires an exclusive mutation lease on a blackboard domain on Topocosm Hub to prevent concurrent agent conflicts.
 ```bash
 cosm claim <domain> [flags] [hub_url/org/cosm]
@@ -274,7 +294,7 @@ cosm claim infra/pubsub http://127.0.0.1:51204/demo-org/cloud-platform --ttl 300
 
 ---
 
-### 22. `cosm release`
+### 24. `cosm release`
 Releases an active blackboard domain mutation lease on Topocosm Hub, unlocking it for other agents.
 ```bash
 cosm release <domain> [flags] [hub_url/org/cosm]
@@ -285,7 +305,7 @@ cosm release services/billing
 
 ---
 
-### 23. `cosm blackboard`
+### 25. `cosm blackboard`
 Inspects all active agent blackboard domain leases, holder DIDs, intent goals, and countdown timers.
 ```bash
 cosm blackboard [flags] [hub_url/org/cosm]
@@ -297,7 +317,7 @@ cosm blackboard http://127.0.0.1:51204/demo-org/cloud-platform
 
 ---
 
-### 24. `cosm mcp`
+### 26. `cosm mcp`
 Launches the Model Context Protocol (MCP) JSON-RPC 2.0 stdio server for AI agents and IDE extensions (Antigravity IDE, Cursor, Windsurf, Claude Desktop).
 ```bash
 cosm mcp [-d <dir>]
@@ -315,7 +335,7 @@ cosm mcp [-d <dir>]
 
 ---
 
-### 25. `cosm lsp`
+### 27. `cosm lsp`
 Launches the Language Server Protocol (LSP) stdio server (`Content-Length` framed JSON-RPC 2.0) providing real-time cross-boundary contract diagnostics, cross-language definition jumps, and causal lineage CodeLens annotations.
 ```bash
 cosm lsp [-d <dir>]
@@ -327,7 +347,7 @@ cosm lsp [-d <dir>]
 
 ---
 
-### 26. `cosm watch`
+### 28. `cosm watch`
 Runs the background filesystem monitoring daemon that auto-detects source code mutations, parses AST symbol nodes via `codecs.ParseSourceFile`, re-links cross-boundary edges, and commits updated working manifests to the active micro-universe.
 ```bash
 cosm watch [-d <dir>] [-u <universe>] [--interval <ms>]
@@ -338,7 +358,7 @@ cosm watch [-d <dir>] [-u <universe>] [--interval <ms>]
 
 ---
 
-### 27. `cosm git init-bridge`
+### 29. `cosm git init-bridge`
 Initializes a synthetic `.git` directory structure (`.git/HEAD`, `.git/config`, `.git/objects/`, `refs/`) synchronized with the active micro-universe so standard Git-aware IDEs and toolchains identify the workspace as a valid repository.
 ```bash
 cosm git init-bridge [-d <dir>] [-u <universe>]

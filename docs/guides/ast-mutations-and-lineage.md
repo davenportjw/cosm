@@ -76,3 +76,41 @@ cosm blast-radius cosm-worker-agent-4
    • Affected Services:      3 (auth, billing, gateway)
    • Risk Profile:           LOW (All automated tests and security audits passed)
 ```
+
+---
+
+## 3. How-To: Fixing Mistakes via Surgical AST Mutation (Zero History Rewriting)
+
+When a developer or agent introduces a logic defect, traditional SCM requires amending commits (`git commit --amend`), running interactive rebases (`git rebase -i`), or creating messy "fixup" commits that pollute history logs.
+
+In Cosm, surgical AST mutation amends the code structure directly at the AST node level without altering prior commit nodes or invalidating cryptographic lineage:
+
+### Step 1: Locate the Target Symbol Node
+```bash
+# Resolve symbol by qualified path or name
+cosm ast resolve "services/auth::ValidateToken"
+```
+
+### Step 2: Surgically Edit the AST Symbol
+```bash
+# Replace only the flawed function body while keeping signature and annotations intact
+cosm ast edit \
+  --op replace_function_body \
+  --target "services/auth::ValidateToken" \
+  --content "return token.Valid && !token.Expired()" \
+  -u universe-main -w
+```
+
+### Step 3: Verify Downstream Blast Radius & Contracts
+```bash
+# Audit contract breakages across consuming services and infrastructure
+cosm blast-radius func_validate_token -u universe-main
+```
+
+### Step 4: Commit the Surgical Revision
+```bash
+# Stamps new Merkle root and attaches signed LineageEnvelope
+cosm commit -u universe-main \
+  -i "Fix token expiration boundary validation" \
+  -p "Patch ValidateToken expiration check"
+```
