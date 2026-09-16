@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"time"
 
 	"github.com/cosmscm/cosm/pkg/core"
@@ -29,6 +30,8 @@ type HubClient struct {
 	baseURL     string
 	callerDID   string
 	bearerToken string
+	traceID     string
+	sessionID   string
 	httpClient  *http.Client
 	handler     http.Handler
 }
@@ -36,12 +39,28 @@ type HubClient struct {
 // NewHubClient creates a new HTTP network client connecting to a remote Topocosm Hub.
 func NewHubClient(baseURL, callerDID string) *HubClient {
 	if callerDID == "" {
-		callerDID = "did:key:z6MkuAnonymousDev"
+		callerDID = os.Getenv("COSM_AGENT_DID")
+		if callerDID == "" {
+			callerDID = "did:key:z6MkuAnonymousDev"
+		}
 	}
+	token := os.Getenv("COSM_AUTH_TOKEN")
+	if token == "" {
+		token = os.Getenv("TOPOCOSM_TOKEN")
+	}
+	if token == "" {
+		token = os.Getenv("TOPOCOSM_PAT")
+	}
+	traceID := os.Getenv("COSM_TRACE_ID")
+	sessionID := os.Getenv("COSM_SESSION_ID")
+
 	return &HubClient{
-		baseURL:    baseURL,
-		callerDID:  callerDID,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		baseURL:     baseURL,
+		callerDID:   callerDID,
+		bearerToken: token,
+		traceID:     traceID,
+		sessionID:   sessionID,
+		httpClient:  &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -53,6 +72,26 @@ func (c *HubClient) SetBearerToken(token string) {
 // BearerToken returns the current token.
 func (c *HubClient) BearerToken() string {
 	return c.bearerToken
+}
+
+// SetTraceID sets the correlation trace ID propagated in X-Cosm-Trace-ID header.
+func (c *HubClient) SetTraceID(traceID string) {
+	c.traceID = traceID
+}
+
+// TraceID returns the current trace ID.
+func (c *HubClient) TraceID() string {
+	return c.traceID
+}
+
+// SetSessionID sets the agent session ID propagated in X-Cosm-Session-ID header.
+func (c *HubClient) SetSessionID(sessionID string) {
+	c.sessionID = sessionID
+}
+
+// SessionID returns the current session ID.
+func (c *HubClient) SessionID() string {
+	return c.sessionID
 }
 
 // NewInProcessHubClient creates a zero-latency in-process client against an HTTP handler.
@@ -95,6 +134,12 @@ func (c *HubClient) doRequest(ctx context.Context, method, path string, body any
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Cosm-DID", c.callerDID)
+	if c.traceID != "" {
+		req.Header.Set("X-Cosm-Trace-ID", c.traceID)
+	}
+	if c.sessionID != "" {
+		req.Header.Set("X-Cosm-Session-ID", c.sessionID)
+	}
 	if c.bearerToken != "" {
 		req.Header.Set("Authorization", "Bearer "+c.bearerToken)
 	}

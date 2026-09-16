@@ -63,13 +63,18 @@ func TestHCLParser_ParseSource(t *testing.T) {
 		t.Fatalf("ParseSource failed: %v", err)
 	}
 
-	if len(doc.Blocks) != 5 {
-		t.Fatalf("expected 5 root blocks, got %d", len(doc.Blocks))
+	if len(doc.Blocks) != 6 {
+		t.Fatalf("expected 6 root blocks, got %d", len(doc.Blocks))
 	}
 
 	blockTypes := make(map[string]*HCLBlock)
 	for _, b := range doc.Blocks {
 		blockTypes[b.FullIdentifier()] = b
+	}
+
+	// Verify output block
+	if _, ok := blockTypes["output.service_url"]; !ok {
+		t.Errorf("missing output.service_url block")
 	}
 
 	// 1. Verify terraform block
@@ -121,8 +126,8 @@ func TestHCLParser_ParseSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ToASTSymbolNodes failed: %v", err)
 	}
-	if len(nodes) != 5 {
-		t.Errorf("expected 5 AST symbol nodes, got %d", len(nodes))
+	if len(nodes) != 6 {
+		t.Errorf("expected 6 AST symbol nodes, got %d", len(nodes))
 	}
 
 	for _, n := range nodes {
@@ -145,8 +150,8 @@ func TestHCLParser_ParseSource(t *testing.T) {
 	if comp.Type != core.CompInfra {
 		t.Errorf("expected CompInfra, got %s", comp.Type)
 	}
-	if len(compNodes) != 5 {
-		t.Errorf("expected 5 component symbol nodes, got %d", len(compNodes))
+	if len(compNodes) != 6 {
+		t.Errorf("expected 6 component symbol nodes, got %d", len(compNodes))
 	}
 }
 

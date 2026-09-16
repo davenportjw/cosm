@@ -1,0 +1,10 @@
+steps:
+- name: 'gcr.io/kaniko-project/executor:latest'
+  args:
+  - --dockerfile=cmd/cosm-cloudrun-agent/Containerfile
+  - --context=dir:///workspace
+  - --destination=$_IMAGE_URI
+  - --cache=true
+timeout: 900s
+substitutions:
+  _IMAGE_URI: ''

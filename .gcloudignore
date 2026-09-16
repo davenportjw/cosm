@@ -1,0 +1,6 @@
+.gcloudignore
+.git
+.gitignore
+.cosm/
+scratch/
+*.log

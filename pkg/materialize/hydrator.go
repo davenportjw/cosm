@@ -256,6 +256,10 @@ func (h *Hydrator) hydrateHCLSymbol(node *core.ASTSymbolNode) (string, error) {
 		return "", fmt.Errorf("failed to unmarshal HCLBlock: %w", err)
 	}
 
+	if block.RawSource != "" {
+		return block.RawSource + "\n", nil
+	}
+
 	var sb strings.Builder
 	h.renderHCLBlock(&block, &sb, 0)
 	return sb.String(), nil
@@ -552,9 +556,22 @@ func (h *Hydrator) HydrateComponent(comp *core.ComponentNode, symbolMap map[stri
 		var sb strings.Builder
 		sb.WriteString("# Python Service\n")
 		sb.WriteString(fmt.Sprintf("# Component: %s\n\n", comp.Name))
+		if (strings.Contains(bodyStr, "os.") || strings.Contains(bodyStr, "os.environ")) && !strings.Contains(bodyStr, "import os") {
+			sb.WriteString("import os\n")
+		}
+		if strings.Contains(bodyStr, "json.") && !strings.Contains(bodyStr, "import json") {
+			sb.WriteString("import json\n")
+		}
+		if strings.Contains(bodyStr, "sys.") && !strings.Contains(bodyStr, "import sys") {
+			sb.WriteString("import sys\n")
+		}
+		if (strings.Contains(bodyStr, "Dict[") || strings.Contains(bodyStr, "Any") || strings.Contains(bodyStr, "List[") || strings.Contains(bodyStr, "Optional[")) && !strings.Contains(bodyStr, "from typing import") {
+			sb.WriteString("from typing import Dict, Any, List, Optional\n")
+		}
 		if (strings.Contains(bodyStr, "FastAPI") || strings.Contains(bodyStr, "@app.")) && !strings.Contains(bodyStr, "import FastAPI") {
 			sb.WriteString("from fastapi import FastAPI\napp = FastAPI()\n\n")
 		}
+		sb.WriteString("\n")
 		sb.WriteString(bodyStr)
 
 		files[filePath] = []byte(sb.String())

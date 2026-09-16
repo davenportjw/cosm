@@ -218,6 +218,21 @@ func (p *HCLParser) parseSingleBlock(lines []lineItem, startIdx, endIdx int) (*H
 
 	for i < endIdx {
 		curLine := lines[i].text
+		trimmed := strings.TrimSpace(curLine)
+
+		if i > startIdx && blockHeaderRegex.MatchString(trimmed) && nestedStart == -1 {
+			subBlock, nextI, err := p.parseSingleBlock(lines, i, endIdx)
+			if err != nil {
+				return nil, i, err
+			}
+			block.NestedBlocks = append(block.NestedBlocks, subBlock)
+			for k := i; k < nextI; k++ {
+				blockLines = append(blockLines, lines[k].text)
+			}
+			i = nextI
+			continue
+		}
+
 		blockLines = append(blockLines, curLine)
 
 		for _, ch := range curLine {
@@ -229,17 +244,7 @@ func (p *HCLParser) parseSingleBlock(lines []lineItem, startIdx, endIdx int) (*H
 		}
 
 		if i > startIdx {
-			trimmed := strings.TrimSpace(curLine)
-
-			// Sub-block detection
-			if blockHeaderRegex.MatchString(trimmed) && nestedStart == -1 {
-				subBlock, nextI, err := p.parseSingleBlock(lines, i, endIdx)
-				if err != nil {
-					return nil, i, err
-				}
-				block.NestedBlocks = append(block.NestedBlocks, subBlock)
-				i = nextI - 1 // loop increments
-			} else if attrMatch := attrRegex.FindStringSubmatch(trimmed); attrMatch != nil && nestedStart == -1 {
+			if attrMatch := attrRegex.FindStringSubmatch(trimmed); attrMatch != nil && nestedStart == -1 {
 				key := attrMatch[1]
 				val := strings.TrimSpace(attrMatch[2])
 

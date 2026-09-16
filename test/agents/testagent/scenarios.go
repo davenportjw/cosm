@@ -637,6 +637,7 @@ var allScenarios = map[string]Scenario{
 	"swift-go-tf":                 ScenarioSwiftGoTF,
 	"kotlin-py-sql":               ScenarioKotlinPySQL,
 	"csharp-react-proto":          ScenarioCSharpReactProto,
+	"cloudrun-polyglot-mesh":      ScenarioCloudRunMesh,
 }
 
 // ListScenarios returns all preconfigured polyglot scenario templates.
@@ -648,6 +649,7 @@ func ListScenarios() []Scenario {
 		ScenarioSwiftGoTF,
 		ScenarioKotlinPySQL,
 		ScenarioCSharpReactProto,
+		ScenarioCloudRunMesh,
 	}
 }
 
@@ -656,7 +658,7 @@ func GetScenario(name string) (*Scenario, error) {
 	if s, ok := allScenarios[name]; ok {
 		return &s, nil
 	}
-	return nil, fmt.Errorf("unknown scenario name: %q (available: fastapi-react-tf, go-gin-vue-tf, rust-axum-react-postgres-tf, swift-go-tf, kotlin-py-sql, csharp-react-proto)", name)
+	return nil, fmt.Errorf("unknown scenario name: %q (available: fastapi-react-tf, go-gin-vue-tf, rust-axum-react-postgres-tf, swift-go-tf, kotlin-py-sql, csharp-react-proto, cloudrun-polyglot-mesh)", name)
 }
 
 // WriteScenarioFiles writes all scenario blueprint files into a specified target directory.

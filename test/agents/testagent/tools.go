@@ -22,6 +22,7 @@ import (
 	"github.com/cosmscm/cosm/pkg/shipping"
 	"github.com/cosmscm/cosm/pkg/storage"
 	"github.com/cosmscm/cosm/pkg/target"
+	"github.com/cosmscm/cosm/pkg/topocosm"
 	"github.com/cosmscm/cosm/test/agents/framework"
 	"github.com/cosmscm/cosm/test/agents/llm"
 )
@@ -353,6 +354,135 @@ var ToolDefListFiles = llm.ToolDefinition{
 	},
 }
 
+var ToolDefCosmClaim = llm.ToolDefinition{
+	Name:        "cosm_claim",
+	Description: "Acquire or release a mutual exclusion domain lease on the Topocosm blackboard coordination service.",
+	Parameters: map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"hub_url": map[string]interface{}{
+				"type":        "string",
+				"description": "Topocosm Hub base URL (e.g. http://127.0.0.1:8080)",
+			},
+			"repo": map[string]interface{}{
+				"type":        "string",
+				"description": "Repository identifier (org/repo, e.g. demo-org/fintech-payment-mesh)",
+			},
+			"domain": map[string]interface{}{
+				"type":        "string",
+				"description": "Domain or component prefix to lock (e.g. services/orders)",
+			},
+			"purpose": map[string]interface{}{
+				"type":        "string",
+				"description": "Purpose or task goal justifying the claim",
+			},
+			"ttl_sec": map[string]interface{}{
+				"type":        "integer",
+				"description": "Lease duration in seconds (default: 300)",
+			},
+			"release": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Set to true to release the domain lease instead of acquiring",
+			},
+			"agent_did": map[string]interface{}{
+				"type":        "string",
+				"description": "Agent decentralized identity",
+			},
+		},
+		"required": []interface{}{"repo", "domain"},
+	},
+}
+
+var ToolDefCosmClone = llm.ToolDefinition{
+	Name:        "cosm_clone",
+	Description: "Clone repository or perform sparse subtree fetch from remote Topocosm Hub.",
+	Parameters: map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"hub_url": map[string]interface{}{
+				"type":        "string",
+				"description": "Topocosm Hub base URL",
+			},
+			"repo": map[string]interface{}{
+				"type":        "string",
+				"description": "Repository identifier (org/repo)",
+			},
+			"universe_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Universe ID to pull (default: universe-main)",
+			},
+			"components": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "Optional component names for sparse extraction (e.g. ['apps/checkout'])",
+			},
+		},
+		"required": []interface{}{"repo"},
+	},
+}
+
+var ToolDefCosmPublish = llm.ToolDefinition{
+	Name:        "cosm_publish",
+	Description: "Publish local micro-universe AST Merkle-DAG and content blobs to remote Topocosm Hub.",
+	Parameters: map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"hub_url": map[string]interface{}{
+				"type":        "string",
+				"description": "Topocosm Hub base URL",
+			},
+			"repo": map[string]interface{}{
+				"type":        "string",
+				"description": "Repository identifier (org/repo)",
+			},
+			"universe_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Micro-universe ID to publish",
+			},
+			"description": map[string]interface{}{
+				"type":        "string",
+				"description": "Publication description",
+			},
+		},
+		"required": []interface{}{"repo", "universe_id"},
+	},
+}
+
+var ToolDefCosmStackCreate = llm.ToolDefinition{
+	Name:        "cosm_stack_create",
+	Description: "Open a stacked proposal on Topocosm Hub referencing a parent proposal or base branch.",
+	Parameters: map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"hub_url": map[string]interface{}{
+				"type":        "string",
+				"description": "Topocosm Hub base URL",
+			},
+			"repo": map[string]interface{}{
+				"type":        "string",
+				"description": "Repository identifier (org/repo)",
+			},
+			"title": map[string]interface{}{
+				"type":        "string",
+				"description": "Proposal title",
+			},
+			"source_universe": map[string]interface{}{
+				"type":        "string",
+				"description": "Branch universe containing the changes",
+			},
+			"target_universe": map[string]interface{}{
+				"type":        "string",
+				"description": "Target universe (e.g. universe-main)",
+			},
+			"parent_proposal_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Parent proposal ID for Jujutsu-style stacking",
+			},
+		},
+		"required": []interface{}{"repo", "title", "source_universe"},
+	},
+}
+
 // RegisterAllCosmTools registers all cosm CLI tool handlers into the framework tool registry.
 func RegisterAllCosmTools(registry *framework.ToolRegistry, workDir string, defaultAgentID string) {
 	if defaultAgentID == "" {
@@ -516,6 +646,11 @@ func RegisterAllCosmTools(registry *framework.ToolRegistry, workDir string, defa
 			if err != nil {
 				return "", fmt.Errorf("failed building component node for %s: %w", relPath, err)
 			}
+
+			if comp.Metadata == nil {
+				comp.Metadata = make(map[string]string)
+			}
+			comp.Metadata["file_path"] = relPath
 
 			for symID, sym := range syms {
 				data, _ := json.Marshal(sym)
@@ -1052,6 +1187,377 @@ func RegisterAllCosmTools(registry *framework.ToolRegistry, workDir string, defa
 	}
 	registry.Register(ToolDefCosmASTResolve, astResolveHandler)
 	registry.Register(ToolDefFGASTResolve, astResolveHandler)
+
+	// 13. cosm_claim
+	claimHandler := func(ctx context.Context, call llm.ToolCall) (string, error) {
+		var args struct {
+			HubURL   string `json:"hub_url"`
+			Repo     string `json:"repo"`
+			Domain   string `json:"domain"`
+			Purpose  string `json:"purpose"`
+			TTLSec   int    `json:"ttl_sec"`
+			Release  bool   `json:"release"`
+			AgentDID string `json:"agent_did"`
+		}
+		if err := call.ParseArguments(&args); err != nil {
+			return "", err
+		}
+		if args.HubURL == "" {
+			args.HubURL = os.Getenv("TOPOCOSM_HUB_URL")
+		}
+		if args.HubURL == "" {
+			args.HubURL = "http://127.0.0.1:8080"
+		}
+		if args.AgentDID == "" {
+			args.AgentDID = defaultAgentID
+		}
+		if args.TTLSec <= 0 {
+			args.TTLSec = 300
+		}
+		parts := strings.Split(args.Repo, "/")
+		if len(parts) != 2 {
+			return "", fmt.Errorf("invalid repo format %q, expected org/repo", args.Repo)
+		}
+		orgSlug, cosmName := parts[0], parts[1]
+
+		client := topocosm.NewHubClient(args.HubURL, args.AgentDID)
+		if tid := os.Getenv("COSM_TRACE_ID"); tid != "" {
+			client.SetTraceID(tid)
+		}
+		if sid := os.Getenv("COSM_SESSION_ID"); sid != "" {
+			client.SetSessionID(sid)
+		}
+
+		if args.Release {
+			err := client.ReleaseDomain(ctx, orgSlug, cosmName, args.Domain)
+			if err != nil {
+				return "", fmt.Errorf("failed to release domain: %w", err)
+			}
+			res := map[string]interface{}{
+				"status":  "released",
+				"domain":  args.Domain,
+				"message": fmt.Sprintf("Domain %s released successfully", args.Domain),
+			}
+			out, _ := json.Marshal(res)
+			return string(out), nil
+		}
+
+		claimed, err := client.ClaimDomain(ctx, orgSlug, cosmName, args.Domain, args.Purpose, args.TTLSec)
+		if err != nil {
+			return "", fmt.Errorf("claim domain failed: %w", err)
+		}
+		res := map[string]interface{}{
+			"status":  "claimed",
+			"success": claimed,
+			"domain":  args.Domain,
+			"ttl_sec": args.TTLSec,
+			"message": fmt.Sprintf("Domain %s claimed successfully for %d seconds", args.Domain, args.TTLSec),
+		}
+		out, _ := json.Marshal(res)
+		return string(out), nil
+	}
+	registry.Register(ToolDefCosmClaim, claimHandler)
+
+	// 14. cosm_clone
+	cloneHandler := func(ctx context.Context, call llm.ToolCall) (string, error) {
+		var args struct {
+			HubURL     string   `json:"hub_url"`
+			Repo       string   `json:"repo"`
+			UniverseID string   `json:"universe_id"`
+			Components []string `json:"components"`
+		}
+		if err := call.ParseArguments(&args); err != nil {
+			return "", err
+		}
+		if args.HubURL == "" {
+			args.HubURL = os.Getenv("TOPOCOSM_HUB_URL")
+		}
+		if args.HubURL == "" {
+			args.HubURL = "http://127.0.0.1:8080"
+		}
+		if args.UniverseID == "" {
+			args.UniverseID = "universe-main"
+		}
+		parts := strings.Split(args.Repo, "/")
+		if len(parts) != 2 {
+			return "", fmt.Errorf("invalid repo format %q, expected org/repo", args.Repo)
+		}
+		orgSlug, cosmName := parts[0], parts[1]
+
+		agentDID := os.Getenv("COSM_AGENT_DID")
+		if agentDID == "" {
+			agentDID = defaultAgentID
+		}
+		client := topocosm.NewHubClient(args.HubURL, agentDID)
+		if tid := os.Getenv("COSM_TRACE_ID"); tid != "" {
+			client.SetTraceID(tid)
+		}
+		if sid := os.Getenv("COSM_SESSION_ID"); sid != "" {
+			client.SetSessionID(sid)
+		}
+
+		blobStore, graphEngine, err := openWorkspaceStorage(workDir)
+		if err != nil {
+			return "", err
+		}
+		defer graphEngine.Close()
+
+		mgr := storage.NewUniverseManager(graphEngine, blobStore)
+		_, _ = mgr.CreateUniverse(args.UniverseID, "")
+
+		req := &topocosm.SparsePullRequest{
+			OrgSlug:        orgSlug,
+			CosmName:       cosmName,
+			UniverseID:     args.UniverseID,
+			ComponentNames: args.Components,
+		}
+		var resp *topocosm.SparsePullResponse
+		var pullErr error
+		for attempt := 0; attempt < 15; attempt++ {
+			resp, pullErr = client.SparsePullCosm(ctx, req)
+			if pullErr == nil {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(2 * time.Second):
+			}
+		}
+		if pullErr != nil {
+			return "", fmt.Errorf("sparse pull failed: %w", pullErr)
+		}
+
+		// Store blobs
+		for _, data := range resp.Blobs {
+			_, _ = blobStore.Put(data)
+		}
+		// Store symbols
+		for _, sym := range resp.Symbols {
+			symJSON, _ := json.Marshal(sym)
+			symHash, _ := blobStore.Put(symJSON)
+			nodeRec := storage.NodeRecord{
+				NodeID:     sym.NodeID,
+				NodeType:   sym.NodeType,
+				Language:   sym.Language,
+				Identifier: sym.Identifier,
+				MerkleHash: symHash,
+				CreatedAt:  time.Now(),
+			}
+			_ = graphEngine.PutNode(nodeRec)
+		}
+		// Store components
+		for _, comp := range resp.Components {
+			compJSON, _ := json.Marshal(comp)
+			compHash, _ := blobStore.Put(compJSON)
+			compRec := storage.NodeRecord{
+				NodeID:     comp.ComponentID,
+				NodeType:   string(comp.Type),
+				Language:   comp.Language,
+				Identifier: comp.Name,
+				MerkleHash: compHash,
+				CreatedAt:  time.Now(),
+			}
+			_ = graphEngine.PutNode(compRec)
+		}
+		if resp.Manifest != nil {
+			_, _ = mgr.CommitManifest(args.UniverseID, resp.Manifest)
+		}
+
+		// Hydrate files to workspace disk
+		hydrator := materialize.NewHydrator()
+		files, err := hydrator.HydrateWorkspace(resp.Manifest, resp.Components, resp.Symbols)
+		if err == nil {
+			for relPath, content := range files {
+				fullPath := filepath.Join(workDir, relPath)
+				_ = os.MkdirAll(filepath.Dir(fullPath), 0755)
+				_ = os.WriteFile(fullPath, content, 0644)
+			}
+		}
+
+		res := map[string]interface{}{
+			"status":           "pulled",
+			"universe_id":      args.UniverseID,
+			"components_count": len(resp.Components),
+			"symbols_count":    len(resp.Symbols),
+			"blobs_count":      len(resp.Blobs),
+			"savings_percent":  resp.SavingsPercent,
+		}
+		out, _ := json.Marshal(res)
+		return string(out), nil
+	}
+	registry.Register(ToolDefCosmClone, cloneHandler)
+
+	// 15. cosm_publish
+	publishHandler := func(ctx context.Context, call llm.ToolCall) (string, error) {
+		var args struct {
+			HubURL      string `json:"hub_url"`
+			Repo        string `json:"repo"`
+			UniverseID  string `json:"universe_id"`
+			Description string `json:"description"`
+		}
+		if err := call.ParseArguments(&args); err != nil {
+			return "", err
+		}
+		if args.HubURL == "" {
+			args.HubURL = os.Getenv("TOPOCOSM_HUB_URL")
+		}
+		if args.HubURL == "" {
+			args.HubURL = "http://127.0.0.1:8080"
+		}
+		if args.UniverseID == "" {
+			args.UniverseID = "universe-main"
+		}
+		parts := strings.Split(args.Repo, "/")
+		if len(parts) != 2 {
+			return "", fmt.Errorf("invalid repo format %q, expected org/repo", args.Repo)
+		}
+		orgSlug, cosmName := parts[0], parts[1]
+
+		agentDID := os.Getenv("COSM_AGENT_DID")
+		if agentDID == "" {
+			agentDID = defaultAgentID
+		}
+		client := topocosm.NewHubClient(args.HubURL, agentDID)
+		if tid := os.Getenv("COSM_TRACE_ID"); tid != "" {
+			client.SetTraceID(tid)
+		}
+		if sid := os.Getenv("COSM_SESSION_ID"); sid != "" {
+			client.SetSessionID(sid)
+		}
+
+		blobStore, graphEngine, err := openWorkspaceStorage(workDir)
+		if err != nil {
+			return "", err
+		}
+		defer graphEngine.Close()
+
+		mgr := storage.NewUniverseManager(graphEngine, blobStore)
+		manifest, err := mgr.GetUniverseManifest(args.UniverseID)
+		if err != nil || manifest == nil {
+			return "", fmt.Errorf("failed to get universe manifest: %w", err)
+		}
+
+		compMap := make(map[string]*core.ComponentNode)
+		symMap := make(map[string]*core.ASTSymbolNode)
+		blobs := make(map[string][]byte)
+
+		for _, compID := range manifest.Components {
+			var compNode core.ComponentNode
+			if data, gErr := blobStore.Get(compID); gErr == nil {
+				_ = json.Unmarshal(data, &compNode)
+			} else if nodeRec, nErr := graphEngine.GetNode(compID); nErr == nil && nodeRec != nil {
+				if d, bErr := blobStore.Get(nodeRec.MerkleHash); bErr == nil {
+					_ = json.Unmarshal(d, &compNode)
+				}
+			}
+			if compNode.ComponentID != "" {
+				compMap[compNode.ComponentID] = &compNode
+				for _, symID := range compNode.SymbolNodes {
+					var symNode core.ASTSymbolNode
+					if sData, sErr := blobStore.Get(symID); sErr == nil {
+						_ = json.Unmarshal(sData, &symNode)
+					} else if sRec, snErr := graphEngine.GetNode(symID); snErr == nil && sRec != nil {
+						if sd, sbErr := blobStore.Get(sRec.MerkleHash); sbErr == nil {
+							_ = json.Unmarshal(sd, &symNode)
+						}
+					}
+					if symNode.NodeID != "" {
+						symMap[symNode.NodeID] = &symNode
+						if len(symNode.ASTPayload) > 0 {
+							payloadHash := core.HashBytes(symNode.ASTPayload)
+							blobs[payloadHash] = symNode.ASTPayload
+						}
+					}
+				}
+			}
+		}
+
+		payload := &topocosm.PublishPayload{
+			OrgSlug:     orgSlug,
+			CosmName:    cosmName,
+			UniverseID:  args.UniverseID,
+			Manifest:    manifest,
+			Components:  compMap,
+			Symbols:     symMap,
+			Blobs:       blobs,
+			Lineage:     manifest.Lineage,
+			Description: args.Description,
+			Visibility:  topocosm.VisibilityPublic,
+		}
+
+		resp, err := client.PublishCosm(ctx, payload)
+		if err != nil {
+			return "", fmt.Errorf("publish failed: %w", err)
+		}
+
+		out, _ := json.Marshal(resp)
+		return string(out), nil
+	}
+	registry.Register(ToolDefCosmPublish, publishHandler)
+
+	// 16. cosm_stack_create
+	stackCreateHandler := func(ctx context.Context, call llm.ToolCall) (string, error) {
+		var args struct {
+			HubURL           string `json:"hub_url"`
+			Repo             string `json:"repo"`
+			Title            string `json:"title"`
+			SourceUniverse   string `json:"source_universe"`
+			TargetUniverse   string `json:"target_universe"`
+			ParentProposalID string `json:"parent_proposal_id"`
+		}
+		if err := call.ParseArguments(&args); err != nil {
+			return "", err
+		}
+		if args.HubURL == "" {
+			args.HubURL = os.Getenv("TOPOCOSM_HUB_URL")
+		}
+		if args.HubURL == "" {
+			args.HubURL = "http://127.0.0.1:8080"
+		}
+		if args.TargetUniverse == "" {
+			args.TargetUniverse = "universe-main"
+		}
+		parts := strings.Split(args.Repo, "/")
+		if len(parts) != 2 {
+			return "", fmt.Errorf("invalid repo format %q, expected org/repo", args.Repo)
+		}
+		orgSlug, cosmName := parts[0], parts[1]
+
+		agentDID := os.Getenv("COSM_AGENT_DID")
+		if agentDID == "" {
+			agentDID = defaultAgentID
+		}
+		client := topocosm.NewHubClient(args.HubURL, agentDID)
+		if tid := os.Getenv("COSM_TRACE_ID"); tid != "" {
+			client.SetTraceID(tid)
+		}
+		if sid := os.Getenv("COSM_SESSION_ID"); sid != "" {
+			client.SetSessionID(sid)
+		}
+
+		lineageEnv := core.LineageEnvelope{
+			ExecutingAgentID: defaultAgentID,
+			Intent:           args.Title,
+			Timestamp:        time.Now().UTC(),
+		}
+
+		prop, err := client.CreateProposal(ctx, orgSlug, cosmName, args.Title, args.SourceUniverse, args.TargetUniverse, lineageEnv)
+		if err != nil {
+			return "", fmt.Errorf("create proposal failed: %w", err)
+		}
+
+		res := map[string]interface{}{
+			"status":             "created",
+			"proposal_id":        prop.ID,
+			"title":              prop.Title,
+			"target_universe":    prop.TargetUniverse,
+			"parent_proposal_id": args.ParentProposalID,
+		}
+		out, _ := json.Marshal(res)
+		return string(out), nil
+	}
+	registry.Register(ToolDefCosmStackCreate, stackCreateHandler)
 }
 
 // RegisterAllFGTools is a backwards-compatible alias for RegisterAllCosmTools.

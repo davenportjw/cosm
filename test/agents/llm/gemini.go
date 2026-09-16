@@ -8,33 +8,47 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
-	DefaultGeminiModel   = "gemini-3.7-flash"
+	DefaultGeminiModel   = "gemini-3.8-flash"
 	DefaultGeminiBaseURL = "https://generativelanguage.googleapis.com/v1beta"
+	DefaultVertexBaseURL = "https://aiplatform.googleapis.com/v1"
 )
 
 // GeminiConfig holds options for initializing a GeminiProvider.
 type GeminiConfig struct {
 	APIKey     string
+	ProjectID  string
+	Location   string
+	OAuthToken string
 	Model      string
 	BaseURL    string
 	HTTPClient *http.Client
 	Timeout    time.Duration
+	UseVertex  bool
 }
 
-// GeminiProvider implements LLMProvider for the Google Gemini API.
+// GeminiProvider implements LLMProvider for the Google Gemini API (supporting both AI Studio API keys and Google Cloud Project Vertex AI Auth).
 type GeminiProvider struct {
-	apiKey     string
-	model      string
-	baseURL    string
-	httpClient *http.Client
+	apiKey      string
+	projectID   string
+	location    string
+	oauthToken  string
+	useVertex   bool
+	model       string
+	baseURL     string
+	httpClient  *http.Client
+	mu          sync.Mutex
+	cachedToken string
+	tokenExpiry time.Time
 }
 
-// NewGeminiProvider creates a new GeminiProvider using environment or explicit configuration.
+// NewGeminiProvider creates a new GeminiProvider using environment, Google Cloud Project Auth (Vertex AI), or explicit configuration.
 func NewGeminiProvider(cfg ...GeminiConfig) (*GeminiProvider, error) {
 	var c GeminiConfig
 	if len(cfg) > 0 {
@@ -54,9 +68,71 @@ func NewGeminiProvider(cfg ...GeminiConfig) (*GeminiProvider, error) {
 		model = DefaultGeminiModel
 	}
 
-	baseURL := c.BaseURL
-	if baseURL == "" {
-		baseURL = DefaultGeminiBaseURL
+	useVertex := c.UseVertex || apiKey == "" || os.Getenv("GOOGLE_GENAI_USE_VERTEXAI") == "true"
+	var (
+		projectID  string
+		location   string
+		oauthToken string
+		baseURL    string
+	)
+
+	if useVertex {
+		projectID = c.ProjectID
+		if projectID == "" {
+			projectID = os.Getenv("VERTEX_PROJECT")
+		}
+		if projectID == "" {
+			projectID = os.Getenv("GOOGLE_CLOUD_PROJECT")
+		}
+		if projectID == "" {
+			projectID = os.Getenv("GCP_PROJECT_ID")
+		}
+		if projectID == "" {
+			projectID = os.Getenv("PROJECT_ID")
+		}
+		if projectID == "" {
+			// Try metadata server (Cloud Run / GCE)
+			req, _ := http.NewRequest("GET", "http://metadata.google.internal/computeMetadata/v1/project/project-id", nil)
+			req.Header.Set("Metadata-Flavor", "Google")
+			client := &http.Client{Timeout: 500 * time.Millisecond}
+			if resp, err := client.Do(req); err == nil && resp.StatusCode == http.StatusOK {
+				defer resp.Body.Close()
+				if b, err := io.ReadAll(resp.Body); err == nil && len(b) > 0 {
+					projectID = strings.TrimSpace(string(b))
+				}
+			}
+		}
+		if projectID == "" {
+			out, err := exec.Command("gcloud", "config", "get-value", "project").Output()
+			if err == nil && len(out) > 0 {
+				projectID = strings.TrimSpace(string(out))
+			}
+		}
+		if projectID == "" {
+			projectID = "davenport-boutique"
+		}
+
+		location = c.Location
+		if location == "" {
+			location = os.Getenv("VERTEX_LOCATION")
+		}
+		if location == "" {
+			location = os.Getenv("GOOGLE_CLOUD_LOCATION")
+		}
+		if location == "" {
+			location = "us" // Default multi-region location hosting Gemini 3.8 Flash
+		}
+
+		oauthToken = c.OAuthToken
+		baseURL = c.BaseURL
+		if baseURL == "" {
+			baseURL = DefaultVertexBaseURL
+		}
+	} else {
+		baseURL = c.BaseURL
+		if baseURL == "" {
+			baseURL = DefaultGeminiBaseURL
+		}
 	}
 
 	httpClient := c.HTTPClient
@@ -72,10 +148,69 @@ func NewGeminiProvider(cfg ...GeminiConfig) (*GeminiProvider, error) {
 
 	return &GeminiProvider{
 		apiKey:     apiKey,
+		projectID:  projectID,
+		location:   location,
+		oauthToken: oauthToken,
+		useVertex:  useVertex,
 		model:      model,
 		baseURL:    baseURL,
 		httpClient: httpClient,
 	}, nil
+}
+
+// getToken retrieves a valid Google Cloud OAuth bearer token using metadata server, environment, or gcloud CLI.
+func (p *GeminiProvider) getToken(ctx context.Context) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.oauthToken != "" {
+		return p.oauthToken, nil
+	}
+
+	if p.cachedToken != "" && time.Now().Before(p.tokenExpiry) {
+		return p.cachedToken, nil
+	}
+
+	// 1. Check environment variable
+	if envTok := os.Getenv("GOOGLE_OAUTH_ACCESS_TOKEN"); envTok != "" {
+		p.cachedToken = envTok
+		p.tokenExpiry = time.Now().Add(5 * time.Minute)
+		return envTok, nil
+	}
+
+	// 2. Check metadata server (Cloud Run / Compute Engine / GKE)
+	req, _ := http.NewRequestWithContext(ctx, "GET", "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token", nil)
+	req.Header.Set("Metadata-Flavor", "Google")
+	client := &http.Client{Timeout: 800 * time.Millisecond}
+	if resp, err := client.Do(req); err == nil && resp.StatusCode == http.StatusOK {
+		defer resp.Body.Close()
+		var metaToken struct {
+			AccessToken string `json:"access_token"`
+			ExpiresIn   int    `json:"expires_in"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&metaToken); err == nil && metaToken.AccessToken != "" {
+			p.cachedToken = metaToken.AccessToken
+			expSec := metaToken.ExpiresIn - 60
+			if expSec < 60 {
+				expSec = 60
+			}
+			p.tokenExpiry = time.Now().Add(time.Duration(expSec) * time.Second)
+			return p.cachedToken, nil
+		}
+	}
+
+	// 3. Check local gcloud CLI
+	out, err := exec.CommandContext(ctx, "gcloud", "auth", "print-access-token").Output()
+	if err == nil && len(out) > 0 {
+		token := strings.TrimSpace(string(out))
+		if token != "" {
+			p.cachedToken = token
+			p.tokenExpiry = time.Now().Add(10 * time.Minute)
+			return token, nil
+		}
+	}
+
+	return "", fmt.Errorf("could not resolve Google Cloud OAuth token from environment, metadata server, or gcloud CLI")
 }
 
 // ModelName returns the configured default model.
@@ -155,10 +290,10 @@ type geminiResponse struct {
 	} `json:"error,omitempty"`
 }
 
-// Generate executes a completion request against Google Gemini REST API.
+// Generate executes a completion request against Google Gemini REST API or Google Cloud Vertex AI.
 func (p *GeminiProvider) Generate(ctx context.Context, messages []Message, tools []ToolDefinition, opts GenerateOptions) (*Response, error) {
-	if p.apiKey == "" {
-		return nil, fmt.Errorf("GEMINI_API_KEY environment variable or config is required")
+	if !p.useVertex && p.apiKey == "" {
+		return nil, fmt.Errorf("GEMINI_API_KEY environment variable or Google Cloud project auth is required")
 	}
 
 	model := opts.Model
@@ -273,12 +408,24 @@ func (p *GeminiProvider) Generate(ctx context.Context, messages []Message, tools
 		return nil, fmt.Errorf("failed to marshal Gemini request payload: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", p.baseURL, model, p.apiKey)
+	var url string
+	if p.useVertex {
+		url = fmt.Sprintf("%s/projects/%s/locations/%s/publishers/google/models/%s:generateContent", p.baseURL, p.projectID, p.location, model)
+	} else {
+		url = fmt.Sprintf("%s/models/%s:generateContent?key=%s", p.baseURL, model, p.apiKey)
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqPayload))
 	if err != nil {
 		return nil, fmt.Errorf("failed to build HTTP request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if p.useVertex {
+		token, err := p.getToken(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed resolving Google Cloud auth token: %w", err)
+		}
+		httpReq.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	httpResp, err := p.httpClient.Do(httpReq)
 	if err != nil {

@@ -1,0 +1,20 @@
+# Cosm Cloud Run Agent Swarm Containerfile (Zero-CGO Pure-Go Production Image)
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /src
+COPY . .
+
+# Build static binary
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/cosm-cloudrun-agent ./cmd/cosm-cloudrun-agent
+
+# Minimal runtime image
+FROM alpine:3.20
+
+RUN apk --no-cache add ca-certificates tzdata
+
+WORKDIR /app
+COPY --from=builder /bin/cosm-cloudrun-agent /bin/cosm-cloudrun-agent
+
+ENV COSM_WORKDIR=/tmp/cosm-workspace
+
+ENTRYPOINT ["/bin/cosm-cloudrun-agent"]

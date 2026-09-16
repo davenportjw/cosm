@@ -527,10 +527,22 @@ func (s *HubServer) handlePublish(w http.ResponseWriter, r *http.Request, orgSlu
 		}
 		s.repos[slug] = repo
 	} else {
-		repo.MerkleRootHash = merkleRoot
-		repo.Manifest = payload.Manifest
-		repo.Components = payload.Components
-		repo.Symbols = payload.Symbols
+		if universeID == repo.DefaultUniverse || universeID == "universe-main" {
+			repo.MerkleRootHash = merkleRoot
+			repo.Manifest = payload.Manifest
+		}
+		if repo.Components == nil {
+			repo.Components = make(map[string]*core.ComponentNode)
+		}
+		for k, v := range payload.Components {
+			repo.Components[k] = v
+		}
+		if repo.Symbols == nil {
+			repo.Symbols = make(map[string]*core.ASTSymbolNode)
+		}
+		for k, v := range payload.Symbols {
+			repo.Symbols[k] = v
+		}
 		repo.UpdatedAt = now
 	}
 	s.mu.Unlock()
@@ -674,14 +686,13 @@ func (s *HubServer) handleSparsePull(w http.ResponseWriter, r *http.Request, org
 		universeID = repo.DefaultUniverse
 	}
 
-	manifest := repo.Manifest
+	manifest, err := s.bp.UniverseManager().GetUniverseManifest(universeID)
+	if err != nil || manifest == nil {
+		manifest = repo.Manifest
+	}
 	if manifest == nil {
-		var err error
-		manifest, err = s.bp.UniverseManager().GetUniverseManifest(universeID)
-		if err != nil || manifest == nil {
-			http.Error(w, fmt.Sprintf(`{"error":"universe %s manifest not found: %v"}`, universeID, err), http.StatusNotFound)
-			return
-		}
+		http.Error(w, fmt.Sprintf(`{"error":"universe %s manifest not found: %v"}`, universeID, err), http.StatusNotFound)
+		return
 	}
 
 	components := make(map[string]*core.ComponentNode)
@@ -922,6 +933,13 @@ func (s *HubServer) handleProposals(w http.ResponseWriter, r *http.Request, orgS
 		}
 
 		cob.SetStatus(distributed.StatusMerged)
+		s.mu.Lock()
+		slug := orgSlug + "/" + cosmName
+		if repo, exists := s.repos[slug]; exists && (cob.TargetUniverse == repo.DefaultUniverse || cob.TargetUniverse == "universe-main") {
+			repo.MerkleRootHash = mergedManifest.MerkleRootHash
+			repo.Manifest = mergedManifest
+		}
+		s.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"success":          true,

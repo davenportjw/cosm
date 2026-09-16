@@ -110,10 +110,82 @@ cosm clone http://127.0.0.1:51204/demo-org/cloud-platform ./sparse-workspace --s
 
 ---
 
-## 3. Validation Summary Checklist
+## 3. Distributed Cloud Run Swarm & Gemini 3.8 Flash Rater Judge
+
+When operating at enterprise scale, autonomous code agents do not run on a developer laptop—they execute inside isolated **Google Cloud Run Jobs** targeting a shared **Topocosm Cloud Hub** service.
+
+### Multi-Agent Swarm Topology
+```
+┌────────────────────────────────────────────────────────┐
+│               Topocosm Cloud Hub (Cloud Run)           │
+│    - GCS Content-Addressed Blob Storage (CAS)          │
+│    - Memorystore for Redis Blackboard Domain Leases    │
+│    - Cloud Pub/Sub CRDT Event Notification Stream      │
+└────────▲──────────────────▲──────────────────▲─────────┘
+         │                  │                  │
+         │ HTTP / REST      │ HTTP / REST      │ HTTP / REST
+         │ (W3C Tracing)    │ (W3C Tracing)    │ (W3C Tracing)
+┌────────┴────────┐┌────────┴────────┐┌────────┴────────┐
+│  Cloud Run Job  ││  Cloud Run Job  ││  Cloud Run Job  │
+│  (Task 0)       ││  (Task 1)       ││  (Task 2)       │
+│  Agent Zero     ││  Agent Alpha    ││  Agent Beta     │
+│  [Bootstrap]    ││  [Backend Orders││  [Frontend UI]  │
+└─────────────────┘└─────────────────┘└─────────────────┘
+```
+
+### Swarm Execution via `run_cloudrun_agent_swarm.sh`
+```bash
+# Execute Cloud Run multi-agent job swarm (100 parallel worker tasks)
+export TOPOCOSM_HUB_URL="https://topocosm-hub-uc.a.run.app"
+export COSM_REPO="cosm/fintech-mesh"
+export GEMINI_MODEL="gemini-3.8-flash"
+export TASK_COUNT=100
+export AGENT_JOB_NAME="cosm-agent-swarm-100"
+./deploy/scripts/run_cloudrun_agent_swarm.sh
+```
+
+### High-Scale 100-Task Swarm Concurrency Suite
+Cosm and Topocosm include dedicated 100-task end-to-end concurrency test suites:
+- `cosm`: `test/agents/cloudrun_100tasks_concurrency_test.go`
+- `topocosm`: `pkg/server/e2e_cloudrun_100tasks_test.go`
+
+The 100 tasks are partitioned across 6 specialized agent cohorts targeting the same repository:
+1. **Task 0 (Bootstrap)**: Initializes `universe-main`, stages polyglot AST symbols, and publishes initial Merkle root.
+2. **Tasks 1..20 (Backend)**: Contends for domain leases (`services/orders-0..3`), creates isolated zero-copy micro-universes (`u/agent-backend-X`), commits Go AST mutations, publishes, and stacks proposals.
+3. **Tasks 21..40 (Frontend)**: Sparse-pulls `apps/checkout`, branches zero-copy micro-universes (`u/agent-frontend-X`), commits TypeScript components, and opens stacked proposals.
+4. **Tasks 41..60 (Infra)**: Sparse-pulls `infra/cloudrun`, branches to `u/agent-infra-X`, validates Terraform HCL syntax, commits, and opens stacked proposals.
+5. **Tasks 61..80 (Contenders)**: Floods mutual-exclusion lease requests on `services/orders-0..3` to validate atomic lease locks and HTTP 409 conflict handling.
+6. **Tasks 81..99 (Observers)**: Concurrently queries proposal CRDTs and inspects Merkle DAG topologies.
+
+### End-to-End Evaluation Oracle: Gemini 3.8 Flash Rater Judge
+At the conclusion of a swarm run, `rater.NewRaterJudge` inspects the complete execution trace:
+1. **Cosm Utilization (Max 25 pts)**: Verifies agents used official AST tools (`cosm_claim`, `cosm_clone`, `cosm_ast_edit`, `cosm_publish`, `cosm_stack_create`). Flags any direct file write bypasses (`write_file`, `overwrite_file`).
+2. **Time Efficiency (Max 20 pts)**: Normalized per session (`avgDuration = totalDuration / numSessions`) to accommodate 100+ concurrent workers without false positive timeouts.
+3. **Token Economics (Max 20 pts)**: Normalized per session (`avgTokens = totalTokens / numSessions`) to audit token consumption against complexity thresholds.
+4. **Output Quality & Contract Integrity (Max 35 pts)**: Validates AST syntax, cross-boundary contract bindings (`CONSUMES_API`, `BINDS_ENV`), and Merkle DAG integrity.
+
+To execute the automated end-to-end swarm tests:
+```bash
+# Cosm 5-agent baseline E2E
+go test -v ./test/agents/ -run TestCloudRun_PolyglotSwarmE2E
+
+# Cosm 100-agent concurrency suite
+go test -v ./test/agents/ -run TestCloudRun_100Tasks_Concurrency
+
+# Topocosm 100-agent concurrency suite
+go test -v ./pkg/server/ -run TestE2E_CloudRun_100Tasks_Concurrency
+```
+
+---
+
+## 4. Validation Summary Checklist
 
 - [ ] `cosm topocosm dev` starts cleanly without external services or Docker.
 - [ ] Agent discovery endpoint `/.well-known/cosm-agent.json` returns capabilities.
 - [ ] Multi-agent swarm benchmark achieves >2,000 op/s with conflict avoidance.
 - [ ] Workspaces publish cleanly to the hub over HTTP.
 - [ ] Sparse clone fetches isolated AST subgraphs with reported bandwidth savings.
+- [ ] Multi-agent Cloud Run swarm executes with W3C distributed trace correlation.
+- [ ] 100-task concurrency suite validates mutual-exclusion domain leases and HTTP 409 conflict handling.
+- [ ] Gemini 3.8 Flash Rater Judge audits tool fidelity, normalized token economy, and awards Score >= 85.0 (Grade A/A+).
+
