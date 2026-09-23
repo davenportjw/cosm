@@ -136,7 +136,7 @@ Cosm bridges the gap between AI agent efficiency and human developer ergonomics:
      • 80%–99% Scale-Dependent Token Reduction     • Synthetic Git CLI Interceptor
 ```
 
-For full mathematical derivation and empirical tables across 5- to 100-component repositories, see [Empirical Benchmarks & Savings Reference](file:///Users/jasondavenport/GitHub/cosm/docs/reference/empirical-benchmarks-and-savings.md).
+For full mathematical derivation and empirical tables across 5- to 100-component repositories, see [Empirical Benchmarks & Savings Reference](empirical-benchmarks-and-savings.md).
 
 ### 5.1 AI Agents: Topological AST Slices
 * Agents receive only the target symbol and its 1-hop contract dependencies (omitting bodies of unchanged code).

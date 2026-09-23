@@ -119,6 +119,65 @@ declare module 'vscode' {
     provideHover(document: TextDocument, position: Position, token: CancellationToken): ProviderResult<Hover>;
   }
 
+  export enum TreeItemCollapsibleState {
+    None = 0,
+    Collapsed = 1,
+    Expanded = 2
+  }
+
+  export class ThemeColor {
+    readonly id: string;
+    constructor(id: string);
+  }
+
+  export class ThemeIcon {
+    static readonly File: ThemeIcon;
+    static readonly Folder: ThemeIcon;
+    readonly id: string;
+    readonly color?: ThemeColor;
+    constructor(id: string, color?: ThemeColor);
+  }
+
+  export interface TreeItemLabel {
+    label: string;
+    highlights?: [number, number][];
+  }
+
+  export class TreeItem {
+    label?: string | TreeItemLabel;
+    id?: string;
+    iconPath?: string | Uri | { light: string | Uri; dark: string | Uri } | ThemeIcon;
+    description?: string | boolean;
+    resourceUri?: Uri;
+    tooltip?: string | MarkdownString;
+    command?: Command;
+    collapsibleState?: TreeItemCollapsibleState;
+    contextValue?: string;
+    accessibilityInformation?: any;
+    constructor(label: string | TreeItemLabel, collapsibleState?: TreeItemCollapsibleState);
+    constructor(resourceUri: Uri, collapsibleState?: TreeItemCollapsibleState);
+  }
+
+  export interface TreeDataProvider<T> {
+    onDidChangeTreeData?: Event<T | undefined | null | void>;
+    getTreeItem(element: T): TreeItem | Thenable<TreeItem>;
+    getChildren(element?: T): ProviderResult<T[]>;
+    getParent?(element: T): ProviderResult<T>;
+    resolveTreeItem?(item: TreeItem, element: T, token: CancellationToken): ProviderResult<TreeItem>;
+  }
+
+  export interface TreeView<T> extends Disposable {
+    readonly onDidExpandElement: Event<TreeViewExpansionEvent<T>>;
+    readonly onDidCollapseElement: Event<TreeViewExpansionEvent<T>>;
+    readonly selection: readonly T[];
+    readonly visible: boolean;
+    reveal(element: T, options?: { select?: boolean; focus?: boolean; expand?: boolean | number }): Thenable<void>;
+  }
+
+  export interface TreeViewExpansionEvent<T> {
+    readonly element: T;
+  }
+
   export type DocumentSelector = DocumentFilter | string | (DocumentFilter | string)[];
 
   export interface DocumentFilter {
@@ -326,6 +385,8 @@ declare module 'vscode' {
       provider: WebviewViewProvider,
       options?: { webviewOptions?: { retainContextWhenHidden?: boolean } }
     ): Disposable;
+    export function registerTreeDataProvider<T>(viewId: string, treeDataProvider: TreeDataProvider<T>): Disposable;
+    export function createTreeView<T>(viewId: string, options: { treeDataProvider: TreeDataProvider<T> }): TreeView<T>;
     export function showInformationMessage<T extends string>(message: string, ...items: T[]): Thenable<T | undefined>;
     export function showWarningMessage<T extends string>(message: string, ...items: T[]): Thenable<T | undefined>;
     export function showErrorMessage<T extends string>(message: string, ...items: T[]): Thenable<T | undefined>;
@@ -366,6 +427,10 @@ declare module 'vscode' {
   }
 
   export namespace env {
+    export const clipboard: {
+      readText(): Thenable<string>;
+      writeText(value: string): Thenable<void>;
+    };
     export function openExternal(target: Uri): Thenable<boolean>;
   }
 }

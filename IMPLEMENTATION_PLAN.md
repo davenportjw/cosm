@@ -417,7 +417,7 @@ Key automated test suites:
 
 ## 6. Pull Request & Proposal Model (Git Compatibility & Agent Workflows)
 
-Comprehensive developer and agent how-to guides are documented in [`docs/HOW_TO_PR_AND_COLLABORATION.md`](file:///Users/jasondavenport/GitHub/cosm/docs/HOW_TO_PR_AND_COLLABORATION.md).
+Comprehensive developer and agent how-to guides are documented in [`docs/HOW_TO_PR_AND_COLLABORATION.md`](docs/HOW_TO_PR_AND_COLLABORATION.md).
 
 ### 6.1 Universe Proposals vs. Traditional Git PRs
 - **Semantic Delta**: In `cosm`, a Pull Request is represented as a **Universe Proposal** containing AST symbol additions/modifications, cross-boundary contract edges, and cryptographic lineage envelopes rather than line-by-line text diffs.
@@ -455,7 +455,7 @@ Comprehensive developer and agent how-to guides are documented in [`docs/HOW_TO_
 
 ### 7.2 AST Object Mutation Engine (`pkg/mutation/`)
 
-#### A. Semantic AST Surgery (`cosm symbol edit <symbol_id>`)
+#### A. Semantic AST Surgery (`cosm ast edit --target <symbol_id>`)
 - Allows developers and AI agents to surgically replace or modify an individual function, struct, resource block, or route handler in isolation.
 - Only the target symbol is re-serialized and hashed into `.cosm/objects/`.
 - Computes new Merkle root while deduplicating all unchanged sibling symbols (zero unnecessary disk I/O).

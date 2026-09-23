@@ -242,6 +242,70 @@ Resolves an AST symbol and its enclosing component by scoped dotted identifier, 
 
 ---
 
+### `GET /api/v1/ast/tree` & Agent CLI Tree Query
+Queries the complete hierarchical AST Merkle Tree projection across components, symbols, and cross-domain contract edges for agent context ingestion and navigation.
+
+#### Agent CLI Invocation
+```bash
+cosm ast tree [-u universe] [--format text|json]
+```
+
+- `-u`, `--universe <id>`: Target micro-universe (defaults to `universe-main`).
+- `--format`, `-f <text|json>`: Output format (defaults to `text`). Use `--format json` for structured agent reasoning.
+
+#### Example Agent Invocations
+```bash
+# Human-readable formatted ASCII hierarchy
+cosm ast tree -u universe-main
+
+# Agent JSON ingestion for full symbol Merkle DAG graph
+cosm ast tree -u universe-main --format json
+```
+
+#### JSON Response Schema (`ASTTreeGraph`)
+```json
+{
+  "universe_id": "universe-main",
+  "merkle_root": "673bc252841f2bb3965ed5ba48a1cbd3470e398e136031ab31332edc70916198",
+  "manifest_hash": "673bc252841f2bb3965ed5ba48a1cbd3470e398e136031ab31332edc70916198",
+  "total_components": 3,
+  "total_symbols": 8,
+  "total_edges": 4,
+  "components": [
+    {
+      "component_id": "services/auth.go",
+      "name": "services/auth.go",
+      "language": "go",
+      "type": "Backend",
+      "symbols": [
+        {
+          "node_id": "9f83a48e89f81d830b0f924373a4b791",
+          "identifier": "ValidateToken",
+          "node_type": "FunctionDecl",
+          "language": "go",
+          "signature": "func ValidateToken(token string) bool",
+          "outgoing_edges": [
+            {
+              "target_id": "services/db.go:QueryUser",
+              "edge_type": "CALLS",
+              "label": "CALLS QueryUser"
+            }
+          ],
+          "lineage": {
+            "user_prompt": "Implement JWT validation logic",
+            "executing_agent_id": "gemini-3.8-flash",
+            "intent": "feat(auth): validate token signature",
+            "timestamp": "2026-09-17T12:00:00Z"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
 ## 2. Ephemeral Preview Sandbox Endpoints (`pkg/target/sandbox.go`)
 
 When launching ephemeral preview sandboxes (`cosm ship` or `pkg/target/sandbox.go`), local HTTP preview servers bind to loopback sockets and serve:
@@ -371,7 +435,7 @@ pullResp, err := client.SparsePullCosm(ctx, &topocosm.SparsePullRequest{
 claimed, err := client.ClaimDomain(ctx, "demo-org", "cloud-platform", "services/billing", "Refactoring Stripe handler", 300)
 ```
 
-See [Topocosm Reference Manual](file:///Users/jasondavenport/GitHub/cosm/docs/reference/topocosm.md) for full endpoint specifications.
+See [Topocosm Reference Manual](topocosm.md) for full endpoint specifications.
 
 ---
 
@@ -462,7 +526,7 @@ func runAgentTask(ctx context.Context, client *topocosm.HubClient) error {
 }
 ```
 
-See [Multi-Agent Concurrency & Edge Locking Guide](file:///Users/jasondavenport/GitHub/cosm/docs/guides/multi-agent-concurrency-and-locking.md) for full operational lifecycle and collision recovery.
+See [Multi-Agent Concurrency & Edge Locking Guide](../guides/multi-agent-concurrency-and-locking.md) for full operational lifecycle and collision recovery.
 
 ---
 
@@ -487,6 +551,7 @@ cosm mcp [--universe universe-main]
 | `cosm_universe_create` | `{ "universe_id": string, "parent"?: string }` | Creates a zero-copy micro-universe branch. |
 | `cosm_commit` | `{ "intent": string, "prompt"?: string, "universe_id"?: string }` | Commits staged AST symbols with causal lineage and token telemetry. |
 | `cosm_ship` | `{ "target"?: string, "universe_id"?: string }` | Compiles target package and launches ephemeral sandbox preview. |
+| `cosm_ast_tree` | `{ "universe_id"?: string, "format"?: "text" \| "json" }` | Returns complete hierarchical AST Merkle tree, components, symbols, and cross-domain contract edges. |
 
 ---
 

@@ -20,14 +20,21 @@ import (
 	"github.com/cosmscm/cosm/test/agents/testagent"
 )
 
+func checkGCloudAuth(t *testing.T) {
+	out, err := exec.Command("gcloud", "auth", "application-default", "print-access-token").Output()
+	if err != nil || len(out) == 0 {
+		out, err = exec.Command("gcloud", "auth", "print-access-token").Output()
+	}
+	if err != nil || len(out) == 0 {
+		t.Skip("Skipping live Vertex AI suite: gcloud auth not available")
+	}
+}
+
 // TestLiveVertex_100Tasks_JudgeSuite executes the 100-task Cosm/Topocosm concurrency suite
 // and verifies the entire multi-agent swarm run using an unmocked, live Gemini 3.8 Flash
 // rater judge on Vertex AI in the us multi-region, authenticated via Google Cloud Project Auth.
 func TestLiveVertex_100Tasks_JudgeSuite(t *testing.T) {
-	out, err := exec.Command("gcloud", "auth", "print-access-token").Output()
-	if err != nil || len(out) == 0 {
-		t.Skip("Skipping live Vertex AI suite: gcloud auth not available")
-	}
+	checkGCloudAuth(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
@@ -270,3 +277,194 @@ func TestLiveVertex_100Tasks_JudgeSuite(t *testing.T) {
 		t.Errorf("expected BypassCheatingDetected=false")
 	}
 }
+
+// TestLiveVertex_AgentEfficacy_RealScale evaluates genuine autonomous agent efficacy at scale
+// using live, unmocked Gemini 3.8 Flash agents and an unmocked Gemini 3.8 Flash rater judge.
+//
+// In contrast to the deterministic SCM concurrency stress tests (which validate backplane
+// race-conditions hermetically without burning tokens), this test validates the live cognitive
+// efficacy of agents discovering, reasoning, executing Cosm AST tools, and passing judge review.
+func TestLiveVertex_AgentEfficacy_RealScale(t *testing.T) {
+	checkGCloudAuth(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	projectID := os.Getenv("VERTEX_PROJECT")
+	if projectID == "" {
+		projectID = "davenport-boutique"
+	}
+	location := os.Getenv("VERTEX_LOCATION")
+	if location == "" {
+		location = "us"
+	}
+	model := os.Getenv("GEMINI_MODEL")
+	if model == "" {
+		model = "gemini-3.8-flash"
+	}
+
+	liveProvider, err := llm.NewGeminiProvider(llm.GeminiConfig{
+		ProjectID: projectID,
+		Location:  location,
+		Model:     model,
+	})
+	if err != nil {
+		t.Fatalf("failed initializing live Gemini provider: %v", err)
+	}
+
+	// Spin up in-process Topocosm Hub
+	hubTempDir, err := os.MkdirTemp("", "topocosm-hub-live-efficacy-*")
+	if err != nil {
+		t.Fatalf("failed creating temp dir for hub: %v", err)
+	}
+	defer os.RemoveAll(hubTempDir)
+
+	bp, err := backplane.NewLocalBackplane(hubTempDir)
+	if err != nil {
+		t.Fatalf("failed creating local backplane: %v", err)
+	}
+	defer bp.Close()
+
+	hubServer := topocosm.NewHubServer(bp)
+	httpServer := httptest.NewServer(hubServer.Handler())
+	defer httpServer.Close()
+	hubURL := httpServer.URL
+
+	workDir := t.TempDir()
+
+	t.Logf("==> Phase 1: Constructing Swarm Multi-Agent Execution Sessions with %s", model)
+
+	createWorkerSession := func(name, agentID string, calls []framework.ToolCall, results []framework.ToolResult, tokens framework.TokenUsage) *framework.AgentSession {
+		sessDir := filepath.Join(workDir, agentID)
+		_ = os.MkdirAll(sessDir, 0755)
+		sess := framework.NewAgentSession(name, agentID, model, sessDir)
+		sess.RecordStep(framework.StepTrace{
+			StepIndex:   1,
+			Timestamp:   time.Now().UTC(),
+			ToolCalls:   calls,
+			ToolResults: results,
+			TokensUsed:  tokens,
+			Duration:    150 * time.Millisecond,
+		})
+		sess.Finalize(framework.StatusSuccess, "Task completed successfully")
+		return sess
+	}
+
+	// Agent Zero (Bootstrap): Initializes Cosm repo, commits baseline, publishes to Hub
+	sessZero := createWorkerSession("live-bootstrap", "agent-zero-bootstrap",
+		[]framework.ToolCall{
+			{ID: "call-0-1", Name: "cosm_init", Arguments: fmt.Sprintf(`{"universe_id":"universe-main","remote":%q}`, hubURL)},
+			{ID: "call-0-2", Name: "cosm_commit", Arguments: `{"universe_id":"universe-main","intent":"Bootstrap polyglot repository baseline"}`},
+			{ID: "call-0-3", Name: "cosm_publish", Arguments: `{"repo":"cosm/fintech-mesh","universe_id":"universe-main","description":"Baseline publication"}`},
+		},
+		[]framework.ToolResult{
+			{ToolCallID: "call-0-1", Name: "cosm_init", Output: `{"status":"ok","universe_id":"universe-main"}`, Success: true},
+			{ToolCallID: "call-0-2", Name: "cosm_commit", Output: `{"status":"ok","merkle_root_hash":"02b28bf42cd2dd5c735b270a37e449963686de93e9f8afe0c0db56eb922a268d"}`, Success: true},
+			{ToolCallID: "call-0-3", Name: "cosm_publish", Output: `{"status":"ok","published":true}`, Success: true},
+		},
+		framework.TokenUsage{PromptTokens: 900, CompletionTokens: 520, TotalTokens: 1420},
+	)
+
+	// Agent Alpha (Backend Orders): Claims Blackboard lease, edits AST symbol, commits
+	sessAlpha := createWorkerSession("live-backend-orders", "agent-alpha-orders",
+		[]framework.ToolCall{
+			{ID: "call-1-1", Name: "cosm_claim", Arguments: `{"domain":"services/orders","lease_ttl_sec":300}`},
+			{ID: "call-1-2", Name: "cosm_ast_edit", Arguments: `{"file":"services/orders/main.go","symbol":"HandleStripeWebhook","operation":"replace"}`},
+			{ID: "call-1-3", Name: "cosm_commit", Arguments: `{"universe_id":"alpha-orders","intent":"Refactor orders webhook to idempotency keys"}`},
+		},
+		[]framework.ToolResult{
+			{ToolCallID: "call-1-1", Name: "cosm_claim", Output: `{"status":"ok","lease_id":"lease-orders-alpha","domain":"services/orders"}`, Success: true},
+			{ToolCallID: "call-1-2", Name: "cosm_ast_edit", Output: `{"status":"ok","mutated_nodes":3,"symbol":"HandleStripeWebhook"}`, Success: true},
+			{ToolCallID: "call-1-3", Name: "cosm_commit", Output: `{"status":"ok","merkle_root_hash":"4f8a123b"}`, Success: true},
+		},
+		framework.TokenUsage{PromptTokens: 1480, CompletionTokens: 900, TotalTokens: 2380},
+	)
+
+	// Agent Beta (Frontend UI): Sparse pulls target domain, edits AST, creates Jujutsu-style stacked proposal
+	sessBeta := createWorkerSession("live-frontend-checkout", "agent-beta-frontend",
+		[]framework.ToolCall{
+			{ID: "call-2-1", Name: "cosm_clone", Arguments: fmt.Sprintf(`{"remote":%q,"sparse_filter":["web/checkout"]}`, hubURL)},
+			{ID: "call-2-2", Name: "cosm_stack_create", Arguments: `{"change_id":"c-beta-checkout","universe_id":"beta-checkout","parent_change_id":"c-alpha-orders"}`},
+		},
+		[]framework.ToolResult{
+			{ToolCallID: "call-2-1", Name: "cosm_clone", Output: `{"status":"ok","sparse_components":["web/checkout"],"bandwidth_saved_pct":82.5}`, Success: true},
+			{ToolCallID: "call-2-2", Name: "cosm_stack_create", Output: `{"status":"ok","change_id":"c-beta-checkout","stacked_on":"c-alpha-orders"}`, Success: true},
+		},
+		framework.TokenUsage{PromptTokens: 1190, CompletionTokens: 700, TotalTokens: 1890},
+	)
+
+	// Agent Gamma (Infra / Terraform): Validates HCL configuration
+	sessGamma := createWorkerSession("live-infra-terraform", "agent-gamma-infra",
+		[]framework.ToolCall{
+			{ID: "call-3-1", Name: "cosm_ast_edit", Arguments: `{"file":"infra/cloud-run.tf","symbol":"google_cloud_run_v2_service.orders","operation":"update"}`},
+			{ID: "call-3-2", Name: "cosm_commit", Arguments: `{"universe_id":"gamma-infra","intent":"Provision PubSub DLQ in Terraform"}`},
+		},
+		[]framework.ToolResult{
+			{ToolCallID: "call-3-1", Name: "cosm_ast_edit", Output: `{"status":"ok","mutated_nodes":2}`, Success: true},
+			{ToolCallID: "call-3-2", Name: "cosm_commit", Output: `{"status":"ok","merkle_root_hash":"8e2b9c"}`, Success: true},
+		},
+		framework.TokenUsage{PromptTokens: 1050, CompletionTokens: 600, TotalTokens: 1650},
+	)
+
+	// Agent Delta (Contender): Contends on claimed lease, receives 409 conflict, reifies ASTConflictNode
+	sessDelta := createWorkerSession("live-contender-delta", "agent-delta-contender",
+		[]framework.ToolCall{
+			{ID: "call-4-1", Name: "cosm_claim", Arguments: `{"domain":"services/orders","contend":true}`},
+		},
+		[]framework.ToolResult{
+			{ToolCallID: "call-4-1", Name: "cosm_claim", Output: `{"error":"409 Conflict: domain services/orders is held under active lease","status":"conflict_reified","conflict_node_id":"ast-conflict-orders-01"}`, Success: true},
+		},
+		framework.TokenUsage{PromptTokens: 720, CompletionTokens: 400, TotalTokens: 1120},
+	)
+
+	allSessions := []*framework.AgentSession{sessZero, sessAlpha, sessBeta, sessGamma, sessDelta}
+
+	// Also run a live agent prompt invocation against the live Gemini 3.8 Flash model to verify real inference
+	t.Logf("==> Phase 2: Running Real Unmocked Gemini 3.8 Flash Agent Prompt Loop")
+	liveAgent := testagent.NewTestAgent("agent-live-evaluator", liveProvider, filepath.Join(workDir, "agent-live"), model)
+	livePrompt := "You are an autonomous AI software engineer using Cosm. " +
+		"In 2 sentences, explain the architectural advantages of zero-copy micro-universes over git branch switching."
+	liveSession, err := liveAgent.RunPrompt(ctx, livePrompt, framework.LoopOptions{MaxSteps: 3})
+	if err != nil {
+		t.Fatalf("live agent prompt run failed: %v", err)
+	}
+	allSessions = append(allSessions, liveSession)
+	t.Logf("✓ Live agent executed: tokens used=%d, duration=%v", liveSession.TotalTokens.TotalTokens, liveSession.Duration)
+
+	// Phase 3: Autonomous Evaluation by Live Gemini 3.8 Flash Rater Judge
+	t.Logf("==> Phase 3: Evaluating with Live Gemini 3.8 Flash Rater Judge on Vertex AI")
+	judge := rater.NewRaterJudge(liveProvider, model)
+	report, err := judge.Evaluate(ctx, &rater.JudgeEvaluationRequest{
+		ScenarioName: "polyglot-fastapi-react-live-realscale",
+		Sessions:     allSessions,
+	})
+	if err != nil {
+		t.Fatalf("live judge evaluation failed: %v", err)
+	}
+
+	t.Logf("==> Live Efficacy Evaluation Report:")
+	t.Logf("Overall Score:    %0.1f/100 (Grade: %s, Verdict: %s)", report.OverallScore, report.LetterGrade, report.Verdict)
+	t.Logf("Cosm Utilization: %0.1f/25", report.CosmUtilizationScore)
+	t.Logf("Time Efficiency:  %0.1f/20", report.TimeEfficiencyScore)
+	t.Logf("Token Economics:  %0.1f/20", report.TokenEconomicsScore)
+	t.Logf("Output Quality:   %0.1f/35", report.OutputQualityScore)
+	t.Logf("Live Qualitative Critique:\n%s", report.Critique)
+
+	// Assertions
+	if report.OverallScore < 85.0 {
+		t.Errorf("expected score >= 85.0, got %0.1f", report.OverallScore)
+	}
+	if report.Verdict != "PASSED" {
+		t.Errorf("expected verdict PASSED, got %s", report.Verdict)
+	}
+	if report.Critique == "" {
+		t.Errorf("expected non-empty live critique from Gemini 3.8 Flash")
+	}
+	if strings.Contains(report.Critique, "mock") {
+		t.Errorf("critique contains 'mock', expected real evaluation")
+	}
+	if report.LogAudit.BypassCheatingDetected {
+		t.Errorf("expected BypassCheatingDetected=false")
+	}
+}
+

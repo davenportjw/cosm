@@ -92,7 +92,7 @@ export class TopologyWebviewManager implements vscode.WebviewViewProvider, vscod
       async (message: any) => {
         switch (message.type) {
           case 'navigateToFile':
-            await this.handleNavigate(message.target);
+            await this.handleNavigate(message.filePath || message.target, message.symbolName, message.nodeId);
             break;
 
           case 'auditBlastRadius':
@@ -113,42 +113,8 @@ export class TopologyWebviewManager implements vscode.WebviewViewProvider, vscod
     );
   }
 
-  private async handleNavigate(target: string): Promise<void> {
-    const root = this.client.getWorkspaceRoot();
-    let filePath = target;
-
-    // Handle symbols like 'main.go:HandleHealth' or 'app.py'
-    if (target.includes(':')) {
-      filePath = target.split(':')[0];
-    }
-
-    let absolutePath = path.isAbsolute(filePath) ? filePath : path.join(root, filePath);
-    if (!fs.existsSync(absolutePath)) {
-      // Try searching for file in workspace
-      const matches = await vscode.workspace.findFiles(`**/${path.basename(filePath)}`, '**/node_modules/**', 1);
-      if (matches.length > 0) {
-        absolutePath = matches[0].fsPath;
-      }
-    }
-
-    try {
-      const doc = await vscode.workspace.openTextDocument(absolutePath);
-      const editor = await vscode.window.showTextDocument(doc);
-
-      // Search for symbol line if specified
-      if (target.includes(':')) {
-        const symbol = target.split(':')[1];
-        const text = doc.getText();
-        const index = text.indexOf(symbol);
-        if (index !== -1) {
-          const pos = doc.positionAt(index);
-          editor.selection = new vscode.Selection(pos, pos);
-          editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
-        }
-      }
-    } catch (e: any) {
-      vscode.window.showWarningMessage(`Could not open file: ${filePath}`);
-    }
+  private async handleNavigate(filePath?: string, symbolName?: string, nodeId?: string): Promise<void> {
+    await vscode.commands.executeCommand('cosm.navigateToSymbol', filePath || symbolName, symbolName || nodeId);
   }
 
   private async handleBlastRadius(nodeId: string, webview: vscode.Webview): Promise<void> {
@@ -467,8 +433,8 @@ export class TopologyWebviewManager implements vscode.WebviewViewProvider, vscod
       // client-side helper if needed
     }
 
-    function navigate(target) {
-      vscode.postMessage({ type: 'navigateToFile', target });
+    function navigate(filePath, symbolName, nodeId) {
+      vscode.postMessage({ type: 'navigateToFile', filePath, symbolName, nodeId, target: filePath || symbolName });
     }
 
     function auditBlast(event, nodeId) {
@@ -516,10 +482,20 @@ export class TopologyWebviewManager implements vscode.WebviewViewProvider, vscod
         const alertBox = document.getElementById('blastAlert');
         const content = document.getElementById('blastContent');
         alertBox.style.display = 'block';
-        content.innerHTML = '<strong>' + msg.report.summary + '</strong><br>' +
-          'Direct Nodes: ' + msg.report.total_direct_nodes + ' | ' +
-          'Downstream Nodes: ' + msg.report.total_downstream_nodes + ' | ' +
-          'Risk Score: ' + (msg.report.risk_score * 100).toFixed(0) + '%';
+
+        let warningHtml = '';
+        if (msg.report.warnings && msg.report.warnings.length > 0) {
+          warningHtml = '<div style="margin-top: 4px; color: #f38ba8; font-size: 0.75rem;">⚠️ ' + msg.report.warnings.join('<br>⚠️ ') + '</div>';
+        }
+
+        const direct = msg.report.total_direct_nodes ?? 0;
+        const downstream = msg.report.total_downstream_nodes ?? 0;
+        const riskPct = ((msg.report.risk_score || 0) * 100).toFixed(0);
+
+        content.innerHTML = '<strong>' + escapeHtml(msg.report.summary || 'Impact cascade analysis') + '</strong><br>' +
+          'Direct Contracts: ' + direct + ' | ' +
+          'Downstream Components: ' + downstream + ' | ' +
+          'Risk Score: ' + riskPct + '%' + warningHtml;
       }
     });
   </script>
@@ -540,13 +516,16 @@ export class TopologyWebviewManager implements vscode.WebviewViewProvider, vscod
 function renderNodeCard(n: TopologyNode): string {
   const outgoingEdges = n.outgoing || [];
   const edgeBadges = outgoingEdges.map(e => `<span class="edge-badge">🔗 ${e.edge_type}: ${e.label}</span>`).join(' ');
+  const safeFilePath = escapeHtml(n.file_path || '');
+  const safeName = escapeHtml(n.name || '');
 
   return `
-    <div class="node-card" data-id="${n.id}" onclick="navigate('${n.name}')" onmouseenter="highlightCascade('${n.id}')" onmouseleave="highlightCascade(null)">
+    <div class="node-card" data-id="${n.id}" onclick="navigate('${safeFilePath}', '${safeName}', '${n.id}')" onmouseenter="highlightCascade('${n.id}')" onmouseleave="highlightCascade(null)">
       <div class="node-top">
-        <span class="node-name">${escapeHtml(n.name)}</span>
+        <span class="node-name">${safeName}</span>
         <span class="node-type-badge">${n.type} (${n.language})</span>
       </div>
+      ${n.file_path ? `<div style="font-size: 0.72rem; opacity: 0.8; margin: 2px 0 4px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">📄 ${safeFilePath}</div>` : ''}
       ${edgeBadges ? `<div>${edgeBadges}</div>` : ''}
       <div style="margin-top: 6px; display: flex; justify-content: flex-end;">
         <span style="font-size: 0.7rem; color: #89b4fa; cursor: pointer;" onclick="auditBlast(event, '${n.id}')">Audit Blast ➔</span>

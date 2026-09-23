@@ -112,6 +112,38 @@ Cosm splits software source control and distribution into two distinct, decouple
 
 ---
 
+## Dual-Plane Architecture: AST Merkle-DAG vs. Materialized Working Tree Lens
+
+Cosm resolves the tension between machine-native structured syntax trees and human developer tools through a **Dual-Plane Architecture**:
+
+```
+ ┌─────────────────────────────────────────────────────────────────────────────┐
+ │                    PLANE 1: CANONICAL AST MERKLE-DAG                        │
+ │  • Content-addressed CAS (.cosm/objects/) & WAL Graph Engine (.cosm/graph.db)│
+ │  • Symbol nodes, semantic contract edges, causal lineage, micro-universes    │
+ │  • Ground truth for all commits, AST surgery, shipping, and federated sync   │
+ └──────────────────────────────────────┬──────────────────────────────────────┘
+                                        │
+                         Bidirectional Hydration & Sync
+                  (cosm export / cosm add / cosm ast edit -w)
+                                        │
+                                        ▼
+ ┌─────────────────────────────────────────────────────────────────────────────┐
+ │                PLANE 2: MATERIALIZED WORKING TREE LENS                      │
+ │  • Ephemeral disk files (cmd/server/main.go, deploy/main.tf, etc.)          │
+ │  • Host toolchain execution: 'go build', 'go test ./...', 'terraform validate'│
+ │  • IDE editor integration: Language Server Protocols (gopls, pyright), linters│
+ └─────────────────────────────────────────────────────────────────────────────┘
+```
+
+1. **Plane 1: Canonical AST Merkle-DAG**
+   The true source control state lives exclusively inside `.cosm/objects/` and `.cosm/graph.db`. Software is stored as content-addressed symbol nodes (`ASTSymbolNode`), cross-boundary contracts, and cryptographic causal lineage records. Compilation and distribution (`cosm ship`, `cosm push`) hydrate code directly from this DAG into isolated staging environments, completely decoupled from local disk drift.
+
+2. **Plane 2: Materialized Working Tree Lens**
+   Files on disk exist as a materialized projection of the Merkle-DAG. This lens exists to provide complete compatibility with host compilers (`go build`, `go test`), IDE buffers, and Language Server Protocols (`gopls`, `tsserver`, `pyright`). `cosm status` actively monitors this projection, reporting clean synchronization or surfacing file drift so developers can either stage modifications via `cosm add` or restore disk files from the Merkle DAG via `cosm export -d .`.
+
+---
+
 ## High-Level Storage Layout
 
 Cosm stores all repository state under `.cosm/`:

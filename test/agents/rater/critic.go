@@ -37,7 +37,7 @@ type LLMCritic struct {
 
 // NewLLMCritic creates a new LLMCritic instance.
 func NewLLMCritic(provider llm.LLMProvider, agentID string, model ...string) *LLMCritic {
-	m := "gemini-3.7-flash"
+	m := "gemini-3.8-flash"
 	if len(model) > 0 && model[0] != "" {
 		m = model[0]
 	} else if provider != nil && provider.ModelName() != "" {
@@ -45,7 +45,7 @@ func NewLLMCritic(provider llm.LLMProvider, agentID string, model ...string) *LL
 	}
 
 	if agentID == "" {
-		agentID = "critic-agent-gemini-3.7"
+		agentID = "critic-agent-gemini-3.8"
 	}
 
 	return &LLMCritic{

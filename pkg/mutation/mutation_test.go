@@ -130,11 +130,30 @@ func TestSurgeryEngine_MutateSymbolAndDeduplicate(t *testing.T) {
 	if res.NewSymbolID == sym2Hash {
 		t.Errorf("Expected new symbol hash to differ from old hash")
 	}
+	if res.SymbolIdentifier != "main.FuncB" {
+		t.Errorf("Expected SymbolIdentifier main.FuncB, got %s", res.SymbolIdentifier)
+	}
+	if res.ComponentName != "service-core" {
+		t.Errorf("Expected ComponentName service-core, got %s", res.ComponentName)
+	}
 	if res.DeduplicatedSymbolsCount != 2 {
 		t.Errorf("Expected 2 deduplicated sibling symbols, got %d", res.DeduplicatedSymbolsCount)
 	}
 	if res.NewManifestHash == res.OldManifestHash {
 		t.Errorf("Expected new manifest hash to differ after mutation")
+	}
+
+	// Verify new symbol has non-empty NodeID in object storage
+	newSymBytes, err := blobStore.Get(res.NewSymbolID)
+	if err != nil {
+		t.Fatalf("Get mutated symbol blob: %v", err)
+	}
+	var loadedSym core.ASTSymbolNode
+	if err := json.Unmarshal(newSymBytes, &loadedSym); err != nil {
+		t.Fatalf("Unmarshal mutated symbol: %v", err)
+	}
+	if loadedSym.NodeID == "" {
+		t.Errorf("Expected loaded symbol NodeID to be non-empty")
 	}
 
 	// Verify new component in storage has [sym1, newSym2, sym3]

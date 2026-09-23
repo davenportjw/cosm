@@ -19,7 +19,7 @@ type TestAgent struct {
 
 // NewTestAgent creates an initialized TestAgent instance.
 func NewTestAgent(agentID string, provider llm.LLMProvider, workDir string, model ...string) *TestAgent {
-	m := "gemini-3.7-flash"
+	m := "gemini-3.8-flash"
 	if len(model) > 0 && model[0] != "" {
 		m = model[0]
 	} else if provider != nil && provider.ModelName() != "" {

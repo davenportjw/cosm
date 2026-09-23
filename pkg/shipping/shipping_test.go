@@ -2,6 +2,8 @@ package shipping
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -27,8 +29,8 @@ func TestTargetSpec_DefaultsAndValidation(t *testing.T) {
 		t.Fatalf("static web target validation failed: %v", err)
 	}
 
-	tfTarget := DefaultTerraformTarget("target:my-infra", []string{"infra"})
-	if err := tfTarget.Validate(); err != nil {
+	terraformTarget := DefaultTerraformTarget("target:my-infra", []string{"infra"})
+	if err := terraformTarget.Validate(); err != nil {
 		t.Fatalf("terraform target validation failed: %v", err)
 	}
 }
@@ -62,31 +64,31 @@ func TestStagingManager_PrepareAndExecute(t *testing.T) {
 
 func TestTerraformRunner_FmtAndValidate(t *testing.T) {
 	staging := NewStagingManager("")
-	runner := NewTerraformRunner(staging)
+	tfRunner := NewTerraformRunner(staging)
 
-	validHCL := map[string][]byte{
-		"infra/main.tf": []byte(`resource "google_storage_bucket" "b" {
-  name     = "my-bucket"
-  location = "US"
+	tfFiles := map[string][]byte{
+		"infra/main.tf": []byte(`
+resource "google_storage_bucket" "test_bucket" {
+name="my-bucket"
+location="US"
 }
 `),
 	}
 
-	report, err := runner.CheckFiles(validHCL)
+	report, err := tfRunner.CheckFiles(tfFiles)
 	if err != nil {
-		t.Fatalf("terraform check failed: %v", err)
-	}
-	if !report.Valid {
-		t.Fatalf("expected valid HCL, got invalid: %v", report.Diagnostics)
+		t.Fatalf("terraform check files failed: %v", err)
 	}
 
-	unformattedHCL := map[string][]byte{
-		"infra/main.tf": []byte("resource \"google_storage_bucket\" \"b\" {\nname=\"my-bucket\"\n}\n"),
+	if !report.Valid {
+		t.Fatalf("expected valid terraform, got diagnostics: %v", report.Diagnostics)
 	}
-	fixed, err := runner.FormatAndFix(unformattedHCL)
+
+	fixed, err := tfRunner.FormatAndFix(tfFiles)
 	if err != nil {
-		t.Fatalf("FormatAndFix failed: %v", err)
+		t.Fatalf("terraform format files failed: %v", err)
 	}
+
 	if !strings.Contains(string(fixed["infra/main.tf"]), "  name = \"my-bucket\"") &&
 		!strings.Contains(string(fixed["infra/main.tf"]), "  name     = \"my-bucket\"") {
 		t.Fatalf("expected formatted indentation, got: %s", string(fixed["infra/main.tf"]))
@@ -115,6 +117,18 @@ func TestCompiler_GoAndFrontend(t *testing.T) {
 		t.Fatalf("Go compilation failed: err=%v, res=%+v", err, goRes)
 	}
 
+	// Verify real binary was produced (STRICT NEVER MOCK DIRECTIVE)
+	if goRes.BinarySizeBytes < 1000 {
+		t.Fatalf("expected real binary with size > 1000 bytes, got %d bytes", goRes.BinarySizeBytes)
+	}
+	binBytes, err := os.ReadFile(goRes.ArtifactPath)
+	if err != nil {
+		t.Fatalf("failed to read binary artifact: %v", err)
+	}
+	if strings.HasPrefix(string(binBytes), "#!/bin/sh") {
+		t.Fatalf("detected forbidden synthetic shell script binary fallback!")
+	}
+
 	// Frontend compile test
 	feTarget := DefaultStaticWebTarget("target:web", nil)
 	feFiles := map[string][]byte{
@@ -131,6 +145,189 @@ func TestCompiler_GoAndFrontend(t *testing.T) {
 	feRes, err := compiler.CompileFrontend(feWorkspace, "bundle.js")
 	if err != nil || !feRes.Successful {
 		t.Fatalf("Frontend bundling failed: err=%v, res=%+v", err, feRes)
+	}
+}
+
+func TestCompiler_Go_SyntaxErrorDiagnostics(t *testing.T) {
+	staging := NewStagingManager("")
+	compiler := NewCompiler(staging)
+
+	goTarget := DefaultLocalServiceTarget("target:service-err", nil)
+	goFiles := map[string][]byte{
+		"main.go": []byte("package main\nfunc main( {\n"),
+	}
+	goWorkspace, err := staging.Prepare(goTarget, goFiles)
+	if err != nil {
+		t.Fatalf("prepare failed: %v", err)
+	}
+	defer func() {
+		_ = goWorkspace.Cleanup()
+	}()
+
+	goRes, err := compiler.CompileGo(goWorkspace, "server")
+	if err == nil {
+		t.Fatalf("expected syntax error compilation failure, got nil error")
+	}
+	if goRes == nil {
+		t.Fatalf("expected non-nil BuildResult on error")
+	}
+	if goRes.Successful {
+		t.Fatalf("expected Successful=false on syntax error")
+	}
+	if !strings.Contains(goRes.OutputLogs, "syntax error") {
+		t.Fatalf("expected OutputLogs to contain syntax diagnostics, got: %s", goRes.OutputLogs)
+	}
+	if len(goRes.Errors) == 0 {
+		t.Fatalf("expected non-empty Errors slice")
+	}
+}
+
+func TestCompiler_Go_CompileErrorDiagnostics(t *testing.T) {
+	staging := NewStagingManager("")
+	compiler := NewCompiler(staging)
+
+	goTarget := DefaultLocalServiceTarget("target:service-type-err", nil)
+	goFiles := map[string][]byte{
+		"main.go": []byte("package main\nfunc main() {\n    undeclaredFunctionCallForTest()\n}\n"),
+	}
+	goWorkspace, err := staging.Prepare(goTarget, goFiles)
+	if err != nil {
+		t.Fatalf("prepare failed: %v", err)
+	}
+	defer func() {
+		_ = goWorkspace.Cleanup()
+	}()
+
+	goRes, err := compiler.CompileGo(goWorkspace, "server")
+	if err == nil {
+		t.Fatalf("expected compile failure on undefined function, got nil error")
+	}
+	if goRes == nil {
+		t.Fatalf("expected non-nil BuildResult on error")
+	}
+	if goRes.Successful {
+		t.Fatalf("expected Successful=false on compiler error")
+	}
+	if !strings.Contains(goRes.OutputLogs, "undeclaredFunctionCallForTest") {
+		t.Fatalf("expected OutputLogs to contain compiler diagnostics, got: %s", goRes.OutputLogs)
+	}
+
+	// Verify no synthetic shell script was emitted
+	if goRes.ArtifactPath != "" {
+		if binBytes, readErr := os.ReadFile(goRes.ArtifactPath); readErr == nil {
+			if strings.HasPrefix(string(binBytes), "#!/bin/sh") {
+				t.Fatalf("detected forbidden synthetic shell script fallback on compiler error!")
+			}
+		}
+	}
+}
+
+func TestCompiler_Go_AutoStagedModule_RealBinaryExecution(t *testing.T) {
+	staging := NewStagingManager("")
+	compiler := NewCompiler(staging)
+
+	goTarget := DefaultLocalServiceTarget("target:exec-test", nil)
+	goFiles := map[string][]byte{
+		"main.go": []byte("package main\nimport \"fmt\"\nfunc main() {\n    fmt.Println(\"cosm_real_binary_probe_ok\")\n}\n"),
+	}
+	goWorkspace, err := staging.Prepare(goTarget, goFiles)
+	if err != nil {
+		t.Fatalf("prepare failed: %v", err)
+	}
+	defer func() {
+		_ = goWorkspace.Cleanup()
+	}()
+
+	// Verify go.mod was auto-staged
+	modContent, err := goWorkspace.ReadFile("go.mod")
+	if err != nil || !strings.Contains(string(modContent), "module github.com/cosmscm/cosm") {
+		t.Fatalf("expected auto-staged go.mod with cosm module, got err=%v", err)
+	}
+
+	goRes, err := compiler.CompileGo(goWorkspace, "probe_app")
+	if err != nil || !goRes.Successful {
+		t.Fatalf("expected successful Go compilation with auto-staged go.mod: err=%v, res=%+v", err, goRes)
+	}
+
+	// Verify genuine executable binary
+	if goRes.BinarySizeBytes < 1000 {
+		t.Fatalf("expected real binary with size > 1000, got %d", goRes.BinarySizeBytes)
+	}
+	binBytes, err := os.ReadFile(goRes.ArtifactPath)
+	if err != nil {
+		t.Fatalf("failed to read binary artifact: %v", err)
+	}
+	if strings.HasPrefix(string(binBytes), "#!/bin/sh") {
+		t.Fatalf("artifact is a synthetic shell script, NOT a real binary!")
+	}
+
+	// Execute the binary and probe output
+	cmd := exec.Command(goRes.ArtifactPath)
+	output, execErr := cmd.CombinedOutput()
+	if execErr != nil {
+		t.Fatalf("failed to execute compiled binary: %v, output: %s", execErr, string(output))
+	}
+	if !strings.Contains(string(output), "cosm_real_binary_probe_ok") {
+		t.Fatalf("unexpected binary output: %s", string(output))
+	}
+}
+
+func TestStaging_AutoStageDependencies_NodeAndGo(t *testing.T) {
+	tempRoot, err := os.MkdirTemp("", "cosm_mock_repo_*")
+	if err != nil {
+		t.Fatalf("failed to create temp repo: %v", err)
+	}
+	defer os.RemoveAll(tempRoot)
+
+	// Write mock repo files
+	_ = os.WriteFile(filepath.Join(tempRoot, "go.mod"), []byte("module example.com/autostage\n\ngo 1.22\n"), 0644)
+	_ = os.WriteFile(filepath.Join(tempRoot, "go.sum"), []byte("example.com/autostage v0.1.0 h1:checksum=\n"), 0644)
+	_ = os.WriteFile(filepath.Join(tempRoot, "package.json"), []byte("{\"name\": \"@cosm/web\", \"version\": \"1.0.0\"}\n"), 0644)
+	_ = os.WriteFile(filepath.Join(tempRoot, "tsconfig.json"), []byte("{\"compilerOptions\": {\"target\": \"ES2022\"}}\n"), 0644)
+
+	staging := NewStagingManagerWithRepo("", tempRoot)
+	packager := NewPackager(staging)
+	packager.SetRepoRoot(tempRoot)
+
+	// Test 1: StagingManager.Prepare auto-stages into workspace
+	target := DefaultLocalServiceTarget("target:autostage-test", nil)
+	files := map[string][]byte{
+		"server/main.go": []byte("package main\nfunc main() {}\n"),
+	}
+	ws, err := staging.Prepare(target, files)
+	if err != nil {
+		t.Fatalf("staging prepare failed: %v", err)
+	}
+	defer func() {
+		_ = ws.Cleanup()
+	}()
+
+	// Verify all 4 files are auto-staged
+	for _, rel := range []string{"go.mod", "go.sum", "package.json", "tsconfig.json"} {
+		data, readErr := ws.ReadFile(rel)
+		if readErr != nil {
+			t.Fatalf("expected %s to be auto-staged in workspace, got error: %v", rel, readErr)
+		}
+		if len(data) == 0 {
+			t.Fatalf("expected non-empty data in auto-staged %s", rel)
+		}
+	}
+
+	// Test 2: Packager.AutoStageDependencies populates files map
+	pkgFiles := map[string][]byte{
+		"src/index.ts": []byte("export const a = 1;"),
+	}
+	if err := packager.AutoStageDependencies(target, pkgFiles); err != nil {
+		t.Fatalf("Packager.AutoStageDependencies failed: %v", err)
+	}
+	if _, ok := pkgFiles["package.json"]; !ok {
+		t.Fatalf("expected package.json in pkgFiles")
+	}
+	if _, ok := pkgFiles["tsconfig.json"]; !ok {
+		t.Fatalf("expected tsconfig.json in pkgFiles")
+	}
+	if _, ok := pkgFiles["go.mod"]; !ok {
+		t.Fatalf("expected go.mod in pkgFiles")
 	}
 }
 

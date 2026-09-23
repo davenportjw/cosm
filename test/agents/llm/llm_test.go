@@ -142,7 +142,7 @@ func TestGeminiProvider_HTTPRoundTrip(t *testing.T) {
 
 	provider, err := llm.NewGeminiProvider(llm.GeminiConfig{
 		APIKey:     "test-api-key",
-		Model:      "gemini-3.7-flash",
+		Model:      "gemini-3.8-flash",
 		BaseURL:    "https://generativelanguage.googleapis.com/v1beta",
 		HTTPClient: httpClient,
 	})
@@ -150,8 +150,8 @@ func TestGeminiProvider_HTTPRoundTrip(t *testing.T) {
 		t.Fatalf("failed to create Gemini provider: %v", err)
 	}
 
-	if provider.ModelName() != "gemini-3.7-flash" {
-		t.Errorf("expected gemini-3.7-flash, got %s", provider.ModelName())
+	if provider.ModelName() != "gemini-3.8-flash" {
+		t.Errorf("expected gemini-3.8-flash, got %s", provider.ModelName())
 	}
 
 	ctx := context.Background()

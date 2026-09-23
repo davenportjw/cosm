@@ -197,6 +197,17 @@ func HashComponentNode(comp *ComponentNode) (string, error) {
 	builder.WriteString(fmt.Sprintf("symbols_merkle_root:%s\n", symbolsMerkleRoot))
 	builder.WriteString(fmt.Sprintf("metadata:%s\n", strings.Join(metaPairs, ";")))
 	builder.WriteString(fmt.Sprintf("lineage_hash:%s\n", lineageHash))
+	if comp.Trivia != nil {
+		if len(comp.Trivia.HeaderDirectives) > 0 {
+			builder.WriteString(fmt.Sprintf("trivia_directives:%s\n", strings.Join(comp.Trivia.HeaderDirectives, ";")))
+		}
+		if comp.Trivia.LicenseHeader != "" {
+			builder.WriteString(fmt.Sprintf("trivia_license:%s\n", comp.Trivia.LicenseHeader))
+		}
+		if comp.Trivia.ModuleDocstring != "" {
+			builder.WriteString(fmt.Sprintf("trivia_docstring:%s\n", comp.Trivia.ModuleDocstring))
+		}
+	}
 
 	hash := HashString(builder.String())
 	return hash, nil

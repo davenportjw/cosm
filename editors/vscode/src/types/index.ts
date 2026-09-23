@@ -83,6 +83,8 @@ export interface TopologyNode {
   tier: 'Frontend' | 'API/Backend' | 'Backend' | 'Cloud Infra' | string;
   language: string;
   type: string;
+  file_path?: string;
+  component_name?: string;
   outgoing?: TopologyEdge[] | null;
 }
 
@@ -108,6 +110,11 @@ export interface BlastRadiusReport {
   total_direct_nodes: number;
   total_downstream_nodes: number;
   risk_score: number;
+  target_symbol_id?: string;
+  incoming_edges?: string[];
+  outgoing_edges?: string[];
+  affected_components?: string[];
+  warnings?: string[];
   TotalDirectNodes?: number;
   TotalDownstreamNodes?: number;
   RiskScore?: number;
@@ -153,3 +160,47 @@ export interface StackRecord {
   title?: string;
   status?: string;
 }
+
+export interface ASTTreeEdge {
+  target_id: string;
+  edge_type: string;
+  label: string;
+}
+
+export interface ASTTreeLineage {
+  user_prompt?: string;
+  executing_agent_id?: string;
+  intent?: string;
+  timestamp?: string;
+}
+
+export interface ASTTreeSymbol {
+  node_id: string;
+  identifier: string;
+  node_type: string;
+  language: string;
+  signature?: string;
+  docstring?: string;
+  visibility?: string;
+  dependencies?: string[];
+  outgoing_edges?: ASTTreeEdge[];
+  lineage?: ASTTreeLineage;
+}
+
+export interface ASTTreeComponent {
+  component_id: string;
+  name: string;
+  language: string;
+  type: string;
+  symbols: ASTTreeSymbol[];
+}
+
+export interface ASTTreeGraph {
+  universe_id: string;
+  merkle_root: string;
+  total_components: number;
+  total_symbols: number;
+  total_edges: number;
+  components: ASTTreeComponent[];
+}
+

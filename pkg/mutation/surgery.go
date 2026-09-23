@@ -25,8 +25,11 @@ type MutationResult struct {
 	UniverseID               string        `json:"universe_id"`
 	OldSymbolID              string        `json:"old_symbol_id"`
 	NewSymbolID              string        `json:"new_symbol_id"`
+	SymbolIdentifier         string        `json:"symbol_identifier,omitempty"`
+	NodeType                 string        `json:"node_type,omitempty"`
 	AffectedComponentID      string        `json:"affected_component_id"`
 	NewComponentID           string        `json:"new_component_id"`
+	ComponentName            string        `json:"component_name,omitempty"`
 	OldManifestHash          string        `json:"old_manifest_hash"`
 	NewManifestHash          string        `json:"new_manifest_hash"`
 	DeduplicatedSymbolsCount int           `json:"deduplicated_symbols_count"`
@@ -102,6 +105,11 @@ func (e *SurgeryEngine) MutateSymbol(
 		newSym.NodeType = "FunctionDecl"
 	}
 
+	symNodeID, err := core.HashASTSymbolNode(newSym)
+	if err == nil && symNodeID != "" {
+		newSym.NodeID = symNodeID
+	}
+
 	newSymBytes, err := json.Marshal(newSym)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling mutated symbol: %w", err)
@@ -111,15 +119,28 @@ func (e *SurgeryEngine) MutateSymbol(
 		return nil, fmt.Errorf("storing mutated symbol blob: %w", err)
 	}
 	newSymHash := blobHash
-	newSym.NodeID = newSymHash
+	if newSym.NodeID == "" {
+		newSym.NodeID = newSymHash
+	}
 
 	_ = e.graphEngine.PutNode(storage.NodeRecord{
 		NodeID:     newSymHash,
 		Language:   newSym.Language,
 		NodeType:   newSym.NodeType,
+		Identifier: newSym.Identifier,
 		MerkleHash: blobHash,
 		CreatedAt:  time.Now().UTC(),
 	})
+	if symNodeID != "" && symNodeID != newSymHash {
+		_ = e.graphEngine.PutNode(storage.NodeRecord{
+			NodeID:     symNodeID,
+			Language:   newSym.Language,
+			NodeType:   newSym.NodeType,
+			Identifier: newSym.Identifier,
+			MerkleHash: blobHash,
+			CreatedAt:  time.Now().UTC(),
+		})
+	}
 	_ = e.graphEngine.PutLineage(storage.LineageRecord{
 		RecordID:         fmt.Sprintf("lin-%s", newSymHash),
 		NodeID:           newSymHash,
@@ -235,12 +256,20 @@ func (e *SurgeryEngine) MutateSymbol(
 		return nil, fmt.Errorf("committing new manifest to universe: %w", err)
 	}
 
+	compName := ""
+	if targetComp != nil {
+		compName = targetComp.Name
+	}
+
 	return &MutationResult{
 		UniverseID:               universeID,
 		OldSymbolID:              targetSymbolID,
 		NewSymbolID:              newSymHash,
+		SymbolIdentifier:         newSym.Identifier,
+		NodeType:                 newSym.NodeType,
 		AffectedComponentID:      oldCompID,
 		NewComponentID:           newCompHash,
+		ComponentName:            compName,
 		OldManifestHash:          oldManifestHash,
 		NewManifestHash:          newManifestHash,
 		DeduplicatedSymbolsCount: dedupCount,

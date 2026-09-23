@@ -7,9 +7,15 @@ import {
   UniverseRecord,
   ResolvedSymbol,
   FullTopologyGraph,
+  TopologyNode,
   BlastRadiusReport,
   ShipResult,
-  StackRecord
+  StackRecord,
+  ASTTreeEdge,
+  ASTTreeLineage,
+  ASTTreeSymbol,
+  ASTTreeComponent,
+  ASTTreeGraph
 } from '../types';
 
 export interface CommitOptions {
@@ -60,16 +66,19 @@ export class CosmClient {
       }
     }
 
-    // 2. Check for built binary in repository root
-    const rootBin = path.join(this.workspaceRoot, 'cosm');
-    if (fs.existsSync(rootBin)) {
-      return { command: rootBin, prefixArgs: [] };
-    }
-
-    // 3. Check parent dirs (e.g. if opened in editors/vscode)
-    const parentBin = path.resolve(this.workspaceRoot, '..', '..', 'cosm');
-    if (fs.existsSync(parentBin)) {
-      return { command: parentBin, prefixArgs: [] };
+    // 2. Check for built binary in repository root or bin/
+    const candidatePaths = [
+      path.join(this.workspaceRoot, 'bin', 'cosm'),
+      path.join(this.workspaceRoot, 'cosm'),
+      path.resolve(this.workspaceRoot, '..', '..', 'bin', 'cosm'),
+      path.resolve(this.workspaceRoot, '..', '..', 'cosm'),
+      path.resolve(this.workspaceRoot, '..', 'bin', 'cosm'),
+      path.resolve(this.workspaceRoot, '..', 'cosm'),
+    ];
+    for (const cand of candidatePaths) {
+      if (fs.existsSync(cand)) {
+        return { command: cand, prefixArgs: [] };
+      }
     }
 
     // 4. If Go is available and cmd/cosm exists, allow running via 'go run ./cmd/cosm'
@@ -301,6 +310,130 @@ export class CosmClient {
   }
 
   /**
+   * Retrieves the comprehensive AST Tree and symbol dependency graph.
+   * Invokes 'cosm ast tree --format json' and falls back to synthesizing
+   * an ASTTreeGraph from getStatus() and getTopology() when the CLI call fails
+   * or returns non-JSON (e.g. older binary).
+   */
+  public async getASTTree(universe?: string): Promise<ASTTreeGraph> {
+    const args = ['ast', 'tree', '--format', 'json', ...(universe ? ['-u', universe] : [])];
+
+    try {
+      const output = await this.execCosm(args);
+      const jsonStart = output.indexOf('{');
+      if (jsonStart !== -1) {
+        const parsed = JSON.parse(output.substring(jsonStart)) as ASTTreeGraph;
+        if (parsed && Array.isArray(parsed.components)) {
+          return {
+            universe_id: parsed.universe_id || universe || 'universe-main',
+            merkle_root: parsed.merkle_root || '',
+            total_components: parsed.total_components ?? parsed.components.length,
+            total_symbols: parsed.total_symbols ?? parsed.components.reduce((acc, c) => acc + (c.symbols ? c.symbols.length : 0), 0),
+            total_edges: parsed.total_edges ?? 0,
+            components: parsed.components
+          };
+        }
+      }
+    } catch {
+      // CLI call failed or returned non-JSON -> fallback resilience
+    }
+
+    return this.synthesizeASTTreeFromFallback(universe);
+  }
+
+  /**
+   * Synthesizes an ASTTreeGraph from getStatus() and getTopology() for backward compatibility.
+   */
+  private async synthesizeASTTreeFromFallback(universe?: string): Promise<ASTTreeGraph> {
+    const [status, topology] = await Promise.all([
+      this.getStatus(universe),
+      this.getTopology(universe)
+    ]);
+
+    const universeId = status.universe_id || universe || 'universe-main';
+    const merkleRoot = status.merkle_root || '';
+
+    const componentMap = new Map<string, ASTTreeComponent>();
+    let edgeCount = 0;
+
+    const allNodes: TopologyNode[] = [
+      ...(topology.frontend_nodes || []),
+      ...(topology.backend_nodes || []),
+      ...(topology.infra_nodes || [])
+    ];
+
+    for (const node of allNodes) {
+      let compName = node.name;
+      let symbolName = node.name;
+
+      if (node.name.includes('::')) {
+        const idx = node.name.indexOf('::');
+        compName = node.name.substring(0, idx);
+        symbolName = node.name.substring(idx + 2);
+      } else if (node.name.includes(':')) {
+        const idx = node.name.indexOf(':');
+        compName = node.name.substring(0, idx);
+        symbolName = node.name.substring(idx + 1);
+      }
+
+      const outgoingEdges: ASTTreeEdge[] = (node.outgoing || []).map(e => ({
+        target_id: e.target_id,
+        edge_type: e.edge_type,
+        label: e.label
+      }));
+
+      edgeCount += outgoingEdges.length;
+
+      const symbol: ASTTreeSymbol = {
+        node_id: node.id,
+        identifier: symbolName,
+        node_type: node.type || 'Symbol',
+        language: node.language || '',
+        outgoing_edges: outgoingEdges
+      };
+
+      if (!componentMap.has(compName)) {
+        componentMap.set(compName, {
+          component_id: compName,
+          name: compName,
+          language: node.language || '',
+          type: node.tier || 'Component',
+          symbols: []
+        });
+      }
+
+      componentMap.get(compName)!.symbols.push(symbol);
+    }
+
+    if (status.components && Array.isArray(status.components)) {
+      for (const comp of status.components) {
+        if (!componentMap.has(comp)) {
+          componentMap.set(comp, {
+            component_id: comp,
+            name: comp,
+            language: '',
+            type: 'Component',
+            symbols: []
+          });
+        }
+      }
+    }
+
+    const components = Array.from(componentMap.values());
+    const totalSymbols = components.reduce((sum, c) => sum + c.symbols.length, 0);
+
+    return {
+      universe_id: universeId,
+      merkle_root: merkleRoot,
+      total_components: Math.max(components.length, status.components_count || 0),
+      total_symbols: totalSymbols,
+      total_edges: Math.max(edgeCount, topology.total_edges || 0, status.cross_edges_count || 0),
+      components
+    };
+  }
+
+
+  /**
    * Runs blast radius audit for an agent, symbol, or model modification.
    */
   public async getBlastRadius(target: string): Promise<BlastRadiusReport> {
@@ -310,7 +443,28 @@ export class CosmClient {
       const output = await this.execCosm(args);
       const jsonStart = output.indexOf('{');
       if (jsonStart !== -1) {
-        return JSON.parse(output.substring(jsonStart)) as BlastRadiusReport;
+        const parsed = JSON.parse(output.substring(jsonStart));
+        const incoming = parsed.incoming_edges || [];
+        const outgoing = parsed.outgoing_edges || [];
+        const direct = parsed.total_direct_nodes ?? parsed.TotalDirectNodes ?? (incoming.length + outgoing.length);
+        const affected = parsed.affected_components || [];
+        const downstream = parsed.total_downstream_nodes ?? parsed.TotalDownstreamNodes ?? affected.length;
+        const targetId = parsed.target_symbol_id || target;
+        const risk = typeof parsed.risk_score === 'number' ? parsed.risk_score : (typeof parsed.RiskScore === 'number' ? parsed.RiskScore : 0.0);
+        const summary = parsed.summary || parsed.Summary || `Blast radius impact analysis for ${targetId} (${direct} direct contracts, ${downstream} downstream components)`;
+
+        return {
+          ...parsed,
+          summary,
+          total_direct_nodes: direct,
+          total_downstream_nodes: downstream,
+          risk_score: risk,
+          target_symbol_id: targetId,
+          incoming_edges: incoming,
+          outgoing_edges: outgoing,
+          affected_components: affected,
+          warnings: parsed.warnings || []
+        };
       }
     } catch {
       // Fallback text parsing

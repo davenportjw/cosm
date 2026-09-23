@@ -3,6 +3,7 @@ package materialize
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -134,9 +135,7 @@ func (h *Hydrator) hydrateGoSymbol(node *core.ASTSymbolNode) (string, error) {
 			return "", fmt.Errorf("failed to unmarshal GoStructSymbol: %w", err)
 		}
 		var sb strings.Builder
-		if s.Doc != "" {
-			sb.WriteString(fmt.Sprintf("// %s\n", s.Doc))
-		}
+		writeGoDoc(&sb, s.Doc)
 		sb.WriteString(fmt.Sprintf("type %s struct {\n", s.Name))
 		for _, f := range s.Fields {
 			tagStr := ""
@@ -154,9 +153,7 @@ func (h *Hydrator) hydrateGoSymbol(node *core.ASTSymbolNode) (string, error) {
 			return "", fmt.Errorf("failed to unmarshal GoInterfaceSymbol: %w", err)
 		}
 		var sb strings.Builder
-		if iface.Doc != "" {
-			sb.WriteString(fmt.Sprintf("// %s\n", iface.Doc))
-		}
+		writeGoDoc(&sb, iface.Doc)
 		sb.WriteString(fmt.Sprintf("type %s interface {\n", iface.Name))
 		for _, m := range iface.Methods {
 			var params []string
@@ -184,9 +181,7 @@ func (h *Hydrator) hydrateGoSymbol(node *core.ASTSymbolNode) (string, error) {
 			return "", fmt.Errorf("failed to unmarshal GoFuncSymbol: %w", err)
 		}
 		var sb strings.Builder
-		if fn.Doc != "" {
-			sb.WriteString(fmt.Sprintf("// %s\n", fn.Doc))
-		}
+		writeGoDoc(&sb, fn.Doc)
 		recvStr := ""
 		if fn.IsMethod && fn.ReceiverType != "" {
 			if fn.ReceiverName != "" {
@@ -236,6 +231,22 @@ func (h *Hydrator) hydrateGoSymbol(node *core.ASTSymbolNode) (string, error) {
 		return string(node.ASTPayload), nil
 	}
 }
+
+func writeGoDoc(sb *strings.Builder, doc string) {
+	if doc == "" {
+		return
+	}
+	lines := strings.Split(strings.TrimSpace(doc), "\n")
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if strings.HasPrefix(l, "//") {
+			sb.WriteString(fmt.Sprintf("%s\n", l))
+		} else {
+			sb.WriteString(fmt.Sprintf("// %s\n", l))
+		}
+	}
+}
+
 
 // hydratePythonSymbol reconstitutes Python AST symbols.
 func (h *Hydrator) hydratePythonSymbol(node *core.ASTSymbolNode) (string, error) {
@@ -419,31 +430,51 @@ func (h *Hydrator) HydrateComponent(comp *core.ComponentNode, symbolMap map[stri
 			for _, imp := range strings.Split(impStr, ",") {
 				imp = strings.TrimSpace(imp)
 				if imp != "" {
-					if !strings.HasPrefix(imp, "\"") {
-						imp = fmt.Sprintf("\"%s\"", imp)
+					if strings.Contains(imp, " ") {
+						parts := strings.SplitN(imp, " ", 2)
+						alias := strings.TrimSpace(parts[0])
+						path := strings.Trim(strings.TrimSpace(parts[1]), `"`)
+						imp = fmt.Sprintf("%s \"%s\"", alias, path)
+					} else {
+						if !strings.HasPrefix(imp, "\"") {
+							imp = fmt.Sprintf("\"%s\"", imp)
+						}
 					}
 					importSet[imp] = true
 				}
 			}
 		}
 
-		candidates := map[string]string{
-			"context.": "\"context\"",
-			"json.":    "\"encoding/json\"",
-			"fmt.":     "\"fmt\"",
-			"http.":    "\"net/http\"",
-			"os.":      "\"os\"",
-			"time.":    "\"time\"",
-			"io.":      "\"io\"",
-			"strings.": "\"strings\"",
-			"bytes.":   "\"bytes\"",
-			"sync.":    "\"sync\"",
-			"log.":     "\"log\"",
-			"errors.":  "\"errors\"",
+		hasPackage := func(pkg string) bool {
+			for imp := range importSet {
+				clean := strings.Trim(imp, "\"")
+				if strings.HasSuffix(clean, "/"+pkg) || clean == pkg || strings.HasPrefix(imp, pkg+" ") {
+					return true
+				}
+			}
+			return false
 		}
-		for pattern, imp := range candidates {
-			if strings.Contains(bodyStr, pattern) {
-				importSet[imp] = true
+
+		candidates := map[string]string{
+			"context": "\"context\"",
+			"json":    "\"encoding/json\"",
+			"fmt":     "\"fmt\"",
+			"http":    "\"net/http\"",
+			"os":      "\"os\"",
+			"time":    "\"time\"",
+			"io":      "\"io\"",
+			"strings": "\"strings\"",
+			"bytes":   "\"bytes\"",
+			"sync":    "\"sync\"",
+			"log":     "\"log\"",
+			"errors":  "\"errors\"",
+		}
+		for pkg, imp := range candidates {
+			if !hasPackage(pkg) {
+				re := regexp.MustCompile(`(?m)(^|[^a-zA-Z0-9_])` + regexp.QuoteMeta(pkg) + `\.[A-Z]`)
+				if re.MatchString(bodyStr) {
+					importSet[imp] = true
+				}
 			}
 		}
 		var imports []string
@@ -453,6 +484,19 @@ func (h *Hydrator) HydrateComponent(comp *core.ComponentNode, symbolMap map[stri
 		sort.Strings(imports)
 
 		var sb strings.Builder
+		if comp.Trivia != nil {
+			for _, dir := range comp.Trivia.HeaderDirectives {
+				sb.WriteString(dir)
+				sb.WriteString("\n")
+			}
+			if len(comp.Trivia.HeaderDirectives) > 0 {
+				sb.WriteString("\n")
+			}
+			if comp.Trivia.LicenseHeader != "" {
+				sb.WriteString(comp.Trivia.LicenseHeader)
+				sb.WriteString("\n\n")
+			}
+		}
 		sb.WriteString(fmt.Sprintf("package %s\n\n", pkgName))
 		if len(imports) > 0 {
 			sb.WriteString("import (\n")
@@ -523,6 +567,19 @@ func (h *Hydrator) HydrateComponent(comp *core.ComponentNode, symbolMap map[stri
 		}
 
 		var sb strings.Builder
+		if comp.Trivia != nil {
+			for _, dir := range comp.Trivia.HeaderDirectives {
+				sb.WriteString(dir)
+				sb.WriteString("\n")
+			}
+			if len(comp.Trivia.HeaderDirectives) > 0 {
+				sb.WriteString("\n")
+			}
+			if comp.Trivia.LicenseHeader != "" {
+				sb.WriteString(comp.Trivia.LicenseHeader)
+				sb.WriteString("\n\n")
+			}
+		}
 		if hasReact {
 			sb.WriteString("import React, { useState, useEffect } from 'react';\n\n")
 		}
@@ -554,8 +611,27 @@ func (h *Hydrator) HydrateComponent(comp *core.ComponentNode, symbolMap map[stri
 		bodyStr := bodyBuilder.String()
 
 		var sb strings.Builder
-		sb.WriteString("# Python Service\n")
-		sb.WriteString(fmt.Sprintf("# Component: %s\n\n", comp.Name))
+		if comp.Trivia != nil {
+			for _, dir := range comp.Trivia.HeaderDirectives {
+				sb.WriteString(dir)
+				sb.WriteString("\n")
+			}
+			if len(comp.Trivia.HeaderDirectives) > 0 {
+				sb.WriteString("\n")
+			}
+			if comp.Trivia.LicenseHeader != "" {
+				sb.WriteString(comp.Trivia.LicenseHeader)
+				sb.WriteString("\n\n")
+			}
+			if comp.Trivia.ModuleDocstring != "" && comp.Trivia.ModuleDocstring != comp.Trivia.LicenseHeader {
+				sb.WriteString(comp.Trivia.ModuleDocstring)
+				sb.WriteString("\n\n")
+			}
+		}
+		if comp.Trivia == nil || (comp.Trivia.LicenseHeader == "" && comp.Trivia.ModuleDocstring == "") {
+			sb.WriteString("# Python Service\n")
+			sb.WriteString(fmt.Sprintf("# Component: %s\n\n", comp.Name))
+		}
 		if (strings.Contains(bodyStr, "os.") || strings.Contains(bodyStr, "os.environ")) && !strings.Contains(bodyStr, "import os") {
 			sb.WriteString("import os\n")
 		}
@@ -626,6 +702,19 @@ func (h *Hydrator) HydrateComponent(comp *core.ComponentNode, symbolMap map[stri
 		}
 
 		var sb strings.Builder
+		if comp.Trivia != nil {
+			for _, dir := range comp.Trivia.HeaderDirectives {
+				sb.WriteString(dir)
+				sb.WriteString("\n")
+			}
+			if len(comp.Trivia.HeaderDirectives) > 0 {
+				sb.WriteString("\n")
+			}
+			if comp.Trivia.LicenseHeader != "" {
+				sb.WriteString(comp.Trivia.LicenseHeader)
+				sb.WriteString("\n\n")
+			}
+		}
 		for _, symID := range comp.SymbolNodes {
 			sym, ok := symbolMap[symID]
 			if !ok {
@@ -934,11 +1023,21 @@ func (h *Hydrator) HydrateWorkspace(
 
 	allFiles := make(map[string][]byte)
 
+	var comps []*core.ComponentNode
+	seen := make(map[string]bool)
 	for _, compID := range manifest.Components {
 		comp, ok := compMap[compID]
-		if !ok {
+		if !ok || seen[comp.ComponentID] {
 			continue
 		}
+		seen[comp.ComponentID] = true
+		comps = append(comps, comp)
+	}
+	sort.Slice(comps, func(i, j int) bool {
+		return comps[i].Lineage.Timestamp.Before(comps[j].Lineage.Timestamp)
+	})
+
+	for _, comp := range comps {
 		compFiles, err := h.HydrateComponent(comp, symbolMap)
 		if err != nil {
 			return nil, fmt.Errorf("failed to hydrate component %s: %w", comp.Name, err)

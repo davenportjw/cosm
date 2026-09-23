@@ -15,6 +15,70 @@ Module._resolveFilename = function (request: string, parent: any, isMain: boolea
   return origResolve.call(this, request, parent, isMain, options);
 };
 
+class MockTreeItem {
+  label?: any;
+  collapsibleState?: any;
+  description?: any;
+  tooltip?: any;
+  iconPath?: any;
+  contextValue?: any;
+  command?: any;
+  resourceUri?: any;
+  constructor(labelOrUri: any, collapsibleState?: any) {
+    if (typeof labelOrUri === 'string' || (labelOrUri && labelOrUri.label)) {
+      this.label = labelOrUri;
+    } else {
+      this.resourceUri = labelOrUri;
+    }
+    this.collapsibleState = collapsibleState;
+  }
+}
+
+class MockThemeIcon {
+  static readonly File = new MockThemeIcon('file');
+  static readonly Folder = new MockThemeIcon('folder');
+  id: string;
+  constructor(id: string) {
+    this.id = id;
+  }
+}
+
+class MockEventEmitter<T = any> {
+  private listeners: ((e: T) => any)[] = [];
+  event = (listener: (e: T) => any) => {
+    this.listeners.push(listener);
+    return {
+      dispose: () => {
+        const idx = this.listeners.indexOf(listener);
+        if (idx >= 0) this.listeners.splice(idx, 1);
+      }
+    };
+  };
+  fire(data: T) {
+    for (const l of this.listeners) {
+      l(data);
+    }
+  }
+  dispose() {
+    this.listeners = [];
+  }
+}
+
+class MockMarkdownString {
+  value: string;
+  isTrusted?: boolean;
+  supportThemeIcons?: boolean;
+  constructor(val?: string) {
+    this.value = val || '';
+  }
+  appendMarkdown(v: string) {
+    this.value += v;
+  }
+  appendCodeblock(code: string, lang?: string) {
+    this.value += `\n\`\`\`${lang || ''}\n${code}\n\`\`\`\n`;
+  }
+}
+
 const vscodeMock = {
   workspace: {
     workspaceFolders: undefined,
@@ -40,7 +104,12 @@ const vscodeMock = {
     parse: (s: string) => ({ fsPath: s, scheme: 'cosm' })
   },
   StatusBarAlignment: { Left: 1, Right: 2 },
-  ViewColumn: { One: 1, Beside: -2 }
+  ViewColumn: { One: 1, Beside: -2 },
+  TreeItem: MockTreeItem,
+  ThemeIcon: MockThemeIcon,
+  MarkdownString: MockMarkdownString,
+  TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
+  EventEmitter: MockEventEmitter
 };
 
 require.cache['vscode'] = {

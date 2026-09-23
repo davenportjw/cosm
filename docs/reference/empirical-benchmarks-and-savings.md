@@ -2,7 +2,7 @@
 
 This document provides mathematically rigorous, empirically measured performance benchmarks and resource savings for the Cosm AST Source Control System and Topocosm Distribution Hub.
 
-All metrics documented below are directly reproducible via hermetic Go unit tests and benchmarks located in [`pkg/benchmarks/savings_test.go`](file:///Users/jasondavenport/GitHub/cosm/pkg/benchmarks/savings_test.go) and [`topocosm/pkg/benchmarks/swarm_test.go`](file:///Users/jasondavenport/GitHub/topocosm/pkg/benchmarks/swarm_test.go).
+All metrics documented below are directly reproducible via hermetic Go unit tests and benchmarks located in [`pkg/benchmarks/savings_test.go`](../../pkg/benchmarks/savings_test.go) and [`topocosm/pkg/benchmarks/swarm_test.go`](https://github.com/cosmscm/topocosm/blob/main/pkg/benchmarks/swarm_test.go).
 
 ---
 
@@ -53,17 +53,78 @@ Measurements obtained via `TestEmpiricalBandwidthSavings` running against synthe
 
 ---
 
-### 2.2 LLM Token Consumption: AST Symbols vs. Whole Files
+### 2.2 LLM Token Consumption: AST Symbols vs. Whole Files (Git vs. Cosm)
 
-Measurements obtained via `TestEmpiricalTokenSavings` assuming standard sub-word tokenization (~4 characters per token):
+Measurements obtained via [`pkg/benchmarks/token_git_vs_cosm_test.go`](../../pkg/benchmarks/token_git_vs_cosm_test.go) and [`pkg/benchmarks/savings_test.go`](../../pkg/benchmarks/savings_test.go) running against actual repository components (`cmd/server/main.go`, `internal/environmental/environmental.go`, `internal/lease/lease.go`, `internal/ranger/ranger.go`):
 
-| File Scenario | File Size (Bytes / Lines) | Full File Context (Tokens) | AST Symbol Context (Tokens) | AST Context Savings | Surgical Mutation Output (Tokens) | Output Token Savings |
+#### 2.2.1 Real-File Single-Symbol Surgery vs. Whole-File Git Context
+
+| Real Repository Component | Git Prompt (Whole File) | Cosm Prompt (AST Symbol) | Prompt Savings | Git Output (Diff) | Cosm Output (AST Verb) | Total Token Savings |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Medium Service Component** | 18.5 KB / 500 lines | 4,625 tokens | 230 tokens | **95.03%** | 35 tokens | **99.24%** |
-| **Large Controller / Router** | 74.0 KB / 2,000 lines | 18,500 tokens | 275 tokens | **98.51%** | 38 tokens | **99.79%** |
+| `cmd/server/main.go` (1,729 lines) | 22,657 tokens | 1,880 tokens | **91.70%** | 163 tokens | 121 tokens | **91.23%** |
+| `internal/environmental/` (550 lines) | 5,880 tokens | 63 tokens | **98.93%** | 174 tokens | 120 tokens | **96.98%** |
+| `internal/ranger/` (380 lines) | 2,585 tokens | 299 tokens | **88.43%** | 167 tokens | 120 tokens | **84.77%** |
+| `internal/lease/` (220 lines) | 1,639 tokens | 535 tokens | **67.36%** | 163 tokens | 117 tokens | **63.82%** |
 
-* **Context Savings**: Ingesting isolated AST symbol signatures saves **95.0% to 98.5%** of input prompt tokens compared to reading the full file.
-* **Output Savings**: Outputting a surgical mutation payload (`replace_function_body`) saves **99.2% to 99.8%** of output generation tokens compared to rewriting the full file, eliminating model truncation and mid-file hallucination.
+* **Whole-File Rewrite Elimination**: For coding agents that perform whole-file overwrites (to prevent unified diff line-drift hallucinations), Git generation costs **22,611 tokens** vs Cosm's **121 tokens** (**99.46% output token reduction**), cutting generation latency from ~20s to <1s.
+
+#### 2.2.2 Multi-Turn Autonomous Agent Trajectory (5 Iterations)
+
+When an agent iterates through a 5-step debugging loop (Prompt $\rightarrow$ Syntax Error $\rightarrow$ Fix $\rightarrow$ Linter Rule $\rightarrow$ Telemetry Instrumentation), Git resends the updated whole file on each turn, causing rapid context ballooning:
+
+| Iteration | Git Turn Tokens | Git Cumulative | Cosm AST Turn Tokens | Cosm AST Cumulative | Turn Token Savings |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Turn 1** | 22,831 tokens | 22,831 tokens | 380 tokens | 380 tokens | **98.34%** |
+| **Turn 2** | 22,931 tokens | 45,762 tokens | 420 tokens | 800 tokens | **98.17%** |
+| **Turn 3** | 23,031 tokens | 68,793 tokens | 460 tokens | 1,260 tokens | **98.00%** |
+| **Turn 4** | 23,131 tokens | 91,924 tokens | 500 tokens | 1,760 tokens | **97.84%** |
+| **Turn 5** | 23,231 tokens | 115,155 tokens | 540 tokens | 2,300 tokens | **97.68%** |
+| **Total Trajectory** | — | **115,155 tokens** | — | **2,300 tokens** | **98.00%** |
+
+* **Cost Reduction (Gemini 3.8 Flash)**: Git = **\$0.00877** vs Cosm = **\$0.00022** (**97.46% cost savings**).
+* **Cost Reduction (Gemini 3.8 Pro)**: Git = **\$0.14620** vs Cosm = **\$0.00370** (**97.46% cost savings**).
+
+#### 2.2.3 Merge Conflict Resolution: Git Hunks vs. AST Conflict Nodes
+
+* **Git 3-Way Conflict**: Sending two conflicting branches with line markers (`<<<<<<< HEAD`, `=======`, `>>>>>>>`) plus surrounding file context consumes **5,606 tokens**.
+* **Cosm `ASTConflictNode`**: Reified conflict node transmits only the structured Base, Side A, and Side B AST symbol payloads, consuming **150 tokens** (**97.32% savings**).
+* **Disjoint Symbol Modifications**: When two agents edit different functions within the same file, Git requires line reconciliation, whereas Cosm performs a 100% automated CRDT join consuming **0 conflict tokens** (**100% savings**).
+
+#### 2.2.4 128k Context Window Headroom & Saturation
+
+* **Git Whole-File Exhaustion**: An agent editing a ~1,700-line service exhausts a standard 128,000-token context window in **7 iterations** before requiring context truncation or compression.
+* **Cosm AST Headroom**: The same agent can sustain **320 iterative surgical mutations** (**45.7x greater operational longevity**) before saturating the context window.
+
+---
+
+#### 2.2.5 Live Antigravity Subagent Transcript Telemetry (Empirical Session Recording)
+
+To audit actual LLM context window ingestion and generation in a real agentic runtime, two autonomous subagents executed the identical modification task on `examples/camping_app/cmd/server/main.go` (1,730 lines, 71,233 bytes) targeting `Server.HandleHealth`:
+1. **Subagent A (File-Based / Traditional)**: Inspected the full file using `view_file` and applied edits via string replacement.
+2. **Subagent B (Cosm AST Surgeon)**: Inspected only the target symbol using `cosm view "main.(Server).HandleHealth"` and applied in-place AST surgery via `cosm ast edit --op replace_function_body -w`.
+
+The actual Antigravity JSONL session transcripts (`.system_generated/logs/transcript_full.jsonl`) were harvested and parsed by `test/agents/log_token_harvester.py` and audited via `TestEmpiricalSubagentTranscripts_FileVsAST`:
+
+| Empirical Metric | File-Based Agent | Cosm AST Surgeon | Delta / Reduction |
+| :--- | :--- | :--- | :--- |
+| **Total Subagent Steps** | 22 steps | 38 steps | +16 steps |
+| **LLM Invocations (Turns)** | 11 turns | 19 turns | +8 turns |
+| **Tool Output Ingestion Payload** | 50,527 chars | 17,759 chars | **-64.85%** |
+| **Average Context Window per Turn** | 43,800 chars (12,167 tok) | 18,257 chars (5,071 tok) | **-58.32%** |
+| **Final Context Window at Completion** | 55,492 chars (15,414 tok) | 27,604 chars (7,668 tok) | **-50.26%** |
+| **Cumulative Prompt Ingested** | 482,057 chars (133,905 tok) | 345,780 chars (96,050 tok) | **-28.27%** |
+| **Cumulative Total Billed Tokens** | 135,426 tokens | 99,783 tokens | **-26.32%** |
+
+##### Turn-by-Turn Prompt Accumulation Dynamics
+
+| Turn # | File-Based Prompt Context | Cosm AST Prompt Context | Turn Context Delta | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| **Turn 1** | 999 chars | 1,403 chars | +40.4% | Initial user prompt with instructions |
+| **Turn 2** | 33,858 chars | 12,617 chars | **-62.7%** | File agent reads `main.go` (+3,289% context explosion) |
+| **Turn 4** | 48,270 chars | 15,100 chars | **-68.7%** | File agent reads test file context |
+| **Turns 5–11** | 50,046 – 55,325 chars | 15,674 – 19,729 chars | **-64.0% to -68.7%** | Sustained context savings across iterative execution |
+
+*Even with 8 additional verification and fresh-cache compilation cycles (+72% more turns)*, the Cosm AST surgeon consumed **35,643 fewer total billed tokens** (-26.32%) because each individual turn operated over a 58.32% smaller context window.
 
 ---
 
@@ -108,14 +169,21 @@ Tested via `topocosm/pkg/benchmarks/swarm_test.go` (`TestSwarmSimulation`) with 
 Execute the test and benchmark suites locally:
 
 ```bash
-# 1. Run empirical bandwidth and token savings tests in Cosm
+# 1. Run empirical bandwidth, token savings, and subagent transcript tests in Cosm
 cd cosm
 go test -v ./pkg/benchmarks -run TestEmpirical
 
-# 2. Run execution latency microbenchmarks
+# 2. Run real-file Git vs. Cosm AST token comparison benchmarks
+go test -v ./pkg/benchmarks -run "TestTokenComparison_.*"
+
+# 3. Run empirical Antigravity subagent log harvester
+python3 test/agents/log_token_harvester.py test/agents/transcripts/subagent_a_file_full.jsonl test/agents/transcripts/subagent_b_ast_full.jsonl
+
+# 4. Run execution latency microbenchmarks
 go test -v -bench=. -run=^# -benchtime=50x ./pkg/benchmarks
 
-# 3. Run multi-agent concurrent swarm simulation in Topocosm
+# 5. Run multi-agent concurrent swarm simulation in Topocosm
 cd ../topocosm
 go test -v ./pkg/benchmarks -run TestSwarmSimulation
 ```
+

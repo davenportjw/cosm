@@ -307,7 +307,7 @@ cosm git log
 | `git status` | `cosm status` or `cosm git status` | Displays AST symbol modifications and cross-domain contract changes. |
 | `git add <files>` | `cosm add <files>` | Parses source into typed AST nodes and stores content-addressed blobs. |
 | `git commit -m "<msg>"` | `cosm commit -i "<msg>" -p "<prompt>"` | Records unbroken causal lineage with Ed25519 digital signature. |
-| `git commit --amend` | `cosm ast edit` / `cosm symbol edit` | Surgically edits AST symbol in-place; preserves lineage without rewriting ancestor Merkle hashes. |
+| `git commit --amend` | `cosm ast edit` | Surgically edits AST symbol in-place; preserves lineage without rewriting ancestor Merkle hashes. |
 | `git branch <name>` | `cosm universe create <name>` | Zero-copy micro-universe branching with zero disk overhead. |
 | `git checkout <name>` | `cosm universe switch <name>` | Switches active universe pointer without touching disk files. |
 | `git reset --hard` | `cosm universe switch <parent>` | Discards uncommitted or branched pointer changes with zero disk churn. |

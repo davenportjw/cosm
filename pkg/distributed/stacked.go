@@ -1,7 +1,9 @@
 package distributed
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -62,6 +64,36 @@ func (sm *StackManager) RegisterChange(prop *StackedProposal) error {
 	}
 	prop.UpdatedAt = time.Now().UTC()
 	sm.proposals[prop.ChangeID] = prop
+	return nil
+}
+
+// SaveToFile serializes the stack graph to a JSON file.
+func (sm *StackManager) SaveToFile(path string) error {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	data, err := json.MarshalIndent(sm.proposals, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+// LoadFromFile restores the stack graph from a JSON file.
+func (sm *StackManager) LoadFromFile(path string) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var props map[string]*StackedProposal
+	if err := json.Unmarshal(data, &props); err != nil {
+		return err
+	}
+	sm.proposals = props
 	return nil
 }
 

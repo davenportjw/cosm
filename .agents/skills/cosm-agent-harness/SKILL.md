@@ -3,7 +3,7 @@ name: cosm-agent-harness
 description: >-
   Execute, develop, and benchmark autonomous test agents and rater oracles
   using `cmd/cosm-agent-harness` and `test/agents/`. Covers scenario execution,
-  LLM providers (Gemini 3.7 Flash and deterministic mock), weighted scorecards (0-100),
+  LLM providers (Gemini 3.8 Flash and deterministic mock), weighted scorecards (0-100),
   and 6-dimension verification oracles.
 ---
 
@@ -17,7 +17,7 @@ Use this skill when developing, testing, or running the autonomous test agent ha
 
 1. **LLM Provider Layer (`test/agents/llm/`)**:
    - `provider.go`: `LLMProvider` interface (`Generate(ctx, messages, tools, opts) (*Response, error)`).
-   - `gemini.go`: Official Google Gemini API client configured for `gemini-3.7-flash`, structured tool calling, system prompts, and temperature controls. Requires `GEMINI_API_KEY`.
+   - `gemini.go`: Official Google Gemini API / Vertex AI client configured for `gemini-3.8-flash`, structured tool calling, system prompts, and temperature controls. Supports Application Default Credentials (ADC) auth via Google Cloud.
    - `mock.go`: Deterministic mock provider for hermetic CI tests that replays canned tool execution sequences without external network calls.
 
 2. **Autonomous Execution Framework (`test/agents/framework/`)**:
@@ -27,7 +27,7 @@ Use this skill when developing, testing, or running the autonomous test agent ha
 3. **Test Agent Orchestration (`test/agents/testagent/`)**:
    - `agent.go`: Test agent runner executing polyglot web app scenarios.
    - `scenarios.go`: Multi-tier application templates (FastAPI + React + TF, Go Gin + Vue + TF, Rust Axum + React + Postgres + TF).
-   - `tools.go`: Strongly-typed tool execution handlers for `cosm_init`, `cosm_add`, `cosm_commit`, `cosm_universe_create`, `cosm_symbol_edit`, `cosm_ship`, `cosm_proposal_create`.
+   - `tools.go`: Strongly-typed tool execution handlers for `cosm_init`, `cosm_ast_create`, `cosm_add`, `cosm_commit`, `cosm_universe_create`, `cosm_symbol_edit`, `cosm_ship`, `cosm_proposal_create`.
 
 4. **Deep Verification Oracle & Rater (`test/agents/rater/`)**:
    - `oracle.go`: 6-dimension verification:
@@ -37,7 +37,7 @@ Use this skill when developing, testing, or running the autonomous test agent ha
      4. Merkle Root Recalculation & SHA-256 Bit-Rot Detection.
      5. Causal Lineage & Ed25519 Cryptographic Attestation Verification.
    - `scorecard.go`: Weighted score model (0–100) and letter grades (A+, A, B, C, F).
-   - `critic.go`: Multi-turn LLM code architecture critic using `gemini-3.7-flash`.
+   - `critic.go`: Multi-turn LLM code architecture critic using `gemini-3.8-flash`.
    - `reporter.go`: Formatted Markdown scorecard generator.
 
 ---
@@ -55,12 +55,12 @@ go build -o cosm-agent-harness ./cmd/cosm-agent-harness
 ```
 
 ### 3. Running Scenarios with Live Gemini API
-Set `GEMINI_API_KEY` in your environment:
+Authenticate via Google Cloud Application Default Credentials (ADC):
 ```bash
-export GEMINI_API_KEY="your-api-key"
+gcloud auth application-default login
 
 # Run a specific scenario
-./cosm-agent-harness run --scenario polyglot-fastapi-react --model gemini-3.7-flash
+./cosm-agent-harness run --scenario polyglot-fastapi-react --model gemini-3.8-flash
 
 # Run and rate a completed session
 ./cosm-agent-harness rate --session <session_id>
@@ -73,7 +73,7 @@ export GEMINI_API_KEY="your-api-key"
 
 ## Best Practices
 - **Isolation**: Keep all agent testing code inside `test/agents/` and `cmd/cosm-agent-harness/`.
-- **Model Version**: Always default to `gemini-3.7-flash` for agent reasoning.
+- **Model Version**: Always default to `gemini-3.8-flash` for agent reasoning.
 - **Hermetic Tests**: Ensure all CI unit tests in `test/agents/agents_test.go` use `mock.go` to guarantee zero flakiness.
 - **Always Update Docs**: Keep all rater, harness, and scoring guides aligned with the latest runner flags and scorecard metrics.
 - **Direct Style**: Write documentation directly without meta-commentary, emphasizing concrete evaluation metrics and commands.

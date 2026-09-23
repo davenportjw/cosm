@@ -34,6 +34,7 @@ type Packager struct {
 	tfRunner       *TerraformRunner
 	compiler       *Compiler
 	hydrator       *materialize.Hydrator
+	repoRoot       string
 }
 
 // NewPackager creates a new Packager instance.
@@ -47,6 +48,64 @@ func NewPackager(stagingManager *StagingManager) *Packager {
 		compiler:       NewCompiler(stagingManager),
 		hydrator:       materialize.NewHydrator(),
 	}
+}
+
+// SetRepoRoot sets an explicit repository root directory for dependency auto-staging.
+func (p *Packager) SetRepoRoot(repoRoot string) {
+	p.repoRoot = repoRoot
+	if p.stagingManager != nil {
+		p.stagingManager.SetRepoRoot(repoRoot)
+	}
+}
+
+// AutoStageDependencies auto-stages project dependencies (go.mod, go.sum for Go;
+// package.json, tsconfig.json for TypeScript/Node) from the repo root or working tree
+// into the files map if they are present on disk and not already populated.
+func (p *Packager) AutoStageDependencies(target *TargetSpec, files map[string][]byte) error {
+	repoRoot := p.repoRoot
+	if repoRoot == "" {
+		if p.stagingManager != nil {
+			repoRoot = p.stagingManager.RepoRoot()
+		} else {
+			repoRoot = FindWorkingTreeRoot()
+		}
+	}
+	if repoRoot == "" {
+		return nil
+	}
+
+	depFiles := []string{"go.mod", "go.sum", "package.json", "tsconfig.json"}
+	for _, f := range depFiles {
+		if _, exists := files[f]; !exists {
+			srcPath := filepath.Join(repoRoot, f)
+			if info, err := os.Stat(srcPath); err == nil && !info.IsDir() {
+				data, err := os.ReadFile(srcPath)
+				if err == nil {
+					files[f] = data
+				}
+			}
+		}
+	}
+
+	// Also check component subdirectories if target specifies component names
+	if target != nil {
+		for _, comp := range target.ComponentNames {
+			for _, f := range depFiles {
+				compFile := filepath.Join(comp, f)
+				if _, exists := files[compFile]; !exists {
+					srcPath := filepath.Join(repoRoot, compFile)
+					if info, err := os.Stat(srcPath); err == nil && !info.IsDir() {
+						data, err := os.ReadFile(srcPath)
+						if err == nil {
+							files[compFile] = data
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 // BuildAndPackageTarget executes validation hooks, builds code, and packages artifacts for a TargetSpec.
@@ -64,6 +123,10 @@ func (p *Packager) BuildAndPackageTarget(
 	}
 	if err := os.MkdirAll(distDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create dist dir: %w", err)
+	}
+
+	if err := p.AutoStageDependencies(target, files); err != nil {
+		return nil, fmt.Errorf("dependency auto-staging failed: %w", err)
 	}
 
 	workspace, err := p.stagingManager.Prepare(target, files)

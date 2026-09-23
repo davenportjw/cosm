@@ -5,10 +5,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/cosmscm/cosm/pkg/codecs"
 	"github.com/cosmscm/cosm/pkg/codecs/golang"
 	"github.com/cosmscm/cosm/pkg/core"
 	"github.com/cosmscm/cosm/pkg/storage"
@@ -44,6 +46,9 @@ const (
 
 	// OpReplaceGlobal replaces a top-level global variable, constant, or resource block.
 	OpReplaceGlobal ASTOperationType = "replace_global"
+
+	// OpCreateComponent creates a brand new component and symbol tree directly in the universe manifest.
+	OpCreateComponent ASTOperationType = "create_component"
 )
 
 // IsValid checks if the operation type is supported.
@@ -51,7 +56,8 @@ func (op ASTOperationType) IsValid() bool {
 	switch op {
 	case OpReplaceFunctionBody, OpReplaceFunction, OpAddMethod,
 		OpAddBefore, OpAddAfter, OpDelete, OpAddImport,
-		OpReplaceImports, OpReplaceGlobal:
+		OpReplaceImports, OpReplaceGlobal, OpCreateComponent,
+		"insert_after", "insert_before", "append_child":
 		return true
 	default:
 		return false
@@ -73,17 +79,26 @@ type ASTEditBatch struct {
 	Lineage    core.LineageEnvelope `json:"lineage"`
 }
 
+// ModifiedSymbolDetail provides rich identification of a mutated symbol.
+type ModifiedSymbolDetail struct {
+	NodeID        string `json:"node_id"`
+	Identifier    string `json:"identifier"`
+	NodeType      string `json:"node_type,omitempty"`
+	ComponentName string `json:"component_name,omitempty"`
+}
+
 // BatchMutationResult returns the Merkle tree delta and audit trail for an applied batch.
 type BatchMutationResult struct {
-	UniverseID          string        `json:"universe_id"`
-	OldManifestHash     string        `json:"old_manifest_hash"`
-	NewManifestHash     string        `json:"new_manifest_hash"`
-	AppliedOperations   int           `json:"applied_operations"`
-	ModifiedSymbols     []string      `json:"modified_symbols"`
-	AddedSymbols        []string      `json:"added_symbols"`
-	DeletedSymbols      []string      `json:"deleted_symbols"`
-	DeduplicatedSymbols int           `json:"deduplicated_symbols"`
-	Duration            time.Duration `json:"duration"`
+	UniverseID             string                 `json:"universe_id"`
+	OldManifestHash        string                 `json:"old_manifest_hash"`
+	NewManifestHash        string                 `json:"new_manifest_hash"`
+	AppliedOperations      int                    `json:"applied_operations"`
+	ModifiedSymbols        []string               `json:"modified_symbols"`
+	ModifiedSymbolsDetails []ModifiedSymbolDetail `json:"modified_symbols_details,omitempty"`
+	AddedSymbols           []string               `json:"added_symbols"`
+	DeletedSymbols         []string               `json:"deleted_symbols"`
+	DeduplicatedSymbols    int                    `json:"deduplicated_symbols"`
+	Duration               time.Duration          `json:"duration"`
 }
 
 // ResolvedSymbol contains the located symbol, its parent component, and index within the component.
@@ -136,10 +151,14 @@ func (e *SurgeryEngine) ResolveSymbol(universeID string, target string) (*Resolv
 
 		// If scoped component specified, check match
 		if scopedComp != "" {
-			if comp.Name != scopedComp && comp.Metadata["dir_path"] != scopedComp && comp.Metadata["file_path"] != scopedComp {
-				if !strings.Contains(comp.Name, scopedComp) {
-					continue
-				}
+			matched := comp.Name == scopedComp ||
+				comp.Metadata["dir_path"] == scopedComp ||
+				comp.Metadata["file_path"] == scopedComp ||
+				strings.Contains(comp.Name, scopedComp) ||
+				strings.Contains(comp.Metadata["file_path"], scopedComp) ||
+				strings.Contains(comp.Metadata["dir_path"], scopedComp)
+			if !matched {
+				continue
 			}
 		}
 
@@ -188,12 +207,25 @@ func (e *SurgeryEngine) ResolveSymbol(universeID string, target string) (*Resolv
 
 			// 4. Dotted name suffix match (e.g. "get" matches "LRUCache.get" or "main.get")
 			if strings.HasSuffix(sym.Identifier, "."+scopedSym) || strings.HasSuffix(sym.Identifier, "::"+scopedSym) {
-				candidates = append(candidates, resolved)
-				continue
+				return resolved, nil
 			}
 
 			// 5. Case-insensitive identifier match
 			if strings.EqualFold(sym.Identifier, scopedSym) {
+				candidates = append(candidates, resolved)
+				continue
+			}
+
+			// 6. Substring or receiver-stripped match (e.g. "HandleHealth" matches "main.(Server).HandleHealth" or vice versa)
+			if strings.Contains(sym.Identifier, scopedSym) || strings.Contains(scopedSym, sym.Identifier) {
+				candidates = append(candidates, resolved)
+				continue
+			}
+			baseSym := scopedSym
+			if idx := strings.LastIndexAny(scopedSym, ".)"); idx != -1 && idx < len(scopedSym)-1 {
+				baseSym = scopedSym[idx+1:]
+			}
+			if baseSym != "" && (strings.HasSuffix(sym.Identifier, baseSym) || strings.Contains(sym.Identifier, baseSym)) {
 				candidates = append(candidates, resolved)
 				continue
 			}
@@ -203,6 +235,12 @@ func (e *SurgeryEngine) ResolveSymbol(universeID string, target string) (*Resolv
 	if len(candidates) == 1 {
 		return candidates[0], nil
 	} else if len(candidates) > 1 {
+		// Prefer candidate whose identifier has exact suffix
+		for _, c := range candidates {
+			if strings.HasSuffix(c.SymbolNode.Identifier, "::"+scopedSym) || strings.HasSuffix(c.SymbolNode.Identifier, "."+scopedSym) {
+				return c, nil
+			}
+		}
 		// Prefer candidate whose identifier has exact token
 		for _, c := range candidates {
 			if strings.Contains(c.SymbolNode.Identifier, scopedSym) {
@@ -216,7 +254,61 @@ func (e *SurgeryEngine) ResolveSymbol(universeID string, target string) (*Resolv
 		return bestMatch, nil
 	}
 
+	// Fallback: If target matches a component name or file path, resolve to the last symbol of that component
+	for cIdx, compID := range manifest.Components {
+		var compBytes []byte
+		if nodeRec, nErr := e.graphEngine.GetNode(compID); nErr == nil && nodeRec != nil && nodeRec.MerkleHash != "" {
+			compBytes, _ = e.blobStore.Get(nodeRec.MerkleHash)
+		} else {
+			compBytes, _ = e.blobStore.Get(compID)
+		}
+		if compBytes == nil {
+			continue
+		}
+		var comp core.ComponentNode
+		if err := json.Unmarshal(compBytes, &comp); err != nil {
+			continue
+		}
+		matched := comp.Name == target ||
+			comp.Metadata["file_path"] == target ||
+			strings.Contains(comp.Metadata["file_path"], target) ||
+			strings.Contains(target, comp.Name)
+		if matched && len(comp.SymbolNodes) > 0 {
+			lastSymID := comp.SymbolNodes[len(comp.SymbolNodes)-1]
+			var symBytes []byte
+			if nodeRec, nErr := e.graphEngine.GetNode(lastSymID); nErr == nil && nodeRec != nil && nodeRec.MerkleHash != "" {
+				symBytes, _ = e.blobStore.Get(nodeRec.MerkleHash)
+			} else {
+				symBytes, _ = e.blobStore.Get(lastSymID)
+			}
+			if symBytes != nil {
+				var sym core.ASTSymbolNode
+				if json.Unmarshal(symBytes, &sym) == nil {
+					if sym.NodeID == "" {
+						sym.NodeID = lastSymID
+					}
+					return &ResolvedSymbol{
+						SymbolNode:  &sym,
+						Component:   &comp,
+						CompIndex:   cIdx,
+						SymbolIndex: len(comp.SymbolNodes) - 1,
+						Manifest:    manifest,
+					}, nil
+				}
+			}
+		}
+	}
+
 	return nil, fmt.Errorf("symbol %q not found in universe %s", target, universeID)
+}
+
+// ResolveSymbol resolves a human symbol identifier or path in a universe using UniverseManager.
+func ResolveSymbol(universeMgr *storage.UniverseManager, universeID, target string) (*ResolvedSymbol, error) {
+	if universeMgr == nil {
+		return nil, fmt.Errorf("universe manager is nil")
+	}
+	surgeryEngine := NewSurgeryEngine(universeMgr.BlobStore(), universeMgr.GraphEngine(), universeMgr)
+	return surgeryEngine.ResolveSymbol(universeID, target)
 }
 
 // ApplyASTEditBatch executes a batch of declarative AST operations atomically on a micro-universe.
@@ -235,11 +327,31 @@ func (e *SurgeryEngine) ApplyASTEditBatch(batch *ASTEditBatch) (*BatchMutationRe
 
 	manifest, err := e.universeMgr.GetUniverseManifest(batch.UniverseID)
 	if err != nil || manifest == nil {
-		return nil, fmt.Errorf("active manifest not found for universe %s: %w", batch.UniverseID, err)
+		// Check if batch contains OpCreateComponent to allow blank-slate inception
+		hasCreate := false
+		for _, o := range batch.Operations {
+			if o.Operation == OpCreateComponent {
+				hasCreate = true
+				break
+			}
+		}
+		if hasCreate {
+			manifest = &core.WorkspaceManifestNode{
+				WorkspaceID: "ws-" + batch.UniverseID,
+				UniverseID:  batch.UniverseID,
+				Components:  []string{},
+				CrossEdges:  []core.CrossBoundaryEdge{},
+				Lineage:     batch.Lineage,
+				CreatedAt:   time.Now().UTC(),
+			}
+		} else {
+			return nil, fmt.Errorf("active manifest not found for universe %s: %w", batch.UniverseID, err)
+		}
 	}
 	oldManifestHash := manifest.MerkleRootHash
 
 	var modifiedSymbols []string
+	var modifiedDetails []ModifiedSymbolDetail
 	var addedSymbols []string
 	var deletedSymbols []string
 	dedupCount := 0
@@ -249,7 +361,15 @@ func (e *SurgeryEngine) ApplyASTEditBatch(batch *ASTEditBatch) (*BatchMutationRe
 			return nil, fmt.Errorf("operation #%d has invalid type: %s", opIdx, op.Operation)
 		}
 
-		switch op.Operation {
+		opType := op.Operation
+		switch opType {
+		case "insert_after", "append_child":
+			opType = OpAddAfter
+		case "insert_before":
+			opType = OpAddBefore
+		}
+
+		switch opType {
 		case OpReplaceFunctionBody:
 			resolved, err := e.ResolveSymbol(batch.UniverseID, op.Target)
 			if err != nil {
@@ -264,6 +384,12 @@ func (e *SurgeryEngine) ApplyASTEditBatch(batch *ASTEditBatch) (*BatchMutationRe
 				return nil, fmt.Errorf("operation #%d mutation failed: %w", opIdx, err)
 			}
 			modifiedSymbols = append(modifiedSymbols, mutRes.NewSymbolID)
+			modifiedDetails = append(modifiedDetails, ModifiedSymbolDetail{
+				NodeID:        mutRes.NewSymbolID,
+				Identifier:    mutRes.SymbolIdentifier,
+				NodeType:      mutRes.NodeType,
+				ComponentName: mutRes.ComponentName,
+			})
 			dedupCount += mutRes.DeduplicatedSymbolsCount
 
 		case OpReplaceFunction:
@@ -276,6 +402,12 @@ func (e *SurgeryEngine) ApplyASTEditBatch(batch *ASTEditBatch) (*BatchMutationRe
 				return nil, fmt.Errorf("operation #%d (%s): %w", opIdx, op.Operation, err)
 			}
 			modifiedSymbols = append(modifiedSymbols, mutRes.NewSymbolID)
+			modifiedDetails = append(modifiedDetails, ModifiedSymbolDetail{
+				NodeID:        mutRes.NewSymbolID,
+				Identifier:    mutRes.SymbolIdentifier,
+				NodeType:      mutRes.NodeType,
+				ComponentName: mutRes.ComponentName,
+			})
 			dedupCount += mutRes.DeduplicatedSymbolsCount
 
 		case OpAddMethod, OpAddAfter, OpAddBefore:
@@ -380,10 +512,11 @@ func (e *SurgeryEngine) ApplyASTEditBatch(batch *ASTEditBatch) (*BatchMutationRe
 			}
 
 			var newSymList []string
-			for _, sID := range resolved.Component.SymbolNodes {
-				if sID != resolved.SymbolNode.NodeID {
-					newSymList = append(newSymList, sID)
+			for i, sID := range resolved.Component.SymbolNodes {
+				if i == resolved.SymbolIndex || sID == resolved.SymbolNode.NodeID {
+					continue
 				}
+				newSymList = append(newSymList, sID)
 			}
 
 			updatedComp := &core.ComponentNode{
@@ -481,8 +614,145 @@ func (e *SurgeryEngine) ApplyASTEditBatch(batch *ASTEditBatch) (*BatchMutationRe
 				mutRes, mErr := e.MutateSymbol(batch.UniverseID, resolved.SymbolNode.NodeID, []byte(op.Content), batch.Lineage)
 				if mErr == nil {
 					modifiedSymbols = append(modifiedSymbols, mutRes.NewSymbolID)
+					modifiedDetails = append(modifiedDetails, ModifiedSymbolDetail{
+						NodeID:        mutRes.NewSymbolID,
+						Identifier:    mutRes.SymbolIdentifier,
+						NodeType:      mutRes.NodeType,
+						ComponentName: mutRes.ComponentName,
+					})
 				}
 			}
+
+		case OpCreateComponent:
+			relPath := op.Target
+			if relPath == "" {
+				relPath = "component"
+			}
+			if op.Metadata != nil && op.Metadata["file_path"] != "" {
+				relPath = op.Metadata["file_path"]
+			}
+
+			parsed, pErr := codecs.ParseSourceFile(relPath, []byte(op.Content), batch.Lineage)
+			var comp *core.ComponentNode
+			syms := make(map[string]*core.ASTSymbolNode)
+
+			if pErr == nil && parsed != nil && parsed.Component != nil {
+				comp = parsed.Component
+				syms = parsed.Symbols
+				if op.Target != "" {
+					comp.Name = op.Target
+				}
+			} else {
+				// Raw component fallback
+				h := sha256.Sum256([]byte(relPath))
+				shortHash := hex.EncodeToString(h[:4])
+				rawSymID := fmt.Sprintf("raw:%s", shortHash)
+				rawSym := &core.ASTSymbolNode{
+					NodeID:            rawSymID,
+					Language:          core.LangRaw,
+					NodeType:          "RawBlobNode",
+					Identifier:        relPath,
+					ASTPayload:        []byte(op.Content),
+					LocalDependencies: []string{},
+					Lineage:           batch.Lineage,
+				}
+				syms[rawSymID] = rawSym
+				comp = &core.ComponentNode{
+					ComponentID: fmt.Sprintf("comp-raw-%s", shortHash),
+					Name:        op.Target,
+					Type:        core.CompService,
+					Language:    core.LangRaw,
+					SymbolNodes: []string{rawSymID},
+					Metadata:    map[string]string{"file_path": relPath},
+					Lineage:     batch.Lineage,
+				}
+			}
+
+			if op.Metadata != nil {
+				if comp.Metadata == nil {
+					comp.Metadata = make(map[string]string)
+				}
+				for k, v := range op.Metadata {
+					comp.Metadata[k] = v
+				}
+			}
+
+			// Store all symbols in blobStore and graphEngine
+			for sID, sym := range syms {
+				data, _ := json.Marshal(sym)
+				sHash, _ := e.blobStore.Put(data)
+				_ = e.graphEngine.PutNode(storage.NodeRecord{
+					NodeID:     sID,
+					Language:   sym.Language,
+					NodeType:   sym.NodeType,
+					MerkleHash: sHash,
+					CreatedAt:  time.Now().UTC(),
+				})
+				linPrefixLen := len(sID)
+				if linPrefixLen > 12 {
+					linPrefixLen = 12
+				}
+				_ = e.graphEngine.PutLineage(storage.LineageRecord{
+					RecordID:         fmt.Sprintf("lin-%s", sID[:linPrefixLen]),
+					NodeID:           sID,
+					UserID:           batch.Lineage.UserID,
+					UserPrompt:       batch.Lineage.UserPrompt,
+					ExecutingAgentID: batch.Lineage.ExecutingAgentID,
+					Intent:           batch.Lineage.Intent,
+					Timestamp:        batch.Lineage.Timestamp,
+				})
+				addedSymbols = append(addedSymbols, sID)
+			}
+
+			// Store component in blobStore and graphEngine
+			compData, _ := json.Marshal(comp)
+			compHash, _ := e.blobStore.Put(compData)
+			comp.ComponentID = compHash
+			_ = e.graphEngine.PutNode(storage.NodeRecord{
+				NodeID:     comp.ComponentID,
+				Language:   comp.Language,
+				NodeType:   string(comp.Type),
+				MerkleHash: compHash,
+				CreatedAt:  time.Now().UTC(),
+			})
+			compPrefixLen := len(comp.ComponentID)
+			if compPrefixLen > 12 {
+				compPrefixLen = 12
+			}
+			_ = e.graphEngine.PutLineage(storage.LineageRecord{
+				RecordID:         fmt.Sprintf("lin-%s", comp.ComponentID[:compPrefixLen]),
+				NodeID:           comp.ComponentID,
+				UserID:           batch.Lineage.UserID,
+				UserPrompt:       batch.Lineage.UserPrompt,
+				ExecutingAgentID: batch.Lineage.ExecutingAgentID,
+				Intent:           batch.Lineage.Intent,
+				Timestamp:        batch.Lineage.Timestamp,
+			})
+
+			// Add component to active manifest
+			currManifest, mErr := e.universeMgr.GetUniverseManifest(batch.UniverseID)
+			var newComponents []string
+			var crossEdges []core.CrossBoundaryEdge
+			wsID := "ws-" + batch.UniverseID
+			if mErr == nil && currManifest != nil {
+				wsID = currManifest.WorkspaceID
+				newComponents = append(newComponents, currManifest.Components...)
+				crossEdges = currManifest.CrossEdges
+			}
+			newComponents = append(newComponents, compHash)
+
+			newManifest := &core.WorkspaceManifestNode{
+				WorkspaceID: wsID,
+				UniverseID:  batch.UniverseID,
+				Components:  newComponents,
+				CrossEdges:  crossEdges,
+				Lineage:     batch.Lineage,
+				CreatedAt:   time.Now().UTC(),
+			}
+			mBytes, _ := json.Marshal(newManifest)
+			mHash, _ := e.blobStore.Put(mBytes)
+			newManifest.MerkleRootHash = mHash
+			_, _ = e.universeMgr.CommitManifest(batch.UniverseID, newManifest)
 		}
 	}
 
@@ -492,15 +762,16 @@ func (e *SurgeryEngine) ApplyASTEditBatch(batch *ASTEditBatch) (*BatchMutationRe
 	}
 
 	return &BatchMutationResult{
-		UniverseID:          batch.UniverseID,
-		OldManifestHash:     oldManifestHash,
-		NewManifestHash:     finalManifest.MerkleRootHash,
-		AppliedOperations:   len(batch.Operations),
-		ModifiedSymbols:     modifiedSymbols,
-		AddedSymbols:        addedSymbols,
-		DeletedSymbols:      deletedSymbols,
-		DeduplicatedSymbols: dedupCount,
-		Duration:            time.Since(start),
+		UniverseID:             batch.UniverseID,
+		OldManifestHash:        oldManifestHash,
+		NewManifestHash:        finalManifest.MerkleRootHash,
+		AppliedOperations:      len(batch.Operations),
+		ModifiedSymbols:        modifiedSymbols,
+		ModifiedSymbolsDetails: modifiedDetails,
+		AddedSymbols:           addedSymbols,
+		DeletedSymbols:         deletedSymbols,
+		DeduplicatedSymbols:    dedupCount,
+		Duration:               time.Since(start),
 	}, nil
 }
 
@@ -600,3 +871,200 @@ func (e *SurgeryEngine) spliceBodyString(sym *core.ASTSymbolNode, newBody string
 		Lineage:           lineage,
 	}, nil
 }
+
+// GetStarterSource returns idiomatic starter source code, default relative file path,
+// and component type for the requested language. Supported: go, python, typescript, sql.
+func GetStarterSource(lang string) (starterSrc string, defaultPath string, defaultType core.ComponentType, err error) {
+	normLang := strings.ToLower(strings.TrimSpace(lang))
+
+	switch normLang {
+	case "go", "golang":
+		defaultPath = "services/main.go"
+		defaultType = core.CompService
+		starterSrc = `//go:build !ignore
+
+package main
+
+import (
+	"context"
+	"fmt"
+)
+
+// Service encapsulates standard microservice operations.
+type Service struct {
+	Name string
+}
+
+// Start boots the microservice lifecycle.
+func (s *Service) Start(ctx context.Context) error {
+	fmt.Printf("Starting %s\n", s.Name)
+	return nil
+}
+
+func main() {
+	svc := &Service{Name: "CosmStarter"}
+	_ = svc.Start(context.Background())
+}
+`
+
+	case "python", "py":
+		defaultPath = "services/main.py"
+		defaultType = core.CompService
+		starterSrc = `# -*- coding: utf-8 -*-
+"""Standard idiomatic Python microservice component."""
+
+import os
+from typing import Dict, Any, Optional
+
+class ServiceHandler:
+    def __init__(self, name: str = "default"):
+        self.name = name
+
+    def process_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        return {"status": "ok", "service": self.name}
+
+def handler(event: Dict[str, Any], context: Optional[Any] = None) -> Dict[str, Any]:
+    svc = ServiceHandler()
+    return svc.process_event(event)
+`
+
+	case "typescript", "ts", "tsx", "javascript", "js", "jsx":
+		defaultPath = "frontend/src/App.tsx"
+		defaultType = core.CompFrontend
+		starterSrc = `// @ts-check
+"use client";
+
+import React, { useState } from 'react';
+
+export interface ComponentProps {
+	title?: string;
+}
+
+export function App(props: ComponentProps) {
+	const [count, setCount] = useState(0);
+	return <div>Hello {props.title || "Cosm"}</div>;
+}
+`
+
+	case "sql":
+		defaultPath = "schema/schema.sql"
+		defaultType = core.CompDatabase
+		starterSrc = `-- dialect: postgresql
+-- name: schema.sql
+
+CREATE TABLE items (
+    id VARCHAR(64) PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_items_name ON items (name);
+`
+
+	default:
+		return "", "", "", fmt.Errorf("unsupported scaffolding language: %q (supported: go, python, typescript, sql)", lang)
+	}
+
+	return starterSrc, defaultPath, defaultType, nil
+}
+
+// ScaffoldComponent produces standard idiomatic starter AST symbol trees and a ComponentNode
+// for Go, Python, TypeScript, and SQL.
+func ScaffoldComponent(lang, compType, relPath string) (*core.ComponentNode, error) {
+	starterSrc, defaultPath, defaultType, err := GetStarterSource(lang)
+	if err != nil {
+		return nil, err
+	}
+
+	targetPath := relPath
+	if targetPath == "" {
+		targetPath = defaultPath
+	}
+
+	// Ensure targetPath has the expected extension
+	expectedExt := filepath.Ext(defaultPath)
+	if filepath.Ext(targetPath) == "" {
+		targetPath += expectedExt
+	}
+
+	lineage := core.LineageEnvelope{
+		UserPrompt:       "cosm scaffold component",
+		ExecutingAgentID: "cosm-scaffolder",
+		SessionID:        "scaffold-session",
+		Timestamp:        time.Now().UTC(),
+	}
+
+	parsed, err := codecs.ParseSourceFile(targetPath, []byte(starterSrc), lineage)
+	if err != nil {
+		return nil, fmt.Errorf("scaffolding parse failed: %w", err)
+	}
+	if parsed == nil || parsed.Component == nil {
+		return nil, fmt.Errorf("scaffolding yielded nil component")
+	}
+
+	comp := parsed.Component
+	if compType != "" {
+		comp.Type = core.ComponentType(compType)
+	} else if !comp.Type.IsValid() {
+		comp.Type = defaultType
+	}
+
+	// Recompute Merkle hash with final attributes
+	compID, err := core.HashComponentNode(comp)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash scaffolded component: %w", err)
+	}
+	comp.ComponentID = compID
+
+	return comp, nil
+}
+
+// ScaffoldComponent creates and registers an idiomatic starter component directly within the target universe.
+func (e *SurgeryEngine) ScaffoldComponent(universeID, lang, compType, relPath string, lineage core.LineageEnvelope) (*core.ComponentNode, error) {
+	comp, err := ScaffoldComponent(lang, compType, relPath)
+	if err != nil {
+		return nil, err
+	}
+	if lineage.UserPrompt != "" {
+		comp.Lineage = lineage
+	}
+
+	compBytes, err := json.Marshal(comp)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling scaffolded component: %w", err)
+	}
+	blobHash, err := e.blobStore.Put(compBytes)
+	if err != nil {
+		return nil, fmt.Errorf("storing scaffolded component blob: %w", err)
+	}
+	comp.ComponentID = blobHash
+
+	currManifest, err := e.universeMgr.GetUniverseManifest(universeID)
+	if err != nil {
+		return nil, fmt.Errorf("retrieving universe manifest: %w", err)
+	}
+
+	newComponents := append([]string{}, currManifest.Components...)
+	newComponents = append(newComponents, blobHash)
+
+	newManifest := &core.WorkspaceManifestNode{
+		WorkspaceID: currManifest.WorkspaceID,
+		UniverseID:  universeID,
+		Components:  newComponents,
+		CrossEdges:  currManifest.CrossEdges,
+		Lineage:     lineage,
+		CreatedAt:   time.Now().UTC(),
+	}
+	mBytes, _ := json.Marshal(newManifest)
+	mHash, err := e.blobStore.Put(mBytes)
+	if err != nil {
+		return nil, fmt.Errorf("storing new manifest: %w", err)
+	}
+	newManifest.MerkleRootHash = mHash
+	if _, err := e.universeMgr.CommitManifest(universeID, newManifest); err != nil {
+		return nil, fmt.Errorf("committing universe manifest: %w", err)
+	}
+
+	return comp, nil
+}
+

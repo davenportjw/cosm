@@ -12,16 +12,17 @@ When an AI agent or developer edits a single function, struct, or cloud resource
 
 ### Edit an AST Symbol In-Place
 ```bash
-cosm symbol edit \
-  --symbol-id "func_handle_billing" \
-  --code "func HandleBilling(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }" \
-  -u universe-main
+cosm ast edit \
+  --op replace_function \
+  --target "func_handle_billing" \
+  --content "func HandleBilling(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }" \
+  -u universe-main -w
 ```
 
 ### Audit Downstream Contract Impact
 Before applying a surgical edit, evaluate the blast radius of modifying a symbol:
 ```bash
-cosm symbol impact --symbol-id "func_handle_billing" -u universe-main
+cosm blast-radius func_handle_billing -u universe-main
 ```
 **Output:**
 ```

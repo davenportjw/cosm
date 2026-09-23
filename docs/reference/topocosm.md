@@ -206,7 +206,7 @@ Topocosm exposes an agent discovery endpoint at `GET /.well-known/cosm-agent.jso
 ## 6. Standalone Repository Spin-Off Roadmap
 
 Topocosm is scheduled for decoupling into an independent repository (`github.com/cosmscm/topocosm`). 
-For the full migration timeline, package extraction maps, and protocol versioning, refer to the [Topocosm Spin-Off Roadmap](file:///Users/jasondavenport/GitHub/cosm/docs/roadmaps/topocosm-spin-off-plan.md).
+For the full migration timeline, package extraction maps, and protocol versioning, refer to the [Topocosm Spin-Off Roadmap](../roadmaps/topocosm-spin-off-plan.md).
 
 ---
 

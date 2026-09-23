@@ -1,0 +1,13 @@
+# Cosm Ignore Rules for Camping App
+.DS_Store
+.env
+.env.*
+*.log
+bin/
+dist/
+tmp/
+*.tar.gz
+*.db-wal
+*.db-shm
+/server
+*.exe

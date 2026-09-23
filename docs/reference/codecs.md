@@ -67,6 +67,6 @@ Cosm reconstitutes immutable AST nodes back into perfectly formatted source file
 
 ## 4. Codec & Binary Requirements
 
-For full implementation requirements, storage contracts, presentation formats, and compiler/shipping pipelines, see the [Language Codec & Binary Asset Specification](file:///Users/jasondavenport/GitHub/cosm/docs/reference/language-and-binary-requirements.md).
+For full implementation requirements, storage contracts, presentation formats, and compiler/shipping pipelines, see the [Language Codec & Binary Asset Specification](language-and-binary-requirements.md).
 
 

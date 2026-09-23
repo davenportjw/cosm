@@ -199,14 +199,29 @@ func (p *GeminiProvider) getToken(ctx context.Context) (string, error) {
 		}
 	}
 
-	// 3. Check local gcloud CLI
-	out, err := exec.CommandContext(ctx, "gcloud", "auth", "print-access-token").Output()
-	if err == nil && len(out) > 0 {
-		token := strings.TrimSpace(string(out))
-		if token != "" {
-			p.cachedToken = token
-			p.tokenExpiry = time.Now().Add(10 * time.Minute)
-			return token, nil
+	// 3. Check local gcloud ADC (Application Default Credentials) first
+	if out, err := exec.CommandContext(ctx, "gcloud", "auth", "application-default", "print-access-token").Output(); err == nil && len(out) > 0 {
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		for i := len(lines) - 1; i >= 0; i-- {
+			line := strings.TrimSpace(lines[i])
+			if strings.HasPrefix(line, "ya29.") {
+				p.cachedToken = line
+				p.tokenExpiry = time.Now().Add(10 * time.Minute)
+				return line, nil
+			}
+		}
+	}
+
+	// 4. Fallback to standard gcloud CLI access token
+	if out, err := exec.CommandContext(ctx, "gcloud", "auth", "print-access-token").Output(); err == nil && len(out) > 0 {
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		for i := len(lines) - 1; i >= 0; i-- {
+			line := strings.TrimSpace(lines[i])
+			if strings.HasPrefix(line, "ya29.") {
+				p.cachedToken = line
+				p.tokenExpiry = time.Now().Add(10 * time.Minute)
+				return line, nil
+			}
 		}
 	}
 

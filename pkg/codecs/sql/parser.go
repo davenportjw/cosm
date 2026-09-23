@@ -81,6 +81,7 @@ type SQLFileResult struct {
 	Views      []SQLView             `json:"views"`
 	AlterTable []SQLAlterTable       `json:"alter_table"`
 	AllSymbols []*core.ASTSymbolNode `json:"all_symbols"`
+	Trivia     *core.TriviaEnvelope  `json:"trivia,omitempty"`
 }
 
 // SQLParser parses SQL DDL files and extracts structured schema symbol nodes.
@@ -99,6 +100,7 @@ func (p *SQLParser) ParseSource(filename string, src []byte, lineage core.Lineag
 
 	result := &SQLFileResult{
 		FilePath: filename,
+		Trivia:   extractSQLTrivia(src),
 	}
 
 	statements := splitSQLStatements(src)
@@ -583,6 +585,7 @@ func (p *SQLParser) BuildComponentNode(
 		Type:        compType,
 		Language:    core.LangSQL,
 		SymbolNodes: symbolIDs,
+		Trivia:      res.Trivia,
 		Metadata:    metadata,
 		Lineage:     lineage,
 	}
@@ -593,4 +596,79 @@ func (p *SQLParser) BuildComponentNode(
 	}
 	comp.ComponentID = compID
 	return comp, nil
+}
+
+func extractSQLTrivia(src []byte) *core.TriviaEnvelope {
+	lines := strings.Split(string(src), "\n")
+	var directives []string
+	var licenseLines []string
+	inBlock := false
+	var blockLines []string
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if inBlock {
+			blockLines = append(blockLines, line)
+			if strings.Contains(trimmed, "*/") {
+				inBlock = false
+				joined := strings.Join(blockLines, "\n")
+				if isSQLLicenseText(joined) {
+					licenseLines = append(licenseLines, joined)
+				}
+				blockLines = nil
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "/*") {
+			if strings.Contains(trimmed, "*/") {
+				if isSQLLicenseText(trimmed) {
+					licenseLines = append(licenseLines, trimmed)
+				}
+			} else {
+				inBlock = true
+				blockLines = append(blockLines, line)
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "-- dialect:") ||
+			strings.HasPrefix(trimmed, "-- name:") ||
+			strings.HasPrefix(trimmed, "-- cosm:") {
+			directives = append(directives, trimmed)
+			continue
+		}
+		if strings.HasPrefix(trimmed, "--") {
+			if isSQLLicenseText(trimmed) {
+				licenseLines = append(licenseLines, trimmed)
+			}
+			continue
+		}
+		// First non-comment statement
+		break
+	}
+
+	var lic string
+	if len(licenseLines) > 0 {
+		lic = strings.TrimSpace(strings.Join(licenseLines, "\n"))
+	}
+	if len(directives) == 0 && lic == "" {
+		return nil
+	}
+	return &core.TriviaEnvelope{
+		HeaderDirectives: directives,
+		LicenseHeader:    lic,
+	}
+}
+
+func isSQLLicenseText(text string) bool {
+	lower := strings.ToLower(text)
+	return strings.Contains(lower, "copyright") ||
+		strings.Contains(lower, "license") ||
+		strings.Contains(lower, "licensed") ||
+		strings.Contains(lower, "apache") ||
+		strings.Contains(lower, "mit license") ||
+		strings.Contains(lower, "spdx-license-identifier") ||
+		strings.Contains(lower, "all rights reserved")
 }

@@ -420,3 +420,182 @@ func TestViewer_Rendering(t *testing.T) {
 		t.Fatalf("diff view missing filename: %s", diffView)
 	}
 }
+
+func TestHydrator_TriviaPreservation(t *testing.T) {
+	hydrator := NewHydrator()
+
+	lineage := core.LineageEnvelope{
+		UserPrompt:       "Trivia preservation test",
+		ExecutingAgentID: "cosm-test",
+		Timestamp:        time.Now().UTC(),
+	}
+
+	// 1. Go with build tags and license header
+	goSym := &core.ASTSymbolNode{
+		NodeID:     "sym:go:trivia",
+		Language:   core.LangGo,
+		NodeType:   "FunctionDecl",
+		Identifier: "main",
+		ASTPayload: []byte(`{"name":"main","body_source":"func main() {\n\tprintln(\"hello\")\n}"}`),
+		Lineage:    lineage,
+	}
+	compGo := &core.ComponentNode{
+		ComponentID: "comp-go-trivia",
+		Name:        "trivia-service",
+		Type:        core.CompService,
+		Language:    core.LangGo,
+		SymbolNodes: []string{"sym:go:trivia"},
+		Trivia: &core.TriviaEnvelope{
+			HeaderDirectives: []string{
+				"//go:build !ignore",
+				"//go:generate go run gen.go",
+			},
+			LicenseHeader: "// Copyright 2026 Cosm Authors. All rights reserved.",
+		},
+		Metadata: map[string]string{
+			"file_path":    "main.go",
+			"package_name": "main",
+		},
+		Lineage: lineage,
+	}
+
+	goFiles, err := hydrator.HydrateComponent(compGo, map[string]*core.ASTSymbolNode{"sym:go:trivia": goSym})
+	if err != nil {
+		t.Fatalf("HydrateComponent Go failed: %v", err)
+	}
+	goCode := string(goFiles["main.go"])
+
+	// Verify header directives appear before package declaration
+	buildIdx := strings.Index(goCode, "//go:build !ignore")
+	genIdx := strings.Index(goCode, "//go:generate go run gen.go")
+	licIdx := strings.Index(goCode, "// Copyright 2026 Cosm Authors")
+	pkgIdx := strings.Index(goCode, "package main")
+
+	if buildIdx == -1 || genIdx == -1 || licIdx == -1 || pkgIdx == -1 {
+		t.Fatalf("Missing expected headers or package in Go output:\n%s", goCode)
+	}
+	if !(buildIdx < genIdx && genIdx < licIdx && licIdx < pkgIdx) {
+		t.Errorf("Order violation in Go output: buildIdx=%d, genIdx=%d, licIdx=%d, pkgIdx=%d",
+			buildIdx, genIdx, licIdx, pkgIdx)
+	}
+
+	// 2. Python with encoding pragma, license, and module docstring
+	pySym := &core.ASTSymbolNode{
+		NodeID:     "sym:py:trivia",
+		Language:   core.LangPython,
+		NodeType:   "FunctionDef",
+		Identifier: "serve",
+		ASTPayload: []byte("def serve():\n    pass"),
+		Lineage:    lineage,
+	}
+	compPy := &core.ComponentNode{
+		ComponentID: "comp-py-trivia",
+		Name:        "trivia-py",
+		Type:        core.CompService,
+		Language:    core.LangPython,
+		SymbolNodes: []string{"sym:py:trivia"},
+		Trivia: &core.TriviaEnvelope{
+			HeaderDirectives: []string{"# -*- coding: utf-8 -*-"},
+			LicenseHeader:    "# Copyright 2026 Cosm Authors.",
+			ModuleDocstring:  `"""Production service module."""`,
+		},
+		Metadata: map[string]string{
+			"file_path": "server.py",
+		},
+		Lineage: lineage,
+	}
+
+	pyFiles, err := hydrator.HydrateComponent(compPy, map[string]*core.ASTSymbolNode{"sym:py:trivia": pySym})
+	if err != nil {
+		t.Fatalf("HydrateComponent Python failed: %v", err)
+	}
+	pyCode := string(pyFiles["server.py"])
+
+	encIdx := strings.Index(pyCode, "# -*- coding: utf-8 -*-")
+	pyLicIdx := strings.Index(pyCode, "# Copyright 2026 Cosm Authors.")
+	docIdx := strings.Index(pyCode, `"""Production service module."""`)
+	defIdx := strings.Index(pyCode, "def serve():")
+
+	if encIdx == -1 || pyLicIdx == -1 || docIdx == -1 || defIdx == -1 {
+		t.Fatalf("Missing expected trivia in Python output:\n%s", pyCode)
+	}
+	if !(encIdx < pyLicIdx && pyLicIdx < docIdx && docIdx < defIdx) {
+		t.Errorf("Order violation in Python output: encIdx=%d, licIdx=%d, docIdx=%d, defIdx=%d",
+			encIdx, pyLicIdx, docIdx, defIdx)
+	}
+
+	// 3. TypeScript with directives and license header
+	tsSym := &core.ASTSymbolNode{
+		NodeID:     "sym:ts:trivia",
+		Language:   core.LangTypeScript,
+		NodeType:   "Component",
+		Identifier: "App",
+		ASTPayload: []byte("export function App() { return <div>App</div>; }"),
+		Lineage:    lineage,
+	}
+	compTS := &core.ComponentNode{
+		ComponentID: "comp-ts-trivia",
+		Name:        "trivia-ui",
+		Type:        core.CompFrontend,
+		Language:    core.LangTypeScript,
+		SymbolNodes: []string{"sym:ts:trivia"},
+		Trivia: &core.TriviaEnvelope{
+			HeaderDirectives: []string{"// @ts-check", `"use client";`},
+			LicenseHeader:    "// MIT License",
+		},
+		Metadata: map[string]string{
+			"file_path": "App.tsx",
+		},
+		Lineage: lineage,
+	}
+
+	tsFiles, err := hydrator.HydrateComponent(compTS, map[string]*core.ASTSymbolNode{"sym:ts:trivia": tsSym})
+	if err != nil {
+		t.Fatalf("HydrateComponent TypeScript failed: %v", err)
+	}
+	tsCode := string(tsFiles["App.tsx"])
+	if !strings.Contains(tsCode, "// @ts-check") || !strings.Contains(tsCode, `"use client";`) {
+		t.Errorf("Missing directives in TypeScript output:\n%s", tsCode)
+	}
+	if !strings.Contains(tsCode, "// MIT License") {
+		t.Errorf("Missing license in TypeScript output:\n%s", tsCode)
+	}
+
+	// 4. SQL with dialect directive
+	sqlSym := &core.ASTSymbolNode{
+		NodeID:     "sym:sql:trivia",
+		Language:   core.LangSQL,
+		NodeType:   "Table",
+		Identifier: "users",
+		ASTPayload: []byte("CREATE TABLE users (id SERIAL PRIMARY KEY);"),
+		Lineage:    lineage,
+	}
+	compSQL := &core.ComponentNode{
+		ComponentID: "comp-sql-trivia",
+		Name:        "trivia-db",
+		Type:        core.CompDatabase,
+		Language:    core.LangSQL,
+		SymbolNodes: []string{"sym:sql:trivia"},
+		Trivia: &core.TriviaEnvelope{
+			HeaderDirectives: []string{"-- dialect: postgresql"},
+			LicenseHeader:    "-- Copyright 2026 Cosm Authors.",
+		},
+		Metadata: map[string]string{
+			"file_path": "schema.sql",
+		},
+		Lineage: lineage,
+	}
+
+	sqlFiles, err := hydrator.HydrateComponent(compSQL, map[string]*core.ASTSymbolNode{"sym:sql:trivia": sqlSym})
+	if err != nil {
+		t.Fatalf("HydrateComponent SQL failed: %v", err)
+	}
+	sqlCode := string(sqlFiles["schema.sql"])
+	if !strings.Contains(sqlCode, "-- dialect: postgresql") {
+		t.Errorf("Missing dialect in SQL output:\n%s", sqlCode)
+	}
+	if !strings.Contains(sqlCode, "-- Copyright 2026 Cosm Authors.") {
+		t.Errorf("Missing license in SQL output:\n%s", sqlCode)
+	}
+}
+

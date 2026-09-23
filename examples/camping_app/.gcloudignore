@@ -1,0 +1,4 @@
+.cosm/
+bin/
+dist/
+*.log

@@ -174,7 +174,7 @@ Before compiling or shipping, query Cosm's Contract Cascade Engine to verify dow
 
 ```bash
 # Query blast radius of the modified symbol
-cosm symbol impact sym-py-new-cache
+cosm blast-radius sym-py-new-cache
 ```
 
 **Output:**

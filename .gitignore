@@ -12,6 +12,7 @@ scratch/
 # ------------------------------------------------------------------------------
 /cosm
 /cosm-agent-harness
+server
 *.exe
 *.exe~
 *.dll
@@ -182,3 +183,8 @@ editors/vscode/node_modules/
 *.vsixmanifest
 .vscode-test/
 
+examples/camping_app/deploy/.terraform.lock.hcl
+test/agents/transcripts/subagent_a_file_full.jsonl
+test/agents/transcripts/subagent_a_file.jsonl
+test/agents/transcripts/subagent_b_ast_full.jsonl
+test/agents/transcripts/subagent_b_ast.jsonl

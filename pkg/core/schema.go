@@ -222,6 +222,7 @@ type ComponentNode struct {
 	Type        ComponentType     `json:"type"`
 	Language    Language          `json:"language"`
 	SymbolNodes []string          `json:"symbol_nodes"` // List of ASTSymbolNode NodeIDs
+	Trivia      *TriviaEnvelope   `json:"trivia,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
 	Lineage     LineageEnvelope   `json:"lineage"`
 }

@@ -91,6 +91,7 @@ type TSFileResult struct {
 	Imports    []TSImport            `json:"imports"`
 	Exports    []string              `json:"exports"`
 	AllSymbols []*core.ASTSymbolNode `json:"all_symbols"`
+	Trivia     *core.TriviaEnvelope  `json:"trivia,omitempty"`
 }
 
 // TSParser extracts symbols, components, hooks, interfaces, and API calls from TypeScript/TSX.
@@ -107,11 +108,11 @@ func (p *TSParser) ParseSource(filename string, src []byte, lineage core.Lineage
 		filename = "Component.tsx"
 	}
 
+	lines := splitTSLines(src)
 	result := &TSFileResult{
 		FilePath: filename,
+		Trivia:   extractTSTrivia(lines),
 	}
-
-	lines := splitTSLines(src)
 
 	// 1. Extract Imports
 	result.Imports = p.extractImports(lines)
@@ -590,6 +591,7 @@ func (p *TSParser) BuildComponentNode(res *TSFileResult, compName string, lineag
 		Type:        core.CompFrontend,
 		Language:    core.LangTypeScript,
 		SymbolNodes: symbolIDs,
+		Trivia:      res.Trivia,
 		Metadata:    metadata,
 		Lineage:     lineage,
 	}
@@ -601,4 +603,78 @@ func (p *TSParser) BuildComponentNode(res *TSFileResult, compName string, lineag
 	comp.ComponentID = compID
 
 	return comp, res.AllSymbols, nil
+}
+
+func extractTSTrivia(lines []tsLine) *core.TriviaEnvelope {
+	var directives []string
+	var licenseLines []string
+	inBlock := false
+	var blockLines []string
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line.text)
+		if trimmed == "" {
+			continue
+		}
+		if inBlock {
+			blockLines = append(blockLines, line.text)
+			if strings.Contains(trimmed, "*/") {
+				inBlock = false
+				joined := strings.Join(blockLines, "\n")
+				if isTSLicenseText(joined) {
+					licenseLines = append(licenseLines, joined)
+				}
+				blockLines = nil
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "/*") {
+			if strings.Contains(trimmed, "*/") {
+				if isTSLicenseText(trimmed) {
+					licenseLines = append(licenseLines, trimmed)
+				}
+			} else {
+				inBlock = true
+				blockLines = append(blockLines, line.text)
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "// @ts-") ||
+			strings.HasPrefix(trimmed, "/// <reference") ||
+			trimmed == `"use client";` || trimmed == `'use client';` || trimmed == `"use client"` || trimmed == `'use client'` ||
+			trimmed == `"use server";` || trimmed == `'use server';` || trimmed == `"use server"` || trimmed == `'use server'` {
+			directives = append(directives, trimmed)
+			continue
+		}
+		if strings.HasPrefix(trimmed, "//") {
+			if isTSLicenseText(trimmed) {
+				licenseLines = append(licenseLines, trimmed)
+			}
+			continue
+		}
+		break
+	}
+
+	var lic string
+	if len(licenseLines) > 0 {
+		lic = strings.TrimSpace(strings.Join(licenseLines, "\n"))
+	}
+	if len(directives) == 0 && lic == "" {
+		return nil
+	}
+	return &core.TriviaEnvelope{
+		HeaderDirectives: directives,
+		LicenseHeader:    lic,
+	}
+}
+
+func isTSLicenseText(text string) bool {
+	lower := strings.ToLower(text)
+	return strings.Contains(lower, "copyright") ||
+		strings.Contains(lower, "license") ||
+		strings.Contains(lower, "licensed") ||
+		strings.Contains(lower, "apache") ||
+		strings.Contains(lower, "mit license") ||
+		strings.Contains(lower, "spdx-license-identifier") ||
+		strings.Contains(lower, "all rights reserved")
 }

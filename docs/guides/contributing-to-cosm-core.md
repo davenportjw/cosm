@@ -60,7 +60,7 @@ cosm/
 
 ### A. Compiling the Cosm CLI Binary
 ```bash
-cd /Users/jasondavenport/GitHub/cosm
+cd cosm
 go build -o cosm ./cmd/cosm
 ./cosm status
 ```

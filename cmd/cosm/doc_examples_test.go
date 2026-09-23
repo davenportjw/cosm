@@ -256,15 +256,19 @@ func TestDocExamples_ASTMutationsAndLineage(t *testing.T) {
 	// 2. Surgical edit
 	runAST([]string{"edit", "--op", "replace_function_body", "--target", "ValidateToken", "--content", "func ValidateToken() bool { return true }", "-u", "universe-main", "-w"})
 
-	// 3. Blast radius
+	// 3. Inspect AST tree hierarchy (ASCII and JSON formats)
+	runAST([]string{"tree", "-u", "universe-main"})
+	runAST([]string{"tree", "-u", "universe-main", "--format", "json"})
+
+	// 4. Blast radius
 	runBlastRadius([]string{"agent-oracle"})
 
-	// 4. Lineage trace
+	// 5. Lineage trace
 	runLineage([]string{"ValidateToken"})
 
-	// 5. Symbol view and impact
-	runSymbol([]string{"view", "ValidateToken", "-u", "universe-main"})
-	runSymbol([]string{"impact", "ValidateToken", "-u", "universe-main"})
+	// 6. Symbol view and blast radius impact
+	runView([]string{"ValidateToken", "-u", "universe-main"})
+	runBlastRadius([]string{"ValidateToken", "-u", "universe-main"})
 }
 
 // TestDocExamples_GitInterop verifies docs/guides/git-interop.md:
@@ -348,7 +352,10 @@ func TestDocExamples_CLIReferenceAllCommands(t *testing.T) {
 	// Command 8: cosm lineage
 	runLineage([]string{"ValidateToken"})
 
-	// Command 9: cosm ship
+	// Command 9: cosm log
+	runLog([]string{"-u", "universe-main"})
+
+	// Command 10: cosm ship
 	runShip([]string{"-u", "universe-main", "-t", "target:cosm"})
 
 	// Command 10: cosm universe
@@ -369,12 +376,14 @@ func TestDocExamples_CLIReferenceAllCommands(t *testing.T) {
 	runStack([]string{"list"})
 	runStack([]string{"evolve", "-c", "universe-main"})
 
-	// Command 13: cosm symbol
-	runSymbol([]string{"view", "ValidateToken", "-u", "universe-main"})
-	runSymbol([]string{"impact", "ValidateToken", "-u", "universe-main"})
+	// Command 13: cosm peer
+	runPeer([]string{"status"})
 
 	// Command 14: cosm ast
+	runAST([]string{"create", "-c", "services/order", "--lang", "go", "-u", "universe-main"})
 	runAST([]string{"resolve", "ValidateToken", "-u", "universe-main"})
+	runAST([]string{"tree", "-u", "universe-main"})
+	runAST([]string{"tree", "-u", "universe-main", "--format", "json"})
 	runAST([]string{"edit", "--op", "replace_function_body", "--target", "ValidateToken", "--content", "func ValidateToken() bool { return true }", "-u", "universe-main", "-w"})
 
 	// Command 15: cosm export
@@ -424,6 +433,7 @@ func TestDocExamples_MarkdownCommandExtractorAndValidator(t *testing.T) {
 		"lineage":           true,
 		"blast-radius":      true,
 		"view":              true,
+		"log":               true,
 		"ship":              true,
 		"universe":          true,
 		"branch":            true,
@@ -434,7 +444,6 @@ func TestDocExamples_MarkdownCommandExtractorAndValidator(t *testing.T) {
 		"import":            true,
 		"import-repo":       true,
 		"onboard":           true,
-		"symbol":            true,
 		"ast":               true,
 		"export":            true,
 		"dashboard":         true,
@@ -506,3 +515,95 @@ func TestDocExamples_MarkdownCommandExtractorAndValidator(t *testing.T) {
 
 	t.Logf("Validated %d CLI command invocations across %d markdown doc files", checkedCommands, len(docFiles))
 }
+
+// TestDocExamples_ASTTreeParity explicitly verifies 'cosm ast tree' and 'cosm ast tree --format json'
+// to ensure continuous doc-code-test parity.
+func TestDocExamples_ASTTreeParity(t *testing.T) {
+	dir, cleanup := setupDocTestEnv(t)
+	defer cleanup()
+
+	goFile, pyFile, _ := writeSampleFiles(t, dir)
+
+	runInit([]string{"-u", "universe-main"})
+	runAdd([]string{"-u", "universe-main", "-a", "agent-doc-test", "-p", "Verify AST tree parity", "-i", "feat: AST tree verification", goFile, pyFile})
+	runCommit([]string{"-u", "universe-main", "-i", "Commit for AST tree doc test"})
+
+	// Verify standard text tree format
+	runAST([]string{"tree", "-u", "universe-main"})
+
+	// Verify JSON tree format
+	runAST([]string{"tree", "-u", "universe-main", "--format", "json"})
+}
+
+// TestDocExamples_CompileCampingAppIntoCosm verifies the step-by-step workflow for compiling
+// the Camping App example into Cosm AST Merkle-DAG when cloned from Git:
+// - cosm init --universe universe-main
+// - cosm add .
+// - cosm commit -u universe-main -i "Compile camping app into cosm"
+// - cosm status
+// - cosm topology
+// - cosm ship
+func TestDocExamples_CompileCampingAppIntoCosm(t *testing.T) {
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd failed: %v", err)
+	}
+	sourceCampingApp := filepath.Clean(filepath.Join(origWd, "..", "..", "examples", "camping_app"))
+
+	tempDir, cleanup := setupDocTestEnv(t)
+	defer cleanup()
+
+	// Copy all camping_app source files into tempDir (excluding .cosm/, server binary, bin/, dist/)
+	err = filepath.Walk(sourceCampingApp, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(sourceCampingApp, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		if strings.HasPrefix(rel, ".cosm") || rel == "server" || strings.HasPrefix(rel, "bin") || strings.HasPrefix(rel, "dist") {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		targetPath := filepath.Join(tempDir, rel)
+		if info.IsDir() {
+			return os.MkdirAll(targetPath, 0755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(targetPath, data, info.Mode())
+	})
+	if err != nil {
+		t.Fatalf("Failed to copy camping_app source files: %v", err)
+	}
+
+	// 1. cosm init --universe universe-main
+	runInit([]string{"--universe", "universe-main"})
+
+	// 2. cosm add .
+	runAdd([]string{"."})
+
+	// 3. cosm commit -u universe-main -i "Compile camping app into cosm"
+	runCommit([]string{"-u", "universe-main", "-i", "Compile camping app into cosm"})
+
+	// 4. cosm status
+	runStatus([]string{})
+
+	// 5. cosm topology
+	runTopology([]string{})
+
+	// 6. cosm ast tree
+	runAST([]string{"tree", "-u", "universe-main"})
+
+	// 7. cosm ship
+	runShip([]string{"-u", "universe-main", "-t", "target:cosm"})
+}
+

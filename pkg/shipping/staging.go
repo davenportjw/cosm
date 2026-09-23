@@ -141,19 +141,137 @@ func (w *StagingWorkspace) Cleanup() error {
 	return os.RemoveAll(w.Directory)
 }
 
+// AutoStageDependencies copies project dependency files (go.mod, go.sum for Go;
+// package.json, tsconfig.json for TypeScript/Node) from the repo root or working tree
+// into the staging workspace if not already present.
+func (w *StagingWorkspace) AutoStageDependencies(repoRoot string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.cleanedUp {
+		return fmt.Errorf("staging workspace is already cleaned up")
+	}
+
+	if repoRoot == "" {
+		repoRoot = FindWorkingTreeRoot()
+	}
+	if repoRoot == "" {
+		return nil
+	}
+
+	depFiles := []string{
+		"go.mod",
+		"go.sum",
+		"package.json",
+		"tsconfig.json",
+	}
+
+	for _, rel := range depFiles {
+		destPath := filepath.Join(w.Directory, rel)
+		if _, err := os.Stat(destPath); err == nil {
+			// Already present in workspace
+			continue
+		}
+
+		srcPath := filepath.Join(repoRoot, rel)
+		if srcInfo, err := os.Stat(srcPath); err == nil && !srcInfo.IsDir() {
+			data, err := os.ReadFile(srcPath)
+			if err != nil {
+				return fmt.Errorf("failed to read %s for auto-staging: %w", srcPath, err)
+			}
+			if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+				return fmt.Errorf("failed to create dir for %s: %w", destPath, err)
+			}
+			if err := os.WriteFile(destPath, data, 0644); err != nil {
+				return fmt.Errorf("failed to copy %s to staging: %w", rel, err)
+			}
+		}
+	}
+
+	// Also check component-specific subdirectories if target specifies component names
+	if w.Target != nil {
+		for _, comp := range w.Target.ComponentNames {
+			for _, rel := range depFiles {
+				compRel := filepath.Join(comp, rel)
+				destPath := filepath.Join(w.Directory, compRel)
+				if _, err := os.Stat(destPath); err == nil {
+					continue
+				}
+				srcPath := filepath.Join(repoRoot, compRel)
+				if srcInfo, err := os.Stat(srcPath); err == nil && !srcInfo.IsDir() {
+					data, err := os.ReadFile(srcPath)
+					if err == nil {
+						_ = os.MkdirAll(filepath.Dir(destPath), 0755)
+						_ = os.WriteFile(destPath, data, 0644)
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// FindWorkingTreeRoot searches the current working directory and its ancestors
+// for a repository or project root indicator (.cosm, .git, or go.mod).
+func FindWorkingTreeRoot() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	dir := cwd
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".cosm")); err == nil {
+			return dir
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir || parent == "" {
+			break
+		}
+		dir = parent
+	}
+	return cwd
+}
+
 // StagingManager manages lifecycle and creation of ephemeral staging workspaces.
 type StagingManager struct {
 	baseTempDir string
+	repoRoot    string
 }
 
 // NewStagingManager returns a new StagingManager.
 func NewStagingManager(baseTempDir string) *StagingManager {
+	return NewStagingManagerWithRepo(baseTempDir, "")
+}
+
+// NewStagingManagerWithRepo returns a new StagingManager configured with an explicit repository root.
+func NewStagingManagerWithRepo(baseTempDir, repoRoot string) *StagingManager {
 	if baseTempDir == "" {
 		baseTempDir = os.TempDir()
 	}
 	return &StagingManager{
 		baseTempDir: baseTempDir,
+		repoRoot:    repoRoot,
 	}
+}
+
+// SetRepoRoot sets an explicit repository root directory for dependency auto-staging.
+func (m *StagingManager) SetRepoRoot(repoRoot string) {
+	m.repoRoot = repoRoot
+}
+
+// RepoRoot returns the configured repository root, or discovers it via FindWorkingTreeRoot.
+func (m *StagingManager) RepoRoot() string {
+	if m.repoRoot != "" {
+		return m.repoRoot
+	}
+	return FindWorkingTreeRoot()
 }
 
 // Prepare creates a fresh isolated StagingWorkspace and populates it with files.
@@ -180,6 +298,12 @@ func (m *StagingManager) Prepare(target *TargetSpec, files map[string][]byte) (*
 			_ = workspace.Cleanup()
 			return nil, err
 		}
+	}
+
+	// Auto-stage project dependencies (go.mod, go.sum, package.json, tsconfig.json)
+	if err := workspace.AutoStageDependencies(m.RepoRoot()); err != nil {
+		_ = workspace.Cleanup()
+		return nil, fmt.Errorf("failed to auto-stage project dependencies: %w", err)
 	}
 
 	return workspace, nil

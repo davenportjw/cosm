@@ -44,6 +44,7 @@ func (p *GoParser) ParseSource(filename string, src []byte, lineage core.Lineage
 		return nil, fmt.Errorf("failed to extract symbols from %s: %w", filename, err)
 	}
 	fileSymbols.FilePath = filename
+	fileSymbols.Trivia = ExtractTrivia(src)
 
 	pkgResult := &GoPackageResult{
 		PackageName: fileSymbols.PackageName,
@@ -53,6 +54,7 @@ func (p *GoParser) ParseSource(filename string, src []byte, lineage core.Lineage
 		},
 		AllRoutes:  fileSymbols.Routes,
 		AllImports: fileSymbols.Imports,
+		Trivia:     fileSymbols.Trivia,
 	}
 
 	// Convert file symbols to core.ASTSymbolNodes
@@ -82,6 +84,14 @@ func (p *GoParser) ParseSource(filename string, src []byte, lineage core.Lineage
 
 	for _, r := range fileSymbols.Routes {
 		node, err := RouteToASTSymbolNode(r, fileSymbols.PackageName, lineage)
+		if err != nil {
+			return nil, err
+		}
+		pkgResult.AllSymbols = append(pkgResult.AllSymbols, node)
+	}
+
+	for _, decl := range fileSymbols.GeneralDecls {
+		node, err := GeneralDeclToASTSymbolNode(decl, fileSymbols.PackageName, lineage)
 		if err != nil {
 			return nil, err
 		}
@@ -139,6 +149,10 @@ func (p *GoParser) ParseDir(dirPath string, lineage core.LineageEnvelope) (*GoPa
 			return nil, fmt.Errorf("failed to extract symbols from %s: %w", filePath, err)
 		}
 		fileSymbols.FilePath = filePath
+		fileSymbols.Trivia = ExtractTrivia(src)
+		if pkgResult.Trivia == nil && fileSymbols.Trivia != nil {
+			pkgResult.Trivia = fileSymbols.Trivia
+		}
 		pkgResult.Files[filePath] = fileSymbols
 
 		pkgResult.AllRoutes = append(pkgResult.AllRoutes, fileSymbols.Routes...)
@@ -175,6 +189,14 @@ func (p *GoParser) ParseDir(dirPath string, lineage core.LineageEnvelope) (*GoPa
 			}
 			pkgResult.AllSymbols = append(pkgResult.AllSymbols, node)
 		}
+
+		for _, decl := range fileSymbols.GeneralDecls {
+			node, err := GeneralDeclToASTSymbolNode(decl, targetPkg.Name, lineage)
+			if err != nil {
+				return nil, err
+			}
+			pkgResult.AllSymbols = append(pkgResult.AllSymbols, node)
+		}
 	}
 
 	return pkgResult, nil
@@ -204,6 +226,35 @@ func (p *GoParser) ExtractSymbols(fileNode *ast.File, src []byte) (*GoFileSymbol
 		switch d := decl.(type) {
 		case *ast.GenDecl:
 			switch d.Tok {
+			case token.CONST, token.VAR:
+				start := p.fset.Position(d.Pos()).Offset
+				end := p.fset.Position(d.End()).Offset
+				if d.Doc != nil {
+					start = p.fset.Position(d.Doc.Pos()).Offset
+				}
+				if start >= 0 && end <= len(src) && start < end {
+					snippet := strings.TrimSpace(string(src[start:end]))
+					kind := "ConstDecl"
+					if d.Tok == token.VAR {
+						kind = "VarDecl"
+					}
+					name := fmt.Sprintf("%s_%d", strings.ToLower(kind), d.Pos())
+					if len(d.Specs) > 0 {
+						if vs, ok := d.Specs[0].(*ast.ValueSpec); ok && len(vs.Names) > 0 {
+							name = vs.Names[0].Name
+						}
+					}
+					doc := ""
+					if d.Doc != nil {
+						doc = strings.TrimSpace(d.Doc.Text())
+					}
+					syms.GeneralDecls = append(syms.GeneralDecls, GoGeneralDecl{
+						Name:       name,
+						Kind:       kind,
+						SourceCode: snippet,
+						Doc:        doc,
+					})
+				}
 			case token.TYPE:
 				for _, spec := range d.Specs {
 					typeSpec, ok := spec.(*ast.TypeSpec)
@@ -225,6 +276,21 @@ func (p *GoParser) ExtractSymbols(fileNode *ast.File, src []byte) (*GoFileSymbol
 					case *ast.InterfaceType:
 						ifaceSym := p.extractInterface(typeSpec.Name.Name, doc, t)
 						syms.Interfaces = append(syms.Interfaces, ifaceSym)
+					default:
+						start := p.fset.Position(d.Pos()).Offset
+						end := p.fset.Position(d.End()).Offset
+						if d.Doc != nil {
+							start = p.fset.Position(d.Doc.Pos()).Offset
+						}
+						if start >= 0 && end <= len(src) && start < end {
+							snippet := strings.TrimSpace(string(src[start:end]))
+							syms.GeneralDecls = append(syms.GeneralDecls, GoGeneralDecl{
+								Name:       typeSpec.Name.Name,
+								Kind:       "TypeDecl",
+								SourceCode: snippet,
+								Doc:        doc,
+							})
+						}
 					}
 				}
 			}

@@ -9,8 +9,32 @@ import {
   FullTopologyGraph,
   BlastRadiusReport,
   ShipResult,
-  LineageEnvelope
+  LineageEnvelope,
+  ASTTreeEdge,
+  ASTTreeLineage,
+  ASTTreeSymbol,
+  ASTTreeComponent,
+  ASTTreeGraph
 } from '../types';
+import {
+  CosmASTTreeDataProvider,
+  UniverseItem,
+  DirectoryItem,
+  ComponentItem,
+  SymbolItem,
+  DetailItem,
+  MerkleInfoItem,
+  getSymbolThemeIcon,
+  createSymbolDetails
+} from '../views/astTreeProvider';
+import {
+  CosmTopologyTreeDataProvider,
+  TierCategoryItem,
+  TopologyComponentItem,
+  TopologyNodeItem,
+  TopologyEdgeItem,
+  TopologyActionItem
+} from '../views/topologyTreeProvider';
 
 declare function describe(name: string, fn: () => void): void;
 declare function it(name: string, fn: () => void | Promise<void>): void;
@@ -109,7 +133,7 @@ describe('Cosm VS Code Extension Test Suite', () => {
   describe('2. 5-Tier Causal Pedigree & Lineage Envelope', () => {
     it('should construct and validate complete 5-tier causal lineage', () => {
       const lineage: LineageEnvelope = {
-        user_id: 'jasondavenport',
+        user_id: 'developer',
         user_prompt: 'Add high-speed Redis user state cache with 15m TTL',
         session_id: 'sess-8839-a912-44df',
         orchestrator_agent_id: 'cosm-orchestrator',
@@ -135,7 +159,7 @@ describe('Cosm VS Code Extension Test Suite', () => {
 
       // Tier 1 Check
       assert.ok(lineage.user_prompt.includes('Redis user state cache'));
-      assert.strictEqual(lineage.user_id, 'jasondavenport');
+      assert.strictEqual(lineage.user_id, 'developer');
 
       // Tier 2 Check
       assert.strictEqual(lineage.session_id, 'sess-8839-a912-44df');
@@ -300,8 +324,600 @@ describe('Cosm VS Code Extension Test Suite', () => {
         ? JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
         : JSON.parse(fs.readFileSync(path.resolve(process.cwd(), 'package.json'), 'utf8'));
       assert.strictEqual(packageJson.contributes.viewsContainers.activitybar[0].id, 'cosm-explorer');
-      assert.strictEqual(packageJson.contributes.views['cosm-explorer'][0].id, 'cosm.topologyView');
+      assert.strictEqual(packageJson.contributes.views['cosm-explorer'][0].id, 'cosm.astTreeView');
+      assert.strictEqual(packageJson.contributes.views['cosm-explorer'][0].type, 'tree');
+      assert.strictEqual(packageJson.contributes.views['cosm-explorer'][1].id, 'cosm.topologyTreeView');
+      assert.strictEqual(packageJson.contributes.views['cosm-explorer'][1].type, 'tree');
       assert.strictEqual(packageJson.contributes.views['scm'][0].id, 'cosm.scmView');
     });
   });
+
+  describe('5. AST Tree Domain Types & getASTTree CosmClient Integration', () => {
+    it('should construct and validate complete ASTTreeGraph wire DTO', () => {
+      const edge: ASTTreeEdge = {
+        target_id: 'sym-api-login',
+        edge_type: 'CALLS',
+        label: 'POST /auth/login'
+      };
+
+      const lineage: ASTTreeLineage = {
+        user_prompt: 'Add login mutation',
+        executing_agent_id: 'gemini-3.8-flash',
+        intent: 'feat(auth): login symbol',
+        timestamp: '2026-09-17T12:00:00Z'
+      };
+
+      const symbol: ASTTreeSymbol = {
+        node_id: 'sym-fe-login-btn',
+        identifier: 'LoginButton',
+        node_type: 'ComponentDecl',
+        language: 'typescript',
+        signature: 'export const LoginButton: React.FC = () => ...',
+        docstring: 'Renders login button',
+        visibility: 'public',
+        dependencies: ['react', 'authService'],
+        outgoing_edges: [edge],
+        lineage: lineage
+      };
+
+      const component: ASTTreeComponent = {
+        component_id: 'src/components/LoginButton.tsx',
+        name: 'LoginButton.tsx',
+        language: 'typescript',
+        type: 'Frontend',
+        symbols: [symbol]
+      };
+
+      const graph: ASTTreeGraph = {
+        universe_id: 'universe-test',
+        merkle_root: 'abcdef1234567890',
+        total_components: 1,
+        total_symbols: 1,
+        total_edges: 1,
+        components: [component]
+      };
+
+      assert.strictEqual(graph.universe_id, 'universe-test');
+      assert.strictEqual(graph.total_components, 1);
+      assert.strictEqual(graph.total_symbols, 1);
+      assert.strictEqual(graph.total_edges, 1);
+      assert.strictEqual(graph.components[0].symbols[0].identifier, 'LoginButton');
+      assert.strictEqual(graph.components[0].symbols[0].outgoing_edges?.[0].edge_type, 'CALLS');
+      assert.strictEqual(graph.components[0].symbols[0].lineage?.executing_agent_id, 'gemini-3.8-flash');
+    });
+
+    it('should parse AST tree JSON output directly when CLI returns JSON', async () => {
+      const client = new CosmClient(process.cwd());
+      const mockGraph: ASTTreeGraph = {
+        universe_id: 'universe-main',
+        merkle_root: 'root-abc-123',
+        total_components: 1,
+        total_symbols: 1,
+        total_edges: 0,
+        components: [
+          {
+            component_id: 'comp-1',
+            name: 'main.go',
+            language: 'go',
+            type: 'Backend',
+            symbols: [
+              {
+                node_id: 'sym-main',
+                identifier: 'main',
+                node_type: 'FunctionDecl',
+                language: 'go',
+                outgoing_edges: []
+              }
+            ]
+          }
+        ]
+      };
+
+      // Mock execCosm
+      (client as any).execCosm = async (args: string[]) => {
+        assert.ok(args.includes('ast') && args.includes('tree') && args.includes('--format') && args.includes('json'));
+        return JSON.stringify(mockGraph);
+      };
+
+      const res = await client.getASTTree();
+      assert.strictEqual(res.universe_id, 'universe-main');
+      assert.strictEqual(res.total_components, 1);
+      assert.strictEqual(res.components[0].symbols[0].identifier, 'main');
+    });
+
+    it('should fallback to synthesize an ASTTreeGraph from getStatus and getTopology when CLI fails or returns non-JSON', async () => {
+      const client = new CosmClient(process.cwd());
+
+      // Mock execCosm to fail on 'ast tree'
+      (client as any).execCosm = async (args: string[]) => {
+        if (args[0] === 'ast' && args[1] === 'tree') {
+          throw new Error('unknown command: ast tree');
+        }
+        if (args[0] === 'status') {
+          return JSON.stringify({
+            status: 'SUCCESS',
+            universe_id: 'universe-fallback',
+            merkle_root: 'root-fallback-999',
+            components_count: 2,
+            cross_edges_count: 1,
+            components: ['services/auth.go', 'pkg/db.go']
+          });
+        }
+        if (args[0] === 'topology') {
+          return JSON.stringify({
+            frontend_nodes: [],
+            backend_nodes: [
+              {
+                id: 'node-auth-1',
+                name: 'services/auth.go:ValidateToken',
+                tier: 'Backend',
+                language: 'go',
+                type: 'FunctionDecl',
+                outgoing: [
+                  {
+                    target_id: 'node-db-1',
+                    edge_type: 'CALLS',
+                    label: 'QueryUser'
+                  }
+                ]
+              }
+            ],
+            infra_nodes: [],
+            total_nodes: 1,
+            total_edges: 1
+          });
+        }
+        return '';
+      };
+
+      const res = await client.getASTTree('universe-fallback');
+      assert.strictEqual(res.universe_id, 'universe-fallback');
+      assert.strictEqual(res.merkle_root, 'root-fallback-999');
+      assert.ok(res.total_components >= 2);
+      assert.strictEqual(res.total_edges, 1);
+
+      const authComp = res.components.find(c => c.component_id === 'services/auth.go');
+      assert.ok(authComp, 'services/auth.go component should be present');
+      assert.strictEqual(authComp!.symbols.length, 1);
+      assert.strictEqual(authComp!.symbols[0].identifier, 'ValidateToken');
+      assert.strictEqual(authComp!.symbols[0].outgoing_edges?.[0].target_id, 'node-db-1');
+      assert.strictEqual(authComp!.symbols[0].outgoing_edges?.[0].edge_type, 'CALLS');
+
+      const dbComp = res.components.find(c => c.component_id === 'pkg/db.go');
+      assert.ok(dbComp, 'pkg/db.go component from status should be present');
+    });
+  });
+
+  describe('6. AST Tree View Provider (CosmASTTreeDataProvider)', () => {
+    it('should format UniverseItem with Merkle hash prefix and component/symbol/edge counts', () => {
+      const graph: ASTTreeGraph = {
+        universe_id: 'universe-main',
+        merkle_root: '8c94fa52714cd6e456218731adbf349',
+        total_components: 4,
+        total_symbols: 12,
+        total_edges: 7,
+        components: []
+      };
+
+      const universeItem = new UniverseItem(graph);
+      assert.ok(String(universeItem.label).includes('🌌 universe-main'));
+      assert.ok(String(universeItem.label).includes('8c94fa52'));
+      assert.ok(String(universeItem.description).includes('4 components'));
+      assert.ok(String(universeItem.description).includes('12 symbols'));
+      assert.ok(String(universeItem.description).includes('7 edges'));
+      assert.strictEqual(universeItem.contextValue, 'cosm.universe');
+    });
+
+    it('should build compacted DirectoryItem nodes for component paths (e.g. pkg/core)', () => {
+      const client = new CosmClient(process.cwd());
+      const provider = new CosmASTTreeDataProvider(client);
+
+      const components: ASTTreeComponent[] = [
+        {
+          component_id: 'pkg/core/schema.go',
+          name: 'schema.go',
+          language: 'go',
+          type: 'Backend',
+          symbols: [
+            {
+              node_id: 'sym-schema-1',
+              identifier: 'ASTNode',
+              node_type: 'StructDecl',
+              language: 'go'
+            }
+          ]
+        },
+        {
+          component_id: 'pkg/core/types.go',
+          name: 'types.go',
+          language: 'go',
+          type: 'Backend',
+          symbols: []
+        },
+        {
+          component_id: 'cmd/cosm/main.go',
+          name: 'main.go',
+          language: 'go',
+          type: 'Backend',
+          symbols: []
+        },
+        {
+          component_id: 'root_file.go',
+          name: 'root_file.go',
+          language: 'go',
+          type: 'Backend',
+          symbols: []
+        }
+      ];
+
+      const hierarchy = provider.buildComponentHierarchy(components);
+
+      // Root level should contain compacted directories and the root file
+      const dirLabels = hierarchy.filter(h => h instanceof DirectoryItem).map(d => String(d.label));
+      const fileLabels = hierarchy.filter(h => h instanceof ComponentItem).map(f => String(f.label));
+
+      // 'pkg/core' should be compacted because 'pkg' contains only 'core'
+      assert.ok(dirLabels.includes('pkg/core'), 'pkg/core should be compacted into a single folder node');
+      // 'cmd/cosm' should be compacted because 'cmd' contains only 'cosm'
+      assert.ok(dirLabels.includes('cmd/cosm'), 'cmd/cosm should be compacted into a single folder node');
+      assert.ok(fileLabels.includes('root_file.go'), 'root_file.go should be at root level');
+
+      // Verify pkg/core children
+      const pkgCoreDir = hierarchy.find(h => h instanceof DirectoryItem && h.label === 'pkg/core') as DirectoryItem;
+      assert.ok(pkgCoreDir);
+      assert.strictEqual(pkgCoreDir.components.length, 2);
+      const pkgFiles = pkgCoreDir.components.map(c => c.label);
+      assert.ok(pkgFiles.includes('schema.go'));
+      assert.ok(pkgFiles.includes('types.go'));
+    });
+
+    it('should format ComponentItem with language badge and symbol counts', () => {
+      const comp: ASTTreeComponent = {
+        component_id: 'pkg/core/schema.go',
+        name: 'schema.go',
+        language: 'go',
+        type: 'Backend',
+        symbols: [
+          { node_id: '1', identifier: 'Foo', node_type: 'FunctionDecl', language: 'go' },
+          { node_id: '2', identifier: 'Bar', node_type: 'StructDecl', language: 'go' }
+        ]
+      };
+
+      const item = new ComponentItem(comp, 'pkg/core/schema.go');
+      assert.strictEqual(item.label, 'schema.go');
+      assert.strictEqual(item.description, '[go] (2 symbols)');
+      assert.strictEqual(item.contextValue, 'cosm.component');
+    });
+
+    it('should map AST Symbol node types to proper VS Code ThemeIcons and wire click command', () => {
+      assert.strictEqual(getSymbolThemeIcon('FunctionDecl').id, 'symbol-method');
+      assert.strictEqual(getSymbolThemeIcon('MethodDecl').id, 'symbol-method');
+      assert.strictEqual(getSymbolThemeIcon('StructDecl').id, 'symbol-structure');
+      assert.strictEqual(getSymbolThemeIcon('ClassDecl').id, 'symbol-structure');
+      assert.strictEqual(getSymbolThemeIcon('InterfaceDecl').id, 'symbol-structure');
+      assert.strictEqual(getSymbolThemeIcon('ResourceBlock').id, 'cloud');
+      assert.strictEqual(getSymbolThemeIcon('CloudResource').id, 'cloud');
+      assert.strictEqual(getSymbolThemeIcon('EndpointDecl').id, 'globe');
+      assert.strictEqual(getSymbolThemeIcon('RouteDecl').id, 'globe');
+      assert.strictEqual(getSymbolThemeIcon('VariableDecl').id, 'symbol-variable');
+      assert.strictEqual(getSymbolThemeIcon('FieldDecl').id, 'symbol-variable');
+
+      const sym: ASTTreeSymbol = {
+        node_id: 'sym-func-1',
+        identifier: 'HandleHealth',
+        node_type: 'FunctionDecl',
+        language: 'go',
+        signature: 'func HandleHealth(w http.ResponseWriter, r *http.Request)'
+      };
+
+      const symItem = new SymbolItem(sym, 'pkg/api/health.go');
+      assert.strictEqual(symItem.label, 'HandleHealth');
+      assert.strictEqual(symItem.description, 'func HandleHealth(w http.ResponseWriter, r *http.Request)');
+      assert.strictEqual((symItem.iconPath as any).id, 'symbol-method');
+      assert.strictEqual(symItem.contextValue, 'cosm.symbol');
+
+      // Click command should be cosm.navigateToSymbol
+      assert.strictEqual(symItem.command?.command, 'cosm.navigateToSymbol');
+      assert.strictEqual(symItem.command?.arguments?.[0], 'pkg/api/health.go');
+      assert.strictEqual(symItem.command?.arguments?.[1], sym);
+    });
+
+    it('should construct expandable DetailItems under SymbolItem for Signature, Contracts/Edges, Lineage, and Node ID', () => {
+      const sym: ASTTreeSymbol = {
+        node_id: 'sym-auth-login',
+        identifier: 'LoginHandler',
+        node_type: 'FunctionDecl',
+        language: 'typescript',
+        signature: 'export function LoginHandler(req: Request): Response',
+        docstring: 'Handles OAuth2 authentication and user sessions',
+        outgoing_edges: [
+          {
+            target_id: 'sym-db-users',
+            edge_type: 'CALLS',
+            label: 'FindUserByEmail'
+          }
+        ],
+        lineage: {
+          user_prompt: 'Implement secure login endpoint',
+          intent: 'feat(auth): login handler',
+          executing_agent_id: 'gemini-3.8-flash',
+          timestamp: '2026-09-17T12:00:00Z'
+        }
+      };
+
+      const details = createSymbolDetails(sym);
+      assert.strictEqual(details.length, 4);
+
+      // 1. Signature
+      const sigItem = details.find(d => d.label === 'Signature');
+      assert.ok(sigItem);
+      assert.strictEqual(sigItem.description, 'export function LoginHandler(req: Request): Response');
+      assert.strictEqual((sigItem.iconPath as any).id, 'symbol-key');
+      assert.strictEqual(sigItem.children?.length, 1);
+      assert.strictEqual(sigItem.children?.[0].label, 'Docstring');
+
+      // 2. Contracts / Edges
+      const edgesItem = details.find(d => d.label === 'Contracts/Edges');
+      assert.ok(edgesItem);
+      assert.strictEqual((edgesItem.iconPath as any).id, 'references');
+      assert.strictEqual(edgesItem.children?.length, 1);
+      assert.strictEqual(edgesItem.children?.[0].label, 'CALLS');
+      assert.ok(String(edgesItem.children?.[0].description).includes('sym-db-users'));
+
+      // 3. Lineage
+      const lineageItem = details.find(d => d.label === 'Lineage');
+      assert.ok(lineageItem);
+      assert.strictEqual((lineageItem.iconPath as any).id, 'history');
+      assert.ok(String(lineageItem.description).includes('gemini-3.8-flash'));
+      assert.strictEqual(lineageItem.children?.length, 4);
+      const childLabels = lineageItem.children?.map(c => c.label);
+      assert.ok(childLabels?.includes('Prompt'));
+      assert.ok(childLabels?.includes('Intent'));
+      assert.ok(childLabels?.includes('Agent'));
+      assert.ok(childLabels?.includes('Timestamp'));
+
+      // 4. Node ID
+      const nodeIdItem = details.find(d => d.label === 'Node ID');
+      assert.ok(nodeIdItem);
+      assert.strictEqual((nodeIdItem.iconPath as any).id, 'key');
+      assert.strictEqual(nodeIdItem.description, 'sym-auth-login');
+      assert.strictEqual(nodeIdItem.command?.command, 'cosm.copyNodeId');
+    });
+
+    it('should fulfill TreeDataProvider contract across getChildren and refresh hierarchy', async () => {
+      const client = new CosmClient(process.cwd());
+      const mockGraph: ASTTreeGraph = {
+        universe_id: 'universe-test',
+        merkle_root: 'abcdef1234567890',
+        total_components: 1,
+        total_symbols: 1,
+        total_edges: 0,
+        components: [
+          {
+            component_id: 'pkg/core/schema.go',
+            name: 'schema.go',
+            language: 'go',
+            type: 'Backend',
+            symbols: [
+              {
+                node_id: 'sym-1',
+                identifier: 'SchemaStruct',
+                node_type: 'StructDecl',
+                language: 'go',
+                signature: 'type SchemaStruct struct'
+              }
+            ]
+          }
+        ]
+      };
+
+      client.getASTTree = async () => mockGraph;
+
+      const provider = new CosmASTTreeDataProvider(client, 'universe-test');
+
+      // 1. Root children -> [UniverseItem]
+      const rootChildren = await provider.getChildren();
+      assert.strictEqual(rootChildren.length, 1);
+      assert.ok(rootChildren[0] instanceof UniverseItem);
+
+      // 2. UniverseItem children -> MerkleInfoItem + DirectoryItem (pkg/core)
+      const universeChildren = await provider.getChildren(rootChildren[0]);
+      assert.strictEqual(universeChildren.length, 2);
+      assert.ok(universeChildren[0] instanceof MerkleInfoItem);
+      assert.strictEqual((universeChildren[0] as MerkleInfoItem).label, 'ℹ️ What is an AST Merkle Node?');
+      assert.strictEqual((universeChildren[0] as MerkleInfoItem).command?.command, 'cosm.explainMerkleNodes');
+      assert.ok(universeChildren[1] instanceof DirectoryItem);
+      assert.strictEqual((universeChildren[1] as DirectoryItem).label, 'pkg/core');
+
+      // 3. DirectoryItem children -> ComponentItem (schema.go)
+      const dirChildren = await provider.getChildren(universeChildren[1]);
+      assert.strictEqual(dirChildren.length, 1);
+      assert.ok(dirChildren[0] instanceof ComponentItem);
+      assert.strictEqual((dirChildren[0] as ComponentItem).label, 'schema.go');
+
+      // 4. ComponentItem children -> SymbolItem (SchemaStruct)
+      const compChildren = await provider.getChildren(dirChildren[0]);
+      assert.strictEqual(compChildren.length, 1);
+      assert.ok(compChildren[0] instanceof SymbolItem);
+      assert.strictEqual((compChildren[0] as SymbolItem).label, 'SchemaStruct');
+
+      // 5. SymbolItem children -> DetailItem (Signature, Contracts/Edges, Lineage, Node ID)
+      const symChildren = await provider.getChildren(compChildren[0]);
+      assert.strictEqual(symChildren.length, 4);
+      assert.ok(symChildren.every(c => c instanceof DetailItem));
+
+      // 6. getTreeItem returns element
+      assert.strictEqual(provider.getTreeItem(rootChildren[0]), rootChildren[0]);
+
+      // 7. Refresh triggers event
+      let eventFired = false;
+      provider.onDidChangeTreeData(() => {
+        eventFired = true;
+      });
+      provider.refresh('universe-updated');
+      assert.strictEqual(eventFired, true);
+    });
+
+    it('should verify all required AST tree commands, views, and menus in package.json', () => {
+      const pkgPath = path.resolve(process.cwd(), 'editors/vscode/package.json');
+      const packageJson = fs.existsSync(pkgPath)
+        ? JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+        : JSON.parse(fs.readFileSync(path.resolve(process.cwd(), 'package.json'), 'utf8'));
+
+      // View verification
+      const explorerViews = packageJson.contributes.views['cosm-explorer'];
+      assert.strictEqual(explorerViews[0].id, 'cosm.astTreeView');
+      assert.strictEqual(explorerViews[0].name, 'AST Merkle Tree Explorer');
+      assert.strictEqual(explorerViews[0].type, 'tree');
+      assert.strictEqual(explorerViews[1].id, 'cosm.topologyTreeView');
+      assert.strictEqual(explorerViews[1].name, 'Architecture Topology (Frontend → Backend → Infra)');
+      assert.strictEqual(explorerViews[1].type, 'tree');
+
+      // Commands verification
+      const commands = packageJson.contributes.commands.map((c: any) => c.command);
+      assert.ok(commands.includes('cosm.refreshASTTree'), 'cosm.refreshASTTree must be in commands');
+      assert.ok(commands.includes('cosm.navigateToSymbol'), 'cosm.navigateToSymbol must be in commands');
+      assert.ok(commands.includes('cosm.viewASTPayload'), 'cosm.viewASTPayload must be in commands');
+      assert.ok(commands.includes('cosm.copyNodeId'), 'cosm.copyNodeId must be in commands');
+      assert.ok(commands.includes('cosm.explainMerkleNodes'), 'cosm.explainMerkleNodes must be in commands');
+      assert.ok(commands.includes('cosm.refreshTopologyTree'), 'cosm.refreshTopologyTree must be in commands');
+
+      // Menus verification
+      const viewTitle = packageJson.contributes.menus['view/title'];
+      assert.ok(
+        viewTitle.some((m: any) => m.command === 'cosm.refreshASTTree' && m.when === 'view == cosm.astTreeView'),
+        'view/title must include cosm.refreshASTTree for cosm.astTreeView'
+      );
+
+      const itemContext = packageJson.contributes.menus['view/item/context'];
+      const contextCommands = itemContext.map((m: any) => m.command);
+      assert.ok(contextCommands.includes('cosm.viewASTPayload'), 'cosm.viewASTPayload in context menu');
+      assert.ok(contextCommands.includes('cosm.copyNodeId'), 'cosm.copyNodeId in context menu');
+      assert.ok(contextCommands.includes('cosm.diffSymbol'), 'cosm.diffSymbol in context menu');
+      assert.ok(contextCommands.includes('cosm.blastRadius'), 'cosm.blastRadius in context menu');
+    });
+  });
+
+  describe('7. Architecture Topology Tree Provider (CosmTopologyTreeDataProvider)', () => {
+    it('should organize topology graph into Frontend, Backend, and Cloud Infra swimlane items', async () => {
+      const client = new CosmClient(process.cwd());
+      const mockTopology: FullTopologyGraph = {
+        total_nodes: 3,
+        total_edges: 1,
+        frontend_nodes: [
+          {
+            id: 'node-fe',
+            name: 'App.tsx',
+            tier: 'Frontend',
+            type: 'Component',
+            language: 'typescript',
+            file_path: 'frontend/src/App.tsx',
+            outgoing: [
+              {
+                target_id: 'node-be',
+                edge_type: 'CONSUMES_API',
+                label: 'GET /api/health'
+              }
+            ]
+          }
+        ],
+        backend_nodes: [
+          {
+            id: 'node-be',
+            name: 'main.go:HandleHealth',
+            tier: 'API/Backend',
+            type: 'Endpoint',
+            language: 'go',
+            file_path: 'cmd/server/main.go',
+            outgoing: []
+          }
+        ],
+        infra_nodes: [
+          {
+            id: 'node-infra',
+            name: 'main.tf',
+            tier: 'Cloud Infra',
+            type: 'Resource',
+            language: 'hcl',
+            file_path: 'infra/main.tf',
+            outgoing: []
+          }
+        ]
+      };
+
+      client.getTopology = async () => mockTopology;
+
+      const provider = new CosmTopologyTreeDataProvider(client);
+
+      // 1. Root children -> 3 TierCategoryItem instances
+      const tiers = await provider.getChildren();
+      assert.strictEqual(tiers.length, 3);
+      assert.ok(tiers.every(t => t instanceof TierCategoryItem));
+      assert.strictEqual((tiers[0] as TierCategoryItem).tierKey, 'Frontend');
+      assert.strictEqual((tiers[1] as TierCategoryItem).tierKey, 'API/Backend');
+      assert.strictEqual((tiers[2] as TierCategoryItem).tierKey, 'Cloud Infra');
+
+      // 2. Frontend tier children -> TopologyComponentItem (frontend/src/App.tsx)
+      const feComponents = await provider.getChildren(tiers[0]);
+      assert.strictEqual(feComponents.length, 1);
+      assert.ok(feComponents[0] instanceof TopologyComponentItem);
+      const feCompItem = feComponents[0] as TopologyComponentItem;
+      assert.strictEqual(feCompItem.filePath, 'frontend/src/App.tsx');
+
+      // 3. TopologyComponentItem children -> TopologyNodeItem (App.tsx)
+      const feNodes = await provider.getChildren(feCompItem);
+      assert.strictEqual(feNodes.length, 1);
+      assert.ok(feNodes[0] instanceof TopologyNodeItem);
+      const feNodeItem = feNodes[0] as TopologyNodeItem;
+      assert.strictEqual(feNodeItem.label, 'App.tsx');
+      assert.strictEqual(feNodeItem.node.file_path, 'frontend/src/App.tsx');
+      assert.strictEqual(feNodeItem.command?.command, 'cosm.navigateToSymbol');
+
+      // 4. TopologyNodeItem children -> TopologyActionItem (Blast) + TopologyActionItem (File) + TopologyEdgeItem
+      const nodeChildren = await provider.getChildren(feNodeItem);
+      assert.strictEqual(nodeChildren.length, 3);
+      assert.ok(nodeChildren[0] instanceof TopologyActionItem);
+      assert.strictEqual((nodeChildren[0] as TopologyActionItem).label, 'Audit Blast Radius');
+      assert.strictEqual((nodeChildren[0] as TopologyActionItem).command?.command, 'cosm.blastRadius');
+      assert.ok(nodeChildren[1] instanceof TopologyActionItem);
+      assert.strictEqual((nodeChildren[1] as TopologyActionItem).label, 'File: frontend/src/App.tsx');
+      assert.ok(nodeChildren[2] instanceof TopologyEdgeItem);
+      assert.strictEqual((nodeChildren[2] as TopologyEdgeItem).label, '🔗 CONSUMES_API');
+
+      // 4. Refresh triggers event
+      let refreshed = false;
+      provider.onDidChangeTreeData(() => {
+        refreshed = true;
+      });
+      provider.refresh();
+      assert.strictEqual(refreshed, true);
+    });
+
+    it('should normalize BlastRadiusReport and handle ImpactAssessment payloads', async () => {
+      const client = new CosmClient(process.cwd());
+      (client as any).execCosm = async () => JSON.stringify({
+        target_symbol_id: 'sym-core-hash',
+        risk_score: 0.75,
+        total_direct_nodes: 2,
+        total_downstream_nodes: 5,
+        summary: 'Impact assessment for sym-core-hash',
+        incoming_edges: ['CALLS:pkg/api', 'IMPORTS:pkg/storage'],
+        outgoing_edges: ['HASHES:pkg/crypto'],
+        affected_components: ['pkg/api', 'pkg/storage'],
+        warnings: ['Contract breakage detected']
+      });
+
+      const report = await client.getBlastRadius('sym-core-hash');
+      assert.strictEqual(report.target_symbol_id, 'sym-core-hash');
+      assert.strictEqual(report.risk_score, 0.75);
+      assert.strictEqual(report.total_direct_nodes, 2);
+      assert.strictEqual(report.total_downstream_nodes, 5);
+      assert.strictEqual(report.summary, 'Impact assessment for sym-core-hash');
+      assert.strictEqual(report.warnings?.length, 1);
+      assert.strictEqual(report.warnings?.[0], 'Contract breakage detected');
+      assert.strictEqual(report.affected_components?.length, 2);
+    });
+  });
 });
+
+

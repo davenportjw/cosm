@@ -47,6 +47,8 @@ func setupTestWorkspace(t *testing.T) (string, *storage.BlobStore, *storage.Grap
 func Add(a int, b int) int {
 	return a + b
 }
+
+func main() {}
 `
 	if err := os.WriteFile(goFile, []byte(initialCode), 0644); err != nil {
 		t.Fatalf("failed to write calculator.go: %v", err)

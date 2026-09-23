@@ -60,7 +60,7 @@ gcloud auth login
 gcloud auth application-default login
 
 # 2. Configure project and default compute region
-export GCP_PROJECT_ID="your-project-id"
+export GCP_PROJECT_ID="${GCP_PROJECT_ID:-davenport-boutique}"
 export GCP_REGION="us-central1"
 export TOPOCOSM_SERVICE_NAME="topocosm-hub"
 

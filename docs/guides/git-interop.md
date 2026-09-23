@@ -71,7 +71,7 @@ Cosm treats code as a typed, content-addressed AST Merkle-DAG where nodes repres
 | Git Operation | Cosm Equivalent | Architectural Difference |
 | :--- | :--- | :--- |
 | `git rebase <upstream>` | `cosm stack evolve -c <parent_id>` | Descendant micro-universes rebase their AST subtrees via semilattice union joins ($H_C' = \text{MerkleRoot}(H_P' \sqcup \Delta_{\text{AST}}(C))$) without textual rebase collisions. |
-| `git commit --amend` | `cosm ast edit` / `cosm symbol edit` | Surgically edits the targeted AST symbol in-place; untouched symbols retain exact hashes, preserving unbroken causal lineage envelopes. |
+| `git commit --amend` | `cosm ast edit` | Surgically edits the targeted AST symbol in-place; untouched symbols retain exact hashes, preserving unbroken causal lineage envelopes. |
 | `git rebase -i` (squash/edit) | `cosm ast edit --batch <batch.json>` | Batched declarative AST transformations applied directly against the workspace manifest. |
 | `git reset --hard` | `cosm universe switch <parent>` | Resets the active frontier pointer to an existing universe head with zero disk worktree churn. |
 | `git cherry-pick <commit>` | `cosm universe merge <src> -s union` | Reconciles discrete AST symbol deltas into the active micro-universe. |

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -231,6 +232,12 @@ func TestOperations_ApplyBatch_ReplaceFunctionBodyAndAdd(t *testing.T) {
 	}
 	if len(result.ModifiedSymbols) != 1 {
 		t.Errorf("Expected 1 modified symbol, got %d", len(result.ModifiedSymbols))
+	}
+	if len(result.ModifiedSymbolsDetails) != 1 {
+		t.Fatalf("Expected 1 modified symbol detail, got %d", len(result.ModifiedSymbolsDetails))
+	}
+	if result.ModifiedSymbolsDetails[0].NodeID != result.ModifiedSymbols[0] {
+		t.Errorf("Expected detail NodeID %s, got %s", result.ModifiedSymbols[0], result.ModifiedSymbolsDetails[0].NodeID)
 	}
 	if len(result.AddedSymbols) != 1 {
 		t.Errorf("Expected 1 added symbol, got %d", len(result.AddedSymbols))
@@ -486,3 +493,241 @@ func stringContains(s, substr string) bool {
 	}
 	return false
 }
+
+func TestOperations_CreateComponent_BlankSlate(t *testing.T) {
+	blobStore, graphEngine, universeMgr, _, cleanup := setupTestEnvironment(t, "universe-blank-slate")
+	defer cleanup()
+
+	lineageEnv := core.LineageEnvelope{
+		UserID:           "agent-customer-zero",
+		UserPrompt:       "Create initial campsite service AST component",
+		ExecutingAgentID: "cosm-ast-surgeon",
+		Intent:           "Initial Component Inception",
+		Timestamp:        time.Now().UTC(),
+	}
+
+	surgeryEngine := NewSurgeryEngine(blobStore, graphEngine, universeMgr)
+
+	goCode := `package main
+
+import "fmt"
+
+func HandleCampsiteList() {
+	fmt.Println("Listing campsites")
+}
+`
+
+	batch := &ASTEditBatch{
+		UniverseID: "universe-blank-slate",
+		Lineage:    lineageEnv,
+		Operations: []ASTOperation{
+			{
+				Operation: OpCreateComponent,
+				Target:    "services/campsite",
+				Content:   goCode,
+				Metadata: map[string]string{
+					"file_path": "cmd/server/main.go",
+				},
+			},
+		},
+	}
+
+	res, err := surgeryEngine.ApplyASTEditBatch(batch)
+	if err != nil {
+		t.Fatalf("ApplyASTEditBatch failed: %v", err)
+	}
+
+	if res.NewManifestHash == "" {
+		t.Errorf("Expected valid NewManifestHash, got empty")
+	}
+	if len(res.AddedSymbols) == 0 {
+		t.Errorf("Expected added symbols, got 0")
+	}
+
+	// Verify manifest in storage
+	manifest, err := universeMgr.GetUniverseManifest("universe-blank-slate")
+	if err != nil {
+		t.Fatalf("GetUniverseManifest failed: %v", err)
+	}
+	if len(manifest.Components) != 1 {
+		t.Fatalf("Expected 1 component in manifest, got %d", len(manifest.Components))
+	}
+
+	// Verify symbol resolution works immediately
+	resolved, err := surgeryEngine.ResolveSymbol("universe-blank-slate", "services/campsite::HandleCampsiteList")
+	if err != nil {
+		t.Fatalf("ResolveSymbol failed: %v", err)
+	}
+	if !strings.HasSuffix(resolved.SymbolNode.Identifier, "HandleCampsiteList") {
+		t.Errorf("Expected HandleCampsiteList, got %s", resolved.SymbolNode.Identifier)
+	}
+}
+
+func TestScaffoldComponent_Polyglot(t *testing.T) {
+	languages := []struct {
+		lang       string
+		compType   string
+		relPath    string
+		expectLang core.Language
+		expectType core.ComponentType
+		checkTrivia func(*testing.T, *core.TriviaEnvelope)
+	}{
+		{
+			lang:       "go",
+			compType:   string(core.CompService),
+			relPath:    "cmd/service/main.go",
+			expectLang: core.LangGo,
+			expectType: core.CompService,
+			checkTrivia: func(t *testing.T, tr *core.TriviaEnvelope) {
+				if tr == nil {
+					t.Fatalf("Expected non-nil Trivia for Go")
+				}
+				if len(tr.HeaderDirectives) == 0 || tr.HeaderDirectives[0] != "//go:build !ignore" {
+					t.Errorf("Expected //go:build !ignore directive, got %v", tr.HeaderDirectives)
+				}
+			},
+		},
+		{
+			lang:       "python",
+			compType:   string(core.CompService),
+			relPath:    "services/worker/main.py",
+			expectLang: core.LangPython,
+			expectType: core.CompService,
+			checkTrivia: func(t *testing.T, tr *core.TriviaEnvelope) {
+				if tr == nil {
+					t.Fatalf("Expected non-nil Trivia for Python")
+				}
+				if len(tr.HeaderDirectives) == 0 || !strings.Contains(tr.HeaderDirectives[0], "coding: utf-8") {
+					t.Errorf("Expected encoding directive, got %v", tr.HeaderDirectives)
+				}
+				if tr.ModuleDocstring == "" {
+					t.Errorf("Expected non-empty ModuleDocstring for Python scaffold")
+				}
+			},
+		},
+		{
+			lang:       "typescript",
+			compType:   string(core.CompFrontend),
+			relPath:    "frontend/App.tsx",
+			expectLang: core.LangTypeScript,
+			expectType: core.CompFrontend,
+			checkTrivia: func(t *testing.T, tr *core.TriviaEnvelope) {
+				if tr == nil {
+					t.Fatalf("Expected non-nil Trivia for TypeScript")
+				}
+				foundUseClient := false
+				for _, dir := range tr.HeaderDirectives {
+					if strings.Contains(dir, "use client") {
+						foundUseClient = true
+					}
+				}
+				if !foundUseClient {
+					t.Errorf("Expected 'use client' directive in TS trivia, got %v", tr.HeaderDirectives)
+				}
+			},
+		},
+		{
+			lang:       "sql",
+			compType:   string(core.CompDatabase),
+			relPath:    "db/schema.sql",
+			expectLang: core.LangSQL,
+			expectType: core.CompDatabase,
+			checkTrivia: func(t *testing.T, tr *core.TriviaEnvelope) {
+				if tr == nil {
+					t.Fatalf("Expected non-nil Trivia for SQL")
+				}
+				foundDialect := false
+				for _, dir := range tr.HeaderDirectives {
+					if strings.Contains(dir, "dialect: postgresql") {
+						foundDialect = true
+					}
+				}
+				if !foundDialect {
+					t.Errorf("Expected postgresql dialect directive in SQL trivia, got %v", tr.HeaderDirectives)
+				}
+			},
+		},
+	}
+
+	for _, tc := range languages {
+		t.Run(tc.lang, func(t *testing.T) {
+			comp, err := ScaffoldComponent(tc.lang, tc.compType, tc.relPath)
+			if err != nil {
+				t.Fatalf("ScaffoldComponent(%s) failed: %v", tc.lang, err)
+			}
+			if comp == nil {
+				t.Fatalf("ScaffoldComponent(%s) returned nil component", tc.lang)
+			}
+			if comp.Language != tc.expectLang {
+				t.Errorf("Expected language %s, got %s", tc.expectLang, comp.Language)
+			}
+			if comp.Type != tc.expectType {
+				t.Errorf("Expected type %s, got %s", tc.expectType, comp.Type)
+			}
+			if comp.ComponentID == "" {
+				t.Errorf("Expected non-empty ComponentID")
+			}
+			if len(comp.SymbolNodes) == 0 {
+				t.Errorf("Expected symbol nodes in scaffolded component, got 0")
+			}
+			tc.checkTrivia(t, comp.Trivia)
+		})
+	}
+
+	// Test unsupported language returns error
+	_, err := ScaffoldComponent("brainfuck", "service", "main.bf")
+	if err == nil {
+		t.Errorf("Expected error for unsupported language, got nil")
+	}
+}
+
+func TestSurgeryEngine_ScaffoldComponent(t *testing.T) {
+	blobStore, graphEngine, universeMgr, _, cleanup := setupTestEnvironment(t, "universe-scaffold-test")
+	defer cleanup()
+
+	// Commit initial empty manifest
+	initManifest := &core.WorkspaceManifestNode{
+		WorkspaceID: "ws-scaffold-test",
+		UniverseID:  "universe-scaffold-test",
+		Components:  []string{},
+		CreatedAt:   time.Now().UTC(),
+	}
+	mBytes, _ := json.Marshal(initManifest)
+	mHash, _ := blobStore.Put(mBytes)
+	initManifest.MerkleRootHash = mHash
+	_, _ = universeMgr.CommitManifest("universe-scaffold-test", initManifest)
+
+	engine := NewSurgeryEngine(blobStore, graphEngine, universeMgr)
+
+	lineage := core.LineageEnvelope{
+		UserPrompt:       "Scaffold new go service",
+		ExecutingAgentID: "agent-scaffold",
+		Timestamp:        time.Now().UTC(),
+	}
+
+	comp, err := engine.ScaffoldComponent("universe-scaffold-test", "go", "service", "services/auth/main.go", lineage)
+	if err != nil {
+		t.Fatalf("engine.ScaffoldComponent failed: %v", err)
+	}
+
+	if comp == nil {
+		t.Fatalf("expected non-nil component")
+	}
+	if comp.ComponentID == "" {
+		t.Errorf("expected non-empty component ID")
+	}
+
+	// Verify universe manifest updated
+	manifest, err := universeMgr.GetUniverseManifest("universe-scaffold-test")
+	if err != nil {
+		t.Fatalf("GetUniverseManifest failed: %v", err)
+	}
+	if len(manifest.Components) != 1 {
+		t.Fatalf("expected 1 component in manifest, got %d", len(manifest.Components))
+	}
+	if manifest.Components[0] != comp.ComponentID {
+		t.Errorf("expected component hash %s in manifest, got %s", comp.ComponentID, manifest.Components[0])
+	}
+}
+
+

@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -43,17 +45,18 @@ func logStructured(severity, msg, traceID, role string, taskIdx int) {
 
 func main() {
 	var (
-		roleFlag     = flag.String("role", "", "Agent role (bootstrap, backend, frontend, infra, contender, judge)")
-		hubURLFlag   = flag.String("hub-url", "", "Topocosm Hub URL (env: TOPOCOSM_HUB_URL)")
-		repoFlag     = flag.String("repo", "cosm/fintech-mesh", "Cosm repository (env: COSM_REPO)")
-		workDirFlag  = flag.String("workdir", "", "Working directory for agent operations")
-		modelFlag    = flag.String("model", "gemini-3.8-flash", "LLM model (env: GEMINI_MODEL)")
-		mockFlag     = flag.Bool("mock", false, "Use deterministic mock provider")
-		traceIDFlag  = flag.String("trace-id", "", "W3C Trace ID (env: COSM_TRACE_ID)")
-		sessionFlag  = flag.String("session-id", "", "Agent Session ID (env: COSM_SESSION_ID)")
-		taskIdxFlag   = flag.Int("task-index", -1, "Cloud Run task index (env: CLOUD_RUN_TASK_INDEX)")
-		tokenFlag     = flag.String("token", "", "Topocosm Personal Access Token (env: TOPOCOSM_TOKEN, COSM_AUTH_TOKEN)")
-		taskCountFlag = flag.Int("tasks", 100, "Total number of swarm tasks (default: 100)")
+		roleFlag        = flag.String("role", "", "Agent role (bootstrap, backend, frontend, infra, contender, judge)")
+		hubURLFlag      = flag.String("hub-url", "", "Topocosm Hub URL (env: TOPOCOSM_HUB_URL)")
+		repoFlag        = flag.String("repo", "cosm/fintech-mesh", "Cosm repository (env: COSM_REPO)")
+		workDirFlag     = flag.String("workdir", "", "Working directory for agent operations")
+		sessionsDirFlag = flag.String("sessions-dir", "", "Directory to read/write agent session telemetry (env: COSM_SESSIONS_DIR, default: /tmp/cosm-sessions)")
+		modelFlag       = flag.String("model", "gemini-3.8-flash", "LLM model (env: GEMINI_MODEL)")
+		mockFlag        = flag.Bool("mock", false, "Use deterministic mock provider")
+		traceIDFlag     = flag.String("trace-id", "", "W3C Trace ID (env: COSM_TRACE_ID)")
+		sessionFlag     = flag.String("session-id", "", "Agent Session ID (env: COSM_SESSION_ID)")
+		taskIdxFlag     = flag.Int("task-index", -1, "Cloud Run task index (env: CLOUD_RUN_TASK_INDEX)")
+		tokenFlag       = flag.String("token", "", "Topocosm Personal Access Token (env: TOPOCOSM_TOKEN, COSM_AUTH_TOKEN)")
+		taskCountFlag   = flag.Int("tasks", 100, "Total number of swarm tasks (default: 100)")
 	)
 	flag.Parse()
 
@@ -70,6 +73,9 @@ func main() {
 				taskIndex = parsed
 			}
 		}
+	}
+	if taskIndex < 0 {
+		taskIndex = 0
 	}
 
 	// Auto-select role based on Cloud Run Task Index if unspecified
@@ -155,7 +161,21 @@ func main() {
 		workDir = temp
 	}
 
-	logStructured("INFO", fmt.Sprintf("Starting Cloud Run Agent role=%s did=%s task_index=%d hub=%s repo=%s has_token=%t", role, agentDID, taskIndex, hubURL, repo, token != ""), traceID, role, taskIndex)
+	sessionsDir := *sessionsDirFlag
+	if sessionsDir == "" {
+		sessionsDir = os.Getenv("COSM_SESSIONS_DIR")
+	}
+	if sessionsDir == "" {
+		sessionsDir = "/tmp/cosm-sessions"
+	}
+	os.Setenv("COSM_SESSIONS_DIR", sessionsDir)
+	if err := os.MkdirAll(sessionsDir, 0755); err != nil {
+		logStructured("ERROR", fmt.Sprintf("failed creating sessions directory %s: %v", sessionsDir, err), traceID, role, taskIndex)
+		fmt.Fprintf(os.Stderr, "failed creating sessions directory %s: %v\n", sessionsDir, err)
+		os.Exit(1)
+	}
+
+	logStructured("INFO", fmt.Sprintf("Starting Cloud Run Agent role=%s did=%s task_index=%d hub=%s repo=%s sessions_dir=%s has_token=%t", role, agentDID, taskIndex, hubURL, repo, sessionsDir, token != ""), traceID, role, taskIndex)
 
 	// Determine LLM provider
 	var provider llm.LLMProvider
@@ -218,14 +238,14 @@ func main() {
 	case "observer":
 		session, err = agent.RunPrompt(ctx, "Query proposals and inspect Merkle DAG topology across the mesh.", framework.LoopOptions{MaxSteps: 6})
 	case "judge":
-		runJudgeStandalone(ctx, *modelFlag, apiKey, *mockFlag, traceID, *taskCountFlag)
+		runJudgeStandalone(ctx, *modelFlag, apiKey, *mockFlag, traceID, *taskCountFlag, sessionsDir)
 		return
 	default:
 		logStructured("ERROR", fmt.Sprintf("Unknown role: %s", role), traceID, role, taskIndex)
 		os.Exit(1)
 	}
 
-	if err != nil {
+	if err != nil || session == nil {
 		logStructured("ERROR", fmt.Sprintf("Agent run failed: %v", err), traceID, role, taskIndex)
 		os.Exit(1)
 	}
@@ -237,6 +257,19 @@ func main() {
 
 	logStructured("INFO", fmt.Sprintf("Agent completed successfully. TotalSteps=%d Tokens=%d Duration=%v",
 		session.TotalSteps, session.TotalTokens.TotalTokens, session.Duration), traceID, role, taskIndex)
+
+	// Persist authentic session telemetry for judge evaluation
+	sessionFile := filepath.Join(sessionsDir, fmt.Sprintf("session-task-%d.json", taskIndex))
+	sessData, err := json.MarshalIndent(session, "", "  ")
+	if err != nil {
+		logStructured("ERROR", fmt.Sprintf("failed serializing session JSON: %v", err), traceID, role, taskIndex)
+		os.Exit(1)
+	}
+	if err := os.WriteFile(sessionFile, sessData, 0644); err != nil {
+		logStructured("ERROR", fmt.Sprintf("failed writing session file %s: %v", sessionFile, err), traceID, role, taskIndex)
+		os.Exit(1)
+	}
+	logStructured("INFO", fmt.Sprintf("Persisted authentic session telemetry to %s", sessionFile), traceID, role, taskIndex)
 }
 
 func setupMockPlan(mock *llm.MockProvider, role, repo, hubURL string, taskIndex int) {
@@ -292,7 +325,7 @@ func setupMockPlan(mock *llm.MockProvider, role, repo, hubURL string, taskIndex 
 	}
 }
 
-func runJudgeStandalone(ctx context.Context, model, apiKey string, mock bool, traceID string, totalTasks int) {
+func runJudgeStandalone(ctx context.Context, model, apiKey string, mock bool, traceID string, totalTasks int, sessionsDir string) {
 	logStructured("INFO", fmt.Sprintf("Running Gemini 3.8 Flash Rater Judge evaluation for %d tasks", totalTasks), traceID, "judge", 100)
 	var judgeProvider llm.LLMProvider
 	if mock {
@@ -314,10 +347,35 @@ func runJudgeStandalone(ctx context.Context, model, apiKey string, mock bool, tr
 		}
 	}
 
+	var sessions []*framework.AgentSession
+	if mock {
+		logStructured("INFO", "Running Deterministic Concurrency Benchmark Replay (MOCK MODE enabled for SCM backplane stress testing)", traceID, "judge", 100)
+		loaded, err := loadWorkerSessions(sessionsDir)
+		if err == nil && len(loaded) > 0 {
+			sessions = loaded
+			logStructured("INFO", fmt.Sprintf("Loaded %d worker sessions from %s for mock evaluation", len(sessions), sessionsDir), traceID, "judge", 100)
+		} else {
+			sessions = replayMockBenchmarkSessions(totalTasks)
+		}
+	} else {
+		loaded, err := loadWorkerSessions(sessionsDir)
+		if err != nil {
+			logStructured("ERROR", fmt.Sprintf("error reading worker sessions from %s: %v", sessionsDir, err), traceID, "judge", 100)
+		}
+		if len(loaded) == 0 {
+			errMsg := fmt.Sprintf("no genuine worker sessions found in %s: live judge requires authentic execution sessions from completed workers (STRICT NEVER MOCK DIRECTIVE)", sessionsDir)
+			logStructured("ERROR", errMsg, traceID, "judge", 100)
+			fmt.Fprintf(os.Stderr, "FATAL: %s\n", errMsg)
+			os.Exit(1)
+		}
+		sessions = loaded
+		logStructured("INFO", fmt.Sprintf("Loaded %d authentic worker sessions from %s for evaluation", len(sessions), sessionsDir), traceID, "judge", 100)
+	}
+
 	judge := rater.NewRaterJudge(judgeProvider, rater.DefaultJudgeModel)
 	evalReq := &rater.JudgeEvaluationRequest{
 		ScenarioName: "cloudrun-polyglot-mesh-100",
-		Sessions:     buildSwarmWorkerSessions(totalTasks),
+		Sessions:     sessions,
 	}
 	report, err := judge.Evaluate(ctx, evalReq)
 	if err != nil {
@@ -329,7 +387,39 @@ func runJudgeStandalone(ctx context.Context, model, apiKey string, mock bool, tr
 	fmt.Println(string(data))
 }
 
-func buildSwarmWorkerSessions(totalTasks int) []*framework.AgentSession {
+func loadWorkerSessions(sessionsDir string) ([]*framework.AgentSession, error) {
+	pattern := filepath.Join(sessionsDir, "session-task-*.json")
+	files, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("glob error in %s: %w", sessionsDir, err)
+	}
+	if len(files) == 0 {
+		return nil, nil
+	}
+
+	sort.Slice(files, func(i, j int) bool {
+		var idxI, idxJ int
+		fmt.Sscanf(filepath.Base(files[i]), "session-task-%d.json", &idxI)
+		fmt.Sscanf(filepath.Base(files[j]), "session-task-%d.json", &idxJ)
+		return idxI < idxJ
+	})
+
+	sessions := make([]*framework.AgentSession, 0, len(files))
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("reading session file %s: %w", file, err)
+		}
+		var sess framework.AgentSession
+		if err := json.Unmarshal(data, &sess); err != nil {
+			return nil, fmt.Errorf("unmarshaling session file %s: %w", file, err)
+		}
+		sessions = append(sessions, &sess)
+	}
+	return sessions, nil
+}
+
+func replayMockBenchmarkSessions(totalTasks int) []*framework.AgentSession {
 	if totalTasks <= 0 {
 		totalTasks = 100
 	}

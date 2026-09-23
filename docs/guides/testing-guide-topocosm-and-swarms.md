@@ -144,6 +144,22 @@ export AGENT_JOB_NAME="cosm-agent-swarm-100"
 ./deploy/scripts/run_cloudrun_agent_swarm.sh
 ```
 
+### Two-Tier Multi-Agent Testing Architecture
+
+To ensure both thorough backplane stress testing and authentic AI model verification without wasting API quotas or masking failures, Cosm enforces a strict **Two-Tier Testing Model**:
+
+| Tier | Name | LLM Mode | Purpose & Focus | Execution Command |
+|---|---|---|---|---|
+| **Tier 1** | **Deterministic SCM Concurrency & Backplane Benchmark** | Deterministic Scripted (`--mock=true`) | Stresses high-concurrency SCM invariants: Blackboard mutual-exclusion domain leases (`services/orders-0..3`), atomic CAS blob store deduplication, and CRDT semilattice proposal merges across 100 concurrent workers without exhausting Vertex AI rate limits (~1,000 live calls avoided). | `go test -v ./test/agents/ -run TestCloudRun_100Tasks_Concurrency` |
+| **Tier 2** | **Live Scaled Agent Efficacy & Judge Audits** | Unmocked Live (`--mock=false`) | Audits true autonomous model efficacy: Unmocked Gemini 3.8 Flash agents receive natural-language directives, dynamically plan, invoke Cosm AST tools, stage code, and push stacked proposals. Unmocked Gemini 3.8 Flash Rater Judge audits tool fidelity, token economy, and awards qualitative scorecards. | `go test -v ./test/agents/ -run TestLiveVertex_AgentEfficacy_RealScale` |
+
+#### Zero-Mock Enforcement in Live Execution
+When executing in live mode (`--mock=false` / default in production Cloud Run jobs), Cosm strictly enforces the **STRICT NEVER MOCK DIRECTIVE**:
+- Worker tasks automatically persist their authentic `AgentSession` telemetry to `$COSM_SESSIONS_DIR/session-task-<idx>.json`.
+- The standalone Rater Judge scans `$COSM_SESSIONS_DIR` for completed worker sessions. If no authentic session files are detected, the judge immediately aborts with a fatal error:
+  `FATAL: no genuine worker sessions found in /tmp/cosm-sessions: live judge requires authentic execution sessions from completed workers (STRICT NEVER MOCK DIRECTIVE)`.
+- Synthetic or pre-canned fallbacks are prohibited during live runs.
+
 ### High-Scale 100-Task Swarm Concurrency Suite
 Cosm and Topocosm include dedicated 100-task end-to-end concurrency test suites:
 - `cosm`: `test/agents/cloudrun_100tasks_concurrency_test.go`
@@ -169,8 +185,11 @@ To execute the automated end-to-end swarm tests:
 # Cosm 5-agent baseline E2E
 go test -v ./test/agents/ -run TestCloudRun_PolyglotSwarmE2E
 
-# Cosm 100-agent concurrency suite
+# Cosm Tier 1 100-agent deterministic concurrency suite
 go test -v ./test/agents/ -run TestCloudRun_100Tasks_Concurrency
+
+# Cosm Tier 2 Live Vertex AI Gemini 3.8 Flash Agent Efficacy suite
+go test -v ./test/agents/ -run TestLiveVertex_AgentEfficacy_RealScale
 
 # Topocosm 100-agent concurrency suite
 go test -v ./pkg/server/ -run TestE2E_CloudRun_100Tasks_Concurrency
@@ -186,6 +205,8 @@ go test -v ./pkg/server/ -run TestE2E_CloudRun_100Tasks_Concurrency
 - [ ] Workspaces publish cleanly to the hub over HTTP.
 - [ ] Sparse clone fetches isolated AST subgraphs with reported bandwidth savings.
 - [ ] Multi-agent Cloud Run swarm executes with W3C distributed trace correlation.
-- [ ] 100-task concurrency suite validates mutual-exclusion domain leases and HTTP 409 conflict handling.
-- [ ] Gemini 3.8 Flash Rater Judge audits tool fidelity, normalized token economy, and awards Score >= 85.0 (Grade A/A+).
+- [ ] Tier 1 100-task concurrency suite validates mutual-exclusion domain leases and HTTP 409 conflict handling.
+- [ ] Tier 2 Live Gemini 3.8 Flash Rater Judge audits authentic tool fidelity, normalized token economy, and awards Score >= 85.0 (Grade A/A+).
+- [ ] Live execution strictly enforces genuine session telemetry, rejecting mock fallbacks under STRICT NEVER MOCK DIRECTIVE.
+
 

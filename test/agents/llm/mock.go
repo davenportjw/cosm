@@ -28,7 +28,7 @@ type MockProvider struct {
 
 // NewMockProvider creates an empty MockProvider with default model.
 func NewMockProvider(model ...string) *MockProvider {
-	m := "mock-gemini-3.7-flash"
+	m := "mock-gemini-3.8-flash"
 	if len(model) > 0 && model[0] != "" {
 		m = model[0]
 	}

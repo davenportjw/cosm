@@ -11,7 +11,10 @@ import (
 )
 
 func TestVertexAI_LiveGemini38Flash(t *testing.T) {
-	out, err := exec.Command("gcloud", "auth", "print-access-token").Output()
+	out, err := exec.Command("gcloud", "auth", "application-default", "print-access-token").Output()
+	if err != nil || len(out) == 0 {
+		out, err = exec.Command("gcloud", "auth", "print-access-token").Output()
+	}
 	if err != nil || len(out) == 0 {
 		t.Skip("skipping live Vertex AI test: gcloud auth not available")
 	}

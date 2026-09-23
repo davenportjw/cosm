@@ -439,3 +439,26 @@ func (c *HubClient) ListAccessGrants(ctx context.Context, orgSlug, cosmName stri
 	}
 	return grants, nil
 }
+
+// GetBlob streams a raw CAS blob by content-addressed hash.
+func (c *HubClient) GetBlob(ctx context.Context, hash string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/blobs/"+hash, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.bearerToken)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get blob %s returned status %d", hash, resp.StatusCode)
+	}
+
+	return io.ReadAll(resp.Body)
+}

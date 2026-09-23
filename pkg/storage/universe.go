@@ -38,6 +38,22 @@ func NewUniverseManager(ge *GraphEngine, bs *BlobStore) *UniverseManager {
 	}
 }
 
+// GraphEngine returns the underlying GraphEngine.
+func (u *UniverseManager) GraphEngine() *GraphEngine {
+	if u == nil {
+		return nil
+	}
+	return u.graphEngine
+}
+
+// BlobStore returns the underlying BlobStore.
+func (u *UniverseManager) BlobStore() *BlobStore {
+	if u == nil {
+		return nil
+	}
+	return u.blobStore
+}
+
 // CreateUniverse forks or initializes a new micro-universe.
 // If parentUniverseID is specified, the new universe branches from the parent's current head manifest.
 func (u *UniverseManager) CreateUniverse(universeID, parentUniverseID string) (*UniverseHeadRecord, error) {

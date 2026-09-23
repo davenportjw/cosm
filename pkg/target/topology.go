@@ -9,12 +9,14 @@ import (
 
 // TopologyNode represents a node in the rendered multi-tier topology graph.
 type TopologyNode struct {
-	ID       string         `json:"id"`
-	Name     string         `json:"name"`
-	Tier     string         `json:"tier"`     // "Frontend", "API/Backend", "Cloud Infra"
-	Language core.Language  `json:"language"` // typescript, go, hcl
-	Type     string         `json:"type"`     // ReactComponent, RouteBinding, ResourceBlock
-	Outgoing []TopologyEdge `json:"outgoing"`
+	ID            string         `json:"id"`
+	Name          string         `json:"name"`
+	Tier          string         `json:"tier"`     // "Frontend", "API/Backend", "Cloud Infra"
+	Language      core.Language  `json:"language"` // typescript, go, hcl, etc.
+	Type          string         `json:"type"`     // ReactComponent, RouteBinding, ResourceBlock
+	FilePath      string         `json:"file_path,omitempty"`
+	ComponentName string         `json:"component_name,omitempty"`
+	Outgoing      []TopologyEdge `json:"outgoing"`
 }
 
 // TopologyEdge represents a semantic cross-domain link between nodes.
@@ -49,35 +51,89 @@ func (v *TopologyVisualizer) BuildTopology(
 ) *FullTopologyGraph {
 	graph := &FullTopologyGraph{}
 	nodeLookup := make(map[string]*TopologyNode)
+	seenComponents := make(map[string]bool)
+	seenSymbols := make(map[string]bool)
 
-	// 1. Group symbols into tiers
-	for _, compID := range manifest.Components {
+	// 1. Group symbols into tiers (process in reverse to pick newest version of each component)
+	for i := len(manifest.Components) - 1; i >= 0; i-- {
+		compID := manifest.Components[i]
 		comp, ok := compMap[compID]
 		if !ok {
 			continue
 		}
+		if seenComponents[comp.Name] {
+			continue
+		}
+		seenComponents[comp.Name] = true
+
+		filePath := comp.Name
+		if comp.Metadata != nil && comp.Metadata["file_path"] != "" {
+			filePath = comp.Metadata["file_path"]
+		}
 
 		for _, sID := range comp.SymbolNodes {
+			if seenSymbols[sID] {
+				continue
+			}
 			sym, ok := symbolMap[sID]
 			if !ok {
 				continue
 			}
+			seenSymbols[sID] = true
 
 			tier := "Backend"
-			if sym.Language == core.LangTypeScript {
+			lowerPath := strings.ToLower(filePath)
+			lowerIdent := strings.ToLower(sym.Identifier)
+
+			isFrontend := sym.Language == core.LangTypeScript ||
+				string(sym.Language) == "javascript" ||
+				string(sym.Language) == "html" ||
+				string(sym.Language) == "css" ||
+				string(sym.Language) == "vue" ||
+				string(sym.Language) == "svelte" ||
+				strings.Contains(lowerPath, "web") ||
+				strings.Contains(lowerPath, "frontend") ||
+				strings.Contains(lowerPath, "static") ||
+				strings.Contains(lowerPath, "templates") ||
+				strings.Contains(lowerIdent, "template") ||
+				strings.Contains(sym.Identifier, "HX-")
+
+			isInfra := sym.Language == core.LangHCL ||
+				sym.Language == core.LangDockerfile ||
+				string(sym.Language) == "terraform" ||
+				sym.NodeType == "ResourceBlock" ||
+				sym.NodeType == "HCLBlock" ||
+				sym.NodeType == "VariableBlock" ||
+				sym.NodeType == "OutputBlock" ||
+				sym.NodeType == "ProviderBlock" ||
+				sym.NodeType == "BaseImage" ||
+				sym.NodeType == "CopyInstruction" ||
+				sym.NodeType == "WorkdirInstruction" ||
+				sym.NodeType == "PortExpose" ||
+				sym.NodeType == "EntryPoint" ||
+				sym.NodeType == "EnvBinding"
+
+			if isFrontend {
 				tier = "Frontend"
-			} else if sym.Language == core.LangHCL {
+			} else if isInfra {
 				tier = "Cloud Infra"
-			} else if sym.Language == core.LangGo || sym.Language == core.LangPython {
+			} else if sym.Language == core.LangGo || sym.Language == core.LangPython || sym.Language == core.LangRust || sym.Language == core.LangSQL {
 				tier = "API/Backend"
 			}
 
+			symFilePath := filePath
+			if sym.ASTMetadata != nil && sym.ASTMetadata["file_path"] != "" {
+				symFilePath = sym.ASTMetadata["file_path"]
+			}
+
 			tNode := &TopologyNode{
-				ID:       sym.NodeID,
-				Name:     sym.Identifier,
-				Tier:     tier,
-				Language: sym.Language,
-				Type:     sym.NodeType,
+				ID:            sym.NodeID,
+				Name:          sym.Identifier,
+				Tier:          tier,
+				Language:      sym.Language,
+				Type:          sym.NodeType,
+				FilePath:      symFilePath,
+				ComponentName: comp.Name,
 			}
 			nodeLookup[sym.NodeID] = tNode
 

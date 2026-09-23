@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -48,6 +49,7 @@ Core Commands:
   init                             Initialize a new .cosm/ repository in current directory
   add <files...>                   Parse Go/HCL/TS/Python files into AST symbol nodes & stage to store
   commit -i <intent>               Commit active manifest & update universe head
+  log [-u <universe>] [-n <limit>] Show universe Merkle commit history, causal lineage & symbol diffs
   status                           Show working tree AST status vs active universe head
   topology                         Render multi-domain topology graph (ASCII / Mermaid)
   lineage <node_id>                Trace full causal lineage chain back to originating user prompt
@@ -58,8 +60,7 @@ Core Commands:
   proposal <create|list|view|review|merge> Manage, view, and critique AI-native PRs and proposals
   stack <list|create|evolve>       Manage Jujutsu-style stacked proposals & auto-evolution
   peer <status|sync>               Distributed P2P swarm mesh replication & sparse AST sync
-  symbol <edit|impact>             Surgically edit AST symbol payloads or audit blast-radius
-  ast <edit|resolve>               Declarative AST mutations (replace body, add method, delete) & scoped symbol resolution
+  ast <create|edit|resolve|tree>   Declarative AST mutations, scoped symbol resolution & hierarchical tree view
   import-repo -d <dir>             Onboard existing codebase into AST Merkle-DAG with contract inference
   import -d <dir>                  Recursively scan and ingest code files into active universe
   export -d <dir>                  Reconstitute and write entire universe AST back to disk
@@ -121,6 +122,9 @@ func main() {
 
 	case "commit":
 		runCommit(args)
+
+	case "log":
+		runLog(args)
 
 	case "status":
 		runStatus(args)
@@ -214,10 +218,10 @@ func main() {
 		os.Exit(1)
 	}
 }
-
 func runInit(args []string) {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	universeID := fs.String("u", "universe-main", "Initial universe ID")
+	fs.StringVar(universeID, "universe", "universe-main", "Initial universe ID (alias)")
 	_ = fs.Parse(args)
 
 	cosmDir := ".cosm"
@@ -242,8 +246,34 @@ func runInit(args []string) {
 	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
 	_, _ = universeMgr.CreateUniverse(*universeID, "")
 
+	// Customer Zero invariant: Auto-commit an initial empty WorkspaceManifestNode
+	// so newly initialized universes begin with a valid, committed Merkle root.
+	initialManifest := &core.WorkspaceManifestNode{
+		WorkspaceID: "ws-" + *universeID,
+		UniverseID:  *universeID,
+		Components:  []string{},
+		CrossEdges:  []core.CrossBoundaryEdge{},
+		CreatedAt:   time.Now().UTC(),
+	}
+	initialHash, _ := core.HashWorkspaceManifest(initialManifest)
+	initialManifest.MerkleRootHash = initialHash
+	_, _ = universeMgr.CommitManifest(*universeID, initialManifest)
+
 	fmt.Println("✨ Initialized empty Cosm repository in .cosm/")
-	fmt.Printf("   Active Universe: %s\n", *universeID)
+	fmt.Printf("   Active Universe: %s (Merkle Root: %s)\n", *universeID, initialHash[:min(12, len(initialHash))])
+	fmt.Println()
+	fmt.Println("Next Steps (Two paths to build):")
+	fmt.Println("1. Native AST Inception (Agent / AST-First Paradigm):")
+	fmt.Println("   • Incept component:  cosm ast create -c <name> --lang <go|python|ts|sql>")
+	fmt.Println("   • Or with code:      cosm ast create -c <name> -f <path> --code \"...\"")
+	fmt.Println("   • Surgical edits:    cosm ast edit --op replace_function_body --target <symbol> --content \"...\" -w")
+	fmt.Println("   • Inspect AST DAG:   cosm ast tree")
+	fmt.Println("   • Commit changes:    cosm commit -i \"Commit description\"")
+	fmt.Println()
+	fmt.Println("2. Filesystem Staging Lens (Disk / Hybrid Paradigm):")
+	fmt.Println("   • Stage directory:   cosm add . (or cosm add <file_or_dir>)")
+	fmt.Println("   • Workspace status:  cosm status")
+	fmt.Println("   • Commit changes:    cosm commit -i \"Initial commit\"")
 }
 
 func runAdd(args []string) {
@@ -280,7 +310,9 @@ func runAddE(args []string) error {
 
 	files := fs.Args()
 	if len(files) == 0 {
-		fmt.Println("No files specified to add.")
+		fmt.Println("No files specified to add. Usage: cosm add <file_or_dir...>")
+		fmt.Println("To stage all workspace files: cosm add .")
+		fmt.Println("To create AST nodes directly without disk files: cosm ast create -c <component> --lang <go|python|ts|sql>")
 		return nil
 	}
 
@@ -289,6 +321,59 @@ func runAddE(args []string) error {
 		ignoreEngine = ignore.NewIgnoreEngine(".")
 	}
 	secretDetector := ignore.NewSecretDetector()
+
+	var expandedFiles []string
+	explicitFiles := make(map[string]bool)
+	for _, p := range files {
+		fi, err := os.Stat(p)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error inspecting %s: %v\n", p, err)
+			continue
+		}
+		if fi.IsDir() {
+			_ = filepath.Walk(p, func(walkPath string, info os.FileInfo, walkErr error) error {
+				if walkErr != nil || info == nil {
+					return nil
+				}
+				cleanWalk := filepath.Clean(walkPath)
+				var relWalk string
+				if r, rErr := filepath.Rel(".", cleanWalk); rErr == nil && !strings.HasPrefix(r, "..") {
+					relWalk = r
+				} else {
+					relWalk = cleanWalk
+				}
+				if info.IsDir() {
+					base := filepath.Base(walkPath)
+					if strings.HasPrefix(base, ".") && walkPath != "." && walkPath != p {
+						return filepath.SkipDir
+					}
+					if base == "node_modules" || base == "vendor" || base == "target" || base == "dist" {
+						return filepath.SkipDir
+					}
+					if !*force && ignoreEngine.ShouldIgnorePath(relWalk, true) {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+				if strings.HasPrefix(filepath.Base(walkPath), ".") {
+					return nil
+				}
+				if !*force && ignoreEngine.ShouldIgnorePath(relWalk, false) {
+					return nil
+				}
+				expandedFiles = append(expandedFiles, walkPath)
+				return nil
+			})
+		} else {
+			expandedFiles = append(expandedFiles, p)
+			explicitFiles[p] = true
+		}
+	}
+
+	if len(expandedFiles) == 0 {
+		fmt.Println("No files found to stage.")
+		return nil
+	}
 
 	blobStore, graphEngine, err := openStorage()
 	if err != nil {
@@ -320,7 +405,7 @@ func runAddE(args []string) error {
 		},
 	}
 
-	for _, path := range files {
+	for _, path := range expandedFiles {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading %s: %v\n", path, err)
@@ -343,7 +428,10 @@ func runAddE(args []string) error {
 		}
 
 		if !*force && ignoreEngine.ShouldIgnorePath(relPath, false) {
-			return fmt.Errorf("'%s' is ignored by .cosmignore or default exclusion rules. Use --force (-f) to override", relPath)
+			if explicitFiles[path] {
+				return fmt.Errorf("'%s' is ignored by .cosmignore or default exclusion rules. Use --force (-f) to override", relPath)
+			}
+			continue
 		}
 
 		if !*allowSecrets {
@@ -443,8 +531,11 @@ func runAddE(args []string) error {
 func runCommit(args []string) {
 	fs := flag.NewFlagSet("commit", flag.ExitOnError)
 	universeID := fs.String("u", "universe-main", "Universe ID")
+	fs.StringVar(universeID, "universe", "universe-main", "Universe ID (alias)")
 	intent := fs.String("i", "Manual commit", "Commit message / intent")
+	fs.StringVar(intent, "intent", "Manual commit", "Commit message / intent (alias)")
 	prompt := fs.String("p", "", "Originating user prompt")
+	fs.StringVar(prompt, "prompt", "", "Originating user prompt (alias)")
 	sessionID := fs.String("session-id", "", "Agent session ID")
 	orchID := fs.String("orchestrator-id", "", "Orchestrator Agent ID")
 	agentID := fs.String("a", "cosm-user-agent", "Agent ID")
@@ -471,18 +562,23 @@ func runCommit(args []string) {
 	defer graphEngine.Close()
 
 	nodes := graphEngine.ListNodes("", "")
-	var compIDs []string
 	symbolMap := make(map[string]*core.ASTSymbolNode)
-	var components []*core.ComponentNode
+	latestCompByPath := make(map[string]*core.ComponentNode)
 
 	for _, n := range nodes {
 		if n.NodeType == "service" || n.NodeType == "infra" || n.NodeType == "frontend" || n.NodeType == "library" || n.NodeType == "contract" {
-			compIDs = append(compIDs, n.NodeID)
 			data, err := blobStore.Get(n.MerkleHash)
 			if err == nil {
 				var c core.ComponentNode
 				if e := json.Unmarshal(data, &c); e == nil {
-					components = append(components, &c)
+					key := c.Metadata["file_path"]
+					if key == "" {
+						key = c.Name
+					}
+					existing, exists := latestCompByPath[key]
+					if !exists || c.Lineage.Timestamp.After(existing.Lineage.Timestamp) {
+						latestCompByPath[key] = &c
+					}
 				}
 			}
 		} else {
@@ -495,6 +591,14 @@ func runCommit(args []string) {
 			}
 		}
 	}
+
+	var compIDs []string
+	var components []*core.ComponentNode
+	for _, c := range latestCompByPath {
+		compIDs = append(compIDs, c.ComponentID)
+		components = append(components, c)
+	}
+	sort.Strings(compIDs)
 
 	engine, _ := ignore.LoadWorkspaceRules(".")
 	linker := core.NewCrossBoundaryLinker()
@@ -572,6 +676,231 @@ func runCommit(args []string) {
 	}
 }
 
+// CommitLogEntry details a committed Merkle manifest in a universe's history.
+type CommitLogEntry struct {
+	CommitHash    string    `json:"commit_hash"`
+	UniverseID    string    `json:"universe_id"`
+	Author        string    `json:"author"`
+	AgentDID      string    `json:"agent_did,omitempty"`
+	LLMVersion    string    `json:"llm_version,omitempty"`
+	Timestamp     time.Time `json:"timestamp"`
+	Intent        string    `json:"intent"`
+	UserPrompt    string    `json:"user_prompt,omitempty"`
+	ParentHash    string    `json:"parent_hash,omitempty"`
+	Components    []string  `json:"components,omitempty"`
+	SymbolChanges []string  `json:"symbol_changes,omitempty"`
+}
+
+func runLog(args []string) {
+	fs := flag.NewFlagSet("log", flag.ExitOnError)
+	universeID := fs.String("u", "universe-main", "Universe ID")
+	fs.StringVar(universeID, "universe", "universe-main", "Universe ID")
+	limit := fs.Int("n", 20, "Number of commits to display")
+	fs.IntVar(limit, "limit", 20, "Number of commits to display")
+	format := fs.String("format", "terminal", "Output format (terminal, json)")
+	_ = fs.Parse(args)
+
+	blobStore, graphEngine, err := openStorage()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Storage error: %v\n", err)
+		os.Exit(1)
+	}
+	defer graphEngine.Close()
+
+	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
+
+	// Fetch event WAL records from oplog
+	events, err := graphEngine.Oplog().GetEvents(*universeID, 0, 0)
+	if err != nil || len(events) == 0 {
+		events, _ = graphEngine.Oplog().GetEvents("", 0, 0)
+	}
+
+	var commitEntries []CommitLogEntry
+	seenCommits := make(map[string]bool)
+
+	for _, ev := range events {
+		if ev.Action != storage.ActionCommitManifest {
+			continue
+		}
+		if ev.UniverseID != *universeID && ev.UniverseID != "" {
+			continue
+		}
+		if seenCommits[ev.EntityID] {
+			continue
+		}
+		seenCommits[ev.EntityID] = true
+
+		entry := buildCommitLogEntry(blobStore, graphEngine, ev.EntityID, ev.UndoPayload, ev.Payload, ev.UniverseID, ev.TimestampMs)
+		commitEntries = append(commitEntries, entry)
+	}
+
+	// If no commit events were found in the oplog for this universe, inspect head manifest
+	if len(commitEntries) == 0 {
+		headRec, hErr := universeMgr.GetUniverse(*universeID)
+		if hErr == nil && headRec != nil && headRec.HeadManifestHash != "" {
+			allEvts, _ := graphEngine.Oplog().GetEvents("", 0, 0)
+			for _, ev := range allEvts {
+				if ev.Action == storage.ActionCommitManifest && ev.EntityID == headRec.HeadManifestHash {
+					entry := buildCommitLogEntry(blobStore, graphEngine, ev.EntityID, ev.UndoPayload, ev.Payload, *universeID, ev.TimestampMs)
+					commitEntries = append(commitEntries, entry)
+					seenCommits[ev.EntityID] = true
+					break
+				}
+			}
+			if !seenCommits[headRec.HeadManifestHash] {
+				entry := buildCommitLogEntry(blobStore, graphEngine, headRec.HeadManifestHash, "", "", *universeID, headRec.UpdatedAt.UnixMilli())
+				commitEntries = append(commitEntries, entry)
+			}
+		}
+	}
+
+	// Reverse commit entries so the newest commit appears first
+	for i, j := 0, len(commitEntries)-1; i < j; i, j = i+1, j-1 {
+		commitEntries[i], commitEntries[j] = commitEntries[j], commitEntries[i]
+	}
+
+	if *limit > 0 && len(commitEntries) > *limit {
+		commitEntries = commitEntries[:*limit]
+	}
+
+	if *format == "json" {
+		data, err := json.MarshalIndent(commitEntries, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "JSON encoding error: %v\n", err)
+			return
+		}
+		fmt.Println(string(data))
+		return
+	}
+
+	if len(commitEntries) == 0 {
+		fmt.Printf("No commits found for universe '%s'\n", *universeID)
+		return
+	}
+
+	for i, c := range commitEntries {
+		if i > 0 {
+			fmt.Println()
+		}
+		fmt.Printf("commit %s (universe: %s)\n", c.CommitHash, c.UniverseID)
+		authorStr := c.Author
+		if c.AgentDID != "" {
+			if c.LLMVersion != "" {
+				authorStr += fmt.Sprintf(" | Agent: %s (%s)", c.AgentDID, c.LLMVersion)
+			} else {
+				authorStr += fmt.Sprintf(" | Agent: %s", c.AgentDID)
+			}
+		}
+		fmt.Printf("Author:    %s\n", authorStr)
+		fmt.Printf("Date:      %s\n", c.Timestamp.Format(time.RFC1123))
+		fmt.Printf("Intent:    %s\n", c.Intent)
+		if c.UserPrompt != "" {
+			fmt.Printf("Prompt:    %q\n", c.UserPrompt)
+		}
+		if len(c.SymbolChanges) > 0 {
+			fmt.Println("\n  Symbols:")
+			for _, sc := range c.SymbolChanges {
+				fmt.Printf("    %s\n", sc)
+			}
+		}
+	}
+}
+
+func buildCommitLogEntry(
+	blobStore *storage.BlobStore,
+	graphEngine *storage.GraphEngine,
+	manifestHash, parentHash, payloadJSON, universeID string,
+	timestampMs int64,
+) CommitLogEntry {
+	var manifest core.WorkspaceManifestNode
+
+	if payloadJSON != "" {
+		_ = json.Unmarshal([]byte(payloadJSON), &manifest)
+	}
+	if manifest.MerkleRootHash == "" && manifestHash != "" {
+		if blobBytes, bErr := blobStore.Get(manifestHash); bErr == nil {
+			_ = json.Unmarshal(blobBytes, &manifest)
+		}
+	}
+
+	author := manifest.Lineage.UserID
+	if author == "" {
+		author = "cosm-user <user@cosm.local>"
+	}
+	agentDID := manifest.Lineage.ExecutingAgentID
+	if agentDID == "" {
+		agentDID = manifest.Lineage.OrchestratorAgentID
+	}
+	intent := manifest.Lineage.Intent
+	if intent == "" {
+		intent = "Workspace manifest commit"
+	}
+	prompt := manifest.Lineage.UserPrompt
+	llmVersion := manifest.Lineage.LLMVersion
+
+	t := time.UnixMilli(timestampMs)
+	if !manifest.Lineage.Timestamp.IsZero() {
+		t = manifest.Lineage.Timestamp
+	}
+
+	entry := CommitLogEntry{
+		CommitHash: manifestHash,
+		UniverseID: universeID,
+		Author:     author,
+		AgentDID:   agentDID,
+		LLMVersion: llmVersion,
+		Timestamp:  t,
+		Intent:     intent,
+		UserPrompt: prompt,
+		ParentHash: parentHash,
+		Components: manifest.Components,
+	}
+
+	// Compute symbol diff
+	_, curSymMap := loadManifestState(blobStore, graphEngine, &manifest)
+	curSyms := make(map[string]*core.ASTSymbolNode)
+	for _, sym := range curSymMap {
+		curSyms[sym.Identifier] = sym
+	}
+
+	var parentSyms map[string]*core.ASTSymbolNode
+	if parentHash != "" {
+		var parentManifest core.WorkspaceManifestNode
+		if pBytes, pErr := blobStore.Get(parentHash); pErr == nil {
+			_ = json.Unmarshal(pBytes, &parentManifest)
+			_, pMap := loadManifestState(blobStore, graphEngine, &parentManifest)
+			parentSyms = make(map[string]*core.ASTSymbolNode)
+			for _, sym := range pMap {
+				parentSyms[sym.Identifier] = sym
+			}
+		}
+	}
+
+	var changes []string
+	if parentSyms == nil {
+		for _, sym := range curSyms {
+			changes = append(changes, fmt.Sprintf("+ %s (%s)", sym.Identifier, sym.NodeType))
+		}
+	} else {
+		for ident, sym := range curSyms {
+			if oldSym, exists := parentSyms[ident]; !exists {
+				changes = append(changes, fmt.Sprintf("+ %s (%s)", sym.Identifier, sym.NodeType))
+			} else if oldSym.NodeID != sym.NodeID {
+				changes = append(changes, fmt.Sprintf("~ %s (%s)", sym.Identifier, sym.NodeType))
+			}
+		}
+		for ident, oldSym := range parentSyms {
+			if _, exists := curSyms[ident]; !exists {
+				changes = append(changes, fmt.Sprintf("- %s (%s)", oldSym.Identifier, oldSym.NodeType))
+			}
+		}
+	}
+	sort.Strings(changes)
+	entry.SymbolChanges = changes
+
+	return entry
+}
+
 func runStatus(args []string) {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	universeID := fs.String("u", "universe-main", "Universe ID")
@@ -593,7 +922,7 @@ func runStatus(args []string) {
 
 	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
 	head, err := universeMgr.GetUniverseManifest(*universeID)
-	if err != nil {
+	if err != nil && !strings.Contains(err.Error(), "has no committed manifest") {
 		if *format == "json" {
 			res, _ := json.Marshal(map[string]interface{}{"status": "ERROR", "error": err.Error()})
 			fmt.Println(string(res))
@@ -603,7 +932,48 @@ func runStatus(args []string) {
 		return
 	}
 
+	type fileDrift struct {
+		path   string
+		reason string
+	}
+	var drifted []fileDrift
+	var allFiles map[string][]byte
+
+	if head != nil && len(head.Components) > 0 {
+		compMap, symMap := loadManifestState(blobStore, graphEngine, head)
+		hydrator := materialize.NewHydrator()
+		var hydErr error
+		allFiles, hydErr = hydrator.HydrateWorkspace(head, compMap, symMap)
+		if hydErr == nil && len(allFiles) > 0 {
+			for relPath, expectedContent := range allFiles {
+				diskBytes, rErr := os.ReadFile(relPath)
+				if os.IsNotExist(rErr) {
+					drifted = append(drifted, fileDrift{path: relPath, reason: "missing on disk"})
+				} else if rErr != nil || strings.TrimSpace(string(diskBytes)) != strings.TrimSpace(string(expectedContent)) {
+					drifted = append(drifted, fileDrift{path: relPath, reason: "modified on disk"})
+				}
+			}
+			sort.Slice(drifted, func(i, j int) bool {
+				return drifted[i].path < drifted[j].path
+			})
+		}
+	}
+
 	if *format == "json" {
+		lensInfo := map[string]interface{}{
+			"status":                "clean",
+			"projected_files_count": len(allFiles),
+			"drifted_files":         []string{},
+		}
+		if len(drifted) > 0 {
+			driftPaths := make([]string, len(drifted))
+			for idx, d := range drifted {
+				driftPaths[idx] = fmt.Sprintf("%s (%s)", d.path, d.reason)
+			}
+			lensInfo["status"] = "drift_detected"
+			lensInfo["drifted_files"] = driftPaths
+		}
+
 		out := map[string]interface{}{
 			"status":            "SUCCESS",
 			"universe_id":       *universeID,
@@ -611,6 +981,7 @@ func runStatus(args []string) {
 			"components_count":  0,
 			"cross_edges_count": 0,
 			"components":        []string{},
+			"working_tree_lens": lensInfo,
 		}
 		if head != nil {
 			out["merkle_root"] = head.MerkleRootHash
@@ -624,13 +995,25 @@ func runStatus(args []string) {
 	}
 
 	fmt.Printf("On universe: %s\n", *universeID)
-	if head == nil {
-		fmt.Println("No commits yet in this universe.")
+	if head == nil || len(head.Components) == 0 {
+		if head != nil && head.MerkleRootHash != "" {
+			fmt.Printf("Head Merkle Root: %s\n", head.MerkleRootHash)
+		}
+		fmt.Println("No AST components tracked yet. Working tree clean.")
 		return
 	}
 	fmt.Printf("Head Merkle Root: %s\n", head.MerkleRootHash)
-	fmt.Printf("Components tracked: %d\n", len(head.Components))
+	fmt.Printf("Components tracked: %d (AST Symbol DAG in .cosm/)\n", len(head.Components))
 	fmt.Printf("Cross-boundary edges: %d\n", len(head.CrossEdges))
+	if len(drifted) == 0 {
+		fmt.Printf("Working Tree Lens: Materialized projection in sync with Merkle root (%d projected file(s))\n", len(allFiles))
+	} else {
+		fmt.Printf("Working Tree Lens: File drift detected (%d file(s) drifted from AST DAG)\n", len(drifted))
+		for _, d := range drifted {
+			fmt.Printf("   • %s (%s)\n", d.path, d.reason)
+		}
+		fmt.Println("   -> Run 'cosm add' to stage disk edits into AST DAG, or 'cosm export -d .' to reset disk projection to Merkle root.")
+	}
 }
 
 func runTopology(args []string) {
@@ -680,19 +1063,44 @@ func runTopology(args []string) {
 
 func runLineage(args []string) {
 	if len(args) == 0 {
-		fmt.Println("Usage: cosm lineage <node_id>")
+		fmt.Println("Usage: cosm lineage <node_id_or_symbol> [flags]")
 		return
 	}
-	query := args[0]
 
-	_, graphEngine, err := openStorage()
+	fs := flag.NewFlagSet("lineage", flag.ContinueOnError)
+	universeID := fs.String("u", "universe-main", "Universe ID")
+	fs.StringVar(universeID, "universe", "universe-main", "Universe ID")
+	_ = fs.Parse(args)
+
+	var query string
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			query = a
+			break
+		}
+	}
+	if query == "" && len(fs.Args()) > 0 {
+		query = fs.Args()[0]
+	}
+	if query == "" {
+		fmt.Println("Usage: cosm lineage <node_id_or_symbol> [flags]")
+		return
+	}
+
+	blobStore, graphEngine, err := openStorage()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Storage error: %v\n", err)
 		os.Exit(1)
 	}
 	defer graphEngine.Close()
 
-	nodeID := resolveNodeID(graphEngine, query)
+	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
+	nodeID, err := resolveNodeOrSymbol(graphEngine, universeMgr, *universeID, query)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Resolution error: %v\n", err)
+		return
+	}
+
 	tracer := lineage.NewLineageTracer(graphEngine)
 	chain, err := tracer.TraceNodeAncestry(nodeID)
 	if err != nil {
@@ -714,15 +1122,17 @@ func runBlastRadius(args []string) {
 	fs := flag.NewFlagSet("blast-radius", flag.ExitOnError)
 	format := fs.String("format", "text", "Output format (text, json)")
 	fs.StringVar(format, "f", "text", "Alias for --format")
+	universeID := fs.String("u", "universe-main", "Universe ID")
+	fs.StringVar(universeID, "universe", "universe-main", "Universe ID")
 	_ = fs.Parse(args)
 
 	if fs.NArg() == 0 {
-		fmt.Println("Usage: cosm blast-radius [flags] <agent_or_model>")
+		fmt.Println("Usage: cosm blast-radius [flags] <node_id|symbol|agent_or_model>")
 		return
 	}
-	agent := fs.Arg(0)
+	target := fs.Arg(0)
 
-	_, graphEngine, err := openStorage()
+	blobStore, graphEngine, err := openStorage()
 	if err != nil {
 		if *format == "json" {
 			res, _ := json.Marshal(map[string]interface{}{"status": "ERROR", "error": err.Error()})
@@ -734,8 +1144,47 @@ func runBlastRadius(args []string) {
 	}
 	defer graphEngine.Close()
 
+	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
+
+	// First attempt: resolve target as a node ID or human symbol path
+	resolvedID, rErr := resolveNodeOrSymbol(graphEngine, universeMgr, *universeID, target)
+	if rErr == nil && resolvedID != "" {
+		node, nErr := graphEngine.GetNode(resolvedID)
+		if (nErr == nil && node != nil) || strings.Contains(target, "::") || (len(resolvedID) == 64 && isHex(resolvedID)) {
+			cascadeEngine := mutation.NewContractCascadeEngine(graphEngine)
+			assessment, cErr := cascadeEngine.AssessImpact(resolvedID)
+			if cErr == nil {
+				if *format == "json" {
+					data, _ := json.MarshalIndent(assessment, "", "  ")
+					fmt.Println(string(data))
+					return
+				}
+
+				fmt.Printf("🎯 Blast-Radius & Contract Impact for '%s':\n", resolvedID)
+				fmt.Printf("   • Risk Score:          %.2f / 1.00\n", assessment.RiskScore)
+				fmt.Printf("   • Incoming Contracts:  %d\n", len(assessment.IncomingEdges))
+				fmt.Printf("   • Outgoing Contracts:  %d\n", len(assessment.OutgoingEdges))
+				fmt.Printf("   • Affected Components: %d\n", len(assessment.AffectedComponents))
+				if len(assessment.Warnings) > 0 {
+					fmt.Println("\n   Warnings:")
+					for _, w := range assessment.Warnings {
+						fmt.Printf("   ⚠️  %s\n", w)
+					}
+				}
+				return
+			}
+		}
+	}
+
+	// Second attempt: treat target as an agent ID or model ID in audit lineage
 	auditor := lineage.NewAuditEngine(graphEngine)
-	report, err := auditor.ComputeBlastRadius(lineage.AuditFilter{ExecutingAgentID: agent}, 5)
+	report, err := auditor.ComputeBlastRadius(lineage.AuditFilter{ExecutingAgentID: target}, 5)
+	if err != nil || (len(report.DirectlyTouchedNodes) == 0 && report.TotalImpactedNodes == 0) {
+		if rep2, err2 := auditor.ComputeBlastRadius(lineage.AuditFilter{LLMVersion: target}, 5); err2 == nil && len(rep2.DirectlyTouchedNodes) > 0 {
+			report = rep2
+			err = nil
+		}
+	}
 	if err != nil {
 		if *format == "json" {
 			res, _ := json.Marshal(map[string]interface{}{"status": "ERROR", "error": err.Error()})
@@ -761,10 +1210,44 @@ func runBlastRadius(args []string) {
 
 func runView(args []string) {
 	if len(args) == 0 {
-		fmt.Println("Usage: cosm view <node_id>")
+		fmt.Println("Usage: cosm view <node_id_or_symbol> [flags]")
 		return
 	}
-	query := args[0]
+
+	fs := flag.NewFlagSet("view", flag.ContinueOnError)
+	universeID := fs.String("u", "universe-main", "Universe ID")
+	fs.StringVar(universeID, "universe", "universe-main", "Universe ID")
+	format := fs.String("format", "terminal", "Output format (source, ast, raw, terminal, markdown)")
+
+	// Separate flags from positional arguments so flag position doesn't break parsing
+	var flagArgs []string
+	var posArgs []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-") {
+			flagArgs = append(flagArgs, arg)
+			if !strings.Contains(arg, "=") && (arg == "-u" || arg == "--u" || arg == "-universe" || arg == "--universe" || arg == "-format" || arg == "--format") {
+				if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+					i++
+					flagArgs = append(flagArgs, args[i])
+				}
+			}
+		} else {
+			posArgs = append(posArgs, arg)
+		}
+	}
+	_ = fs.Parse(flagArgs)
+
+	var query string
+	if len(posArgs) > 0 {
+		query = posArgs[0]
+	} else if len(fs.Args()) > 0 {
+		query = fs.Args()[0]
+	}
+	if query == "" {
+		fmt.Println("Usage: cosm view <node_id_or_symbol> [flags]")
+		return
+	}
 
 	blobStore, graphEngine, err := openStorage()
 	if err != nil {
@@ -773,7 +1256,13 @@ func runView(args []string) {
 	}
 	defer graphEngine.Close()
 
-	nodeID := resolveNodeID(graphEngine, query)
+	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
+	nodeID, err := resolveNodeOrSymbol(graphEngine, universeMgr, *universeID, query)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Resolution error: %v\n", err)
+		return
+	}
+
 	var data []byte
 	if node, gErr := graphEngine.GetNode(nodeID); gErr == nil && node != nil {
 		data, err = blobStore.Get(node.MerkleHash)
@@ -788,7 +1277,21 @@ func runView(args []string) {
 	viewer := materialize.NewViewer()
 	var sym core.ASTSymbolNode
 	if err := json.Unmarshal(data, &sym); err == nil && sym.Identifier != "" {
-		fmt.Println(viewer.RenderSymbolNode(&sym, materialize.FormatTerminal))
+		renderFmt := materialize.FormatTerminal
+		switch strings.ToLower(*format) {
+		case "ast":
+			renderFmt = materialize.FormatAST
+		case "source", "code":
+			renderFmt = materialize.FormatCode
+		case "markdown":
+			renderFmt = materialize.FormatMarkdown
+		case "contract":
+			renderFmt = materialize.FormatContract
+		case "raw":
+			fmt.Println(string(data))
+			return
+		}
+		fmt.Println(viewer.RenderSymbolNode(&sym, renderFmt))
 		return
 	}
 
@@ -798,7 +1301,9 @@ func runView(args []string) {
 func runShip(args []string) {
 	fs := flag.NewFlagSet("ship", flag.ExitOnError)
 	universeID := fs.String("u", "universe-main", "Universe ID")
+	fs.StringVar(universeID, "universe", "universe-main", "Universe ID")
 	targetName := fs.String("t", "target:cosm", "Target name or profile (e.g. target:cosm, target:local-preview, target:cloud-run)")
+	fs.StringVar(targetName, "target", "target:cosm", "Target name or profile")
 	format := fs.String("format", "terminal", "Output format (terminal, json)")
 	_ = fs.Parse(args)
 
@@ -847,6 +1352,16 @@ func runShip(args []string) {
 		targetSpec = shipping.DefaultCloudRunTarget(*targetName, nil)
 	default:
 		targetSpec = shipping.DefaultLocalServiceTarget(*targetName, nil)
+	}
+
+	if *format != "json" {
+		merkleShort := head.MerkleRootHash
+		if len(merkleShort) > 12 {
+			merkleShort = merkleShort[:12]
+		}
+		fmt.Printf("🚢 Shipping Target: %s (Universe: %s)\n", *targetName, *universeID)
+		fmt.Printf("   • Source:  Ephemeral AST Hydration from Merkle Root %s (%d file(s))\n", merkleShort, len(files))
+		fmt.Println("   • Staging: Isolated sandbox (decoupled from workspace disk drift)")
 	}
 
 	packager := shipping.NewPackager(nil)
@@ -990,6 +1505,66 @@ func runUniverse(args []string) {
 	}
 }
 
+func pushUniverseToHub(ctx context.Context, client *topocosm.HubClient, universeMgr *storage.UniverseManager, blobStore *storage.BlobStore, graphEngine *storage.GraphEngine, universeID, orgSlug, cosmName, desc string) (*topocosm.PublishResponse, error) {
+	manifest, err := universeMgr.GetUniverseManifest(universeID)
+	if err != nil || manifest == nil {
+		return nil, fmt.Errorf("universe manifest '%s' not found: %w", universeID, err)
+	}
+
+	components := make(map[string]*core.ComponentNode)
+	symbols := make(map[string]*core.ASTSymbolNode)
+	blobs := make(map[string][]byte)
+
+	for _, compID := range manifest.Components {
+		var compBytes []byte
+		var bErr error
+		compBytes, bErr = blobStore.Get(compID)
+		if bErr != nil {
+			if nodeRec, e := graphEngine.GetNode(compID); e == nil {
+				compBytes, bErr = blobStore.Get(nodeRec.MerkleHash)
+			}
+		}
+		if bErr == nil {
+			blobs[compID] = compBytes
+			var comp core.ComponentNode
+			if json.Unmarshal(compBytes, &comp) == nil {
+				components[compID] = &comp
+				for _, symID := range comp.SymbolNodes {
+					var symBytes []byte
+					symBytes, bErr = blobStore.Get(symID)
+					if bErr != nil {
+						if symRec, e := graphEngine.GetNode(symID); e == nil {
+							symBytes, bErr = blobStore.Get(symRec.MerkleHash)
+						}
+					}
+					if bErr == nil {
+						blobs[symID] = symBytes
+						var sym core.ASTSymbolNode
+						if json.Unmarshal(symBytes, &sym) == nil {
+							symbols[symID] = &sym
+						}
+					}
+				}
+			}
+		}
+	}
+
+	payload := &topocosm.PublishPayload{
+		OrgSlug:     orgSlug,
+		CosmName:    cosmName,
+		UniverseID:  universeID,
+		Manifest:    manifest,
+		Components:  components,
+		Symbols:     symbols,
+		Blobs:       blobs,
+		Description: desc,
+		Visibility:  topocosm.VisibilityPublic,
+		IsInitial:   false,
+	}
+
+	return client.PublishCosm(ctx, payload)
+}
+
 func runProposal(args []string) {
 	if len(args) == 0 {
 		fmt.Println("Usage: cosm proposal <create|list|view|review|merge> [flags]")
@@ -1008,14 +1583,19 @@ func runProposal(args []string) {
 	case "create":
 		fs := flag.NewFlagSet("proposal create", flag.ExitOnError)
 		source := fs.String("source", "", "Source micro-universe ID")
-		targetUniv := fs.String("target", "universe-main", "Target universe ID")
-		title := fs.String("title", "Universe Proposal", "Proposal title")
+		fs.StringVar(source, "s", "", "Source micro-universe ID (shorthand)")
+		targetUniv := fs.String("target", "universe-main", "Target micro-universe ID")
+		fs.StringVar(targetUniv, "t", "universe-main", "Target micro-universe ID (shorthand)")
+		title := fs.String("title", "", "Proposal title")
+		fs.StringVar(title, "i", "", "Proposal title (shorthand)")
+		hubFlag := fs.String("hub", "", "Topocosm Hub target (e.g. http://127.0.0.1:51204/org/cosm or org/cosm)")
 		_ = fs.Parse(args[1:])
 
-		if *source == "" {
-			fmt.Println("Error: --source flag is required")
+		if *source == "" || *title == "" {
+			fmt.Println("Error: --source and --title flags are required")
 			return
 		}
+
 		diff, err := universeMgr.DiffUniverses(*source, *targetUniv)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Diff error: %v\n", err)
@@ -1027,7 +1607,66 @@ func runProposal(args []string) {
 		fmt.Printf("   Changes: +%d components, -%d components\n", len(diff.AddedComponents), len(diff.RemovedComponents))
 		fmt.Printf("   Status: Ready for Agent Evaluation / Review\n")
 
+		if *hubFlag != "" {
+			hubURL, orgSlug, cosmName := resolveHubTarget(*hubFlag)
+			client := topocosm.NewHubClient(hubURL, "did:key:z6MkuCLIProposal")
+			// Automatically sync/push source micro-universe to Topocosm Hub so remote review and merge can access it
+			if _, pErr := pushUniverseToHub(context.Background(), client, universeMgr, blobStore, graphEngine, *source, orgSlug, cosmName, *title); pErr != nil {
+				fmt.Fprintf(os.Stderr, "Notice: failed syncing micro-universe %s to hub: %v\n", *source, pErr)
+			}
+			sourceHeadRec, _ := universeMgr.GetUniverse(*source)
+			manifestHash := ""
+			if sourceHeadRec != nil {
+				manifestHash = sourceHeadRec.HeadManifestHash
+			}
+			lineageEnv := core.LineageEnvelope{
+				UserID:              "developer",
+				UserPrompt:          *title,
+				SessionID:           fmt.Sprintf("sess-%d", time.Now().Unix()),
+				OrchestratorAgentID: "cosm-cli",
+				ExecutingAgentID:    "human-developer",
+				LLMVersion:          "cli",
+				Intent:              *title,
+				Timestamp:           time.Now(),
+			}
+			cob, err := client.CreateProposal(context.Background(), orgSlug, cosmName, *title, *source, *targetUniv, lineageEnv)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to submit proposal to Topocosm Hub (%s): %v\n", hubURL, err)
+			} else {
+				fmt.Printf("🌐 Submitted to Topocosm Hub: %s\n", cob.ID)
+				fmt.Printf("   • Hub Target: %s/%s/%s\n", hubURL, orgSlug, cosmName)
+				fmt.Printf("   • Proposal Head: %s\n", shortHash(manifestHash))
+			}
+		}
+
 	case "list":
+		fs := flag.NewFlagSet("proposal list", flag.ExitOnError)
+		hubFlag := fs.String("hub", "", "Topocosm Hub target (e.g. http://127.0.0.1:51204/org/cosm or org/cosm)")
+		_ = fs.Parse(args[1:])
+
+		if *hubFlag != "" {
+			hubURL, orgSlug, cosmName := resolveHubTarget(*hubFlag)
+			client := topocosm.NewHubClient(hubURL, "did:key:z6MkuCLIProposal")
+			props, err := client.ListProposals(context.Background(), orgSlug, cosmName)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to list proposals from Topocosm Hub (%s): %v\n", hubURL, err)
+				os.Exit(1)
+			}
+			fmt.Printf("📋 Active Topocosm Hub Proposals (%s/%s):\n", orgSlug, cosmName)
+			if len(props) == 0 {
+				fmt.Println("   (No active proposals on hub)")
+				return
+			}
+			for _, p := range props {
+				src := p.TargetUniverse
+				if len(p.Revisions) > 0 {
+					src = p.Revisions[len(p.Revisions)-1].SourceUniverse
+				}
+				fmt.Printf("   * %s %q (%s -> %s, Status: %s)\n", p.ID, p.Title, src, p.TargetUniverse, p.Status)
+			}
+			return
+		}
+
 		universes := universeMgr.ListUniverses()
 		fmt.Println("📋 Active Proposals & Micro-Universe Branches:")
 		for _, u := range universes {
@@ -1039,7 +1678,9 @@ func runProposal(args []string) {
 	case "view":
 		fs := flag.NewFlagSet("proposal view", flag.ExitOnError)
 		source := fs.String("source", "", "Source micro-universe ID")
+		fs.StringVar(source, "s", "", "Source micro-universe ID (shorthand)")
 		targetUniv := fs.String("target", "universe-main", "Target universe ID")
+		fs.StringVar(targetUniv, "t", "universe-main", "Target universe ID (shorthand)")
 		format := fs.String("format", "terminal", "Output format (terminal or markdown)")
 		_ = fs.Parse(args[1:])
 
@@ -1124,9 +1765,53 @@ func runProposal(args []string) {
 	case "review":
 		fs := flag.NewFlagSet("proposal review", flag.ExitOnError)
 		source := fs.String("source", "", "Source micro-universe ID")
+		fs.StringVar(source, "s", "", "Source micro-universe ID (shorthand)")
 		targetUniv := fs.String("target", "universe-main", "Target universe ID")
+		fs.StringVar(targetUniv, "t", "universe-main", "Target universe ID (shorthand)")
 		criticID := fs.String("critic", "agent-critic-deepseek", "Critic Agent ID")
+		hubFlag := fs.String("hub", "", "Topocosm Hub target (e.g. http://127.0.0.1:51204/org/cosm or org/cosm)")
+		propID := fs.String("id", "", "Proposal ID on Topocosm Hub")
+		verdict := fs.String("verdict", "APPROVE", "Review verdict (APPROVE or REJECT)")
+		score := fs.Float64("score", 95.0, "Critic review score (0-100)")
 		_ = fs.Parse(args[1:])
+
+		if *hubFlag != "" {
+			pID := *propID
+			if pID == "" && *source != "" {
+				pID = *source
+			}
+			if pID == "" && len(fs.Args()) > 0 {
+				pID = fs.Args()[0]
+			}
+			if pID == "" {
+				fmt.Println("Error: --id <proposal_id> is required for hub review")
+				os.Exit(1)
+			}
+			hubURL, orgSlug, cosmName := resolveHubTarget(*hubFlag)
+			client := topocosm.NewHubClient(hubURL, "did:key:z6MkuCriticOracle")
+			sub := &topocosm.ReviewSubmission{
+				ProposalID:   pID,
+				ReviewerDID:  fmt.Sprintf("did:key:%s", *criticID),
+				Approved:     strings.ToUpper(*verdict) == "APPROVE",
+				FitnessScore: *score,
+				Comments: []distributed.ReviewComment{
+					{
+						CommentID: fmt.Sprintf("rev-%d", time.Now().UnixNano()%100000),
+						AuthorDID: fmt.Sprintf("did:key:%s", *criticID),
+						Body:      fmt.Sprintf("Critic Oracle evaluation: %s (Score: %.1f)", *verdict, *score),
+						Timestamp: time.Now(),
+					},
+				},
+			}
+			reviewed, err := client.SubmitReview(context.Background(), orgSlug, cosmName, sub)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to submit review to %s: %v\n", hubURL, err)
+				os.Exit(1)
+			}
+			fmt.Printf("🤖 Topocosm Hub Review Submitted for %s\n", reviewed.ID)
+			fmt.Printf("   Verdict: %s (Score: %.1f) | Status: %s\n", *verdict, *score, reviewed.Status)
+			return
+		}
 
 		if *source == "" && len(fs.Args()) > 0 {
 			*source = fs.Args()[0]
@@ -1199,8 +1884,38 @@ func runProposal(args []string) {
 	case "merge":
 		fs := flag.NewFlagSet("proposal merge", flag.ExitOnError)
 		source := fs.String("source", "", "Source micro-universe ID")
+		fs.StringVar(source, "s", "", "Source micro-universe ID (shorthand)")
 		targetUniv := fs.String("target", "universe-main", "Target universe ID")
+		fs.StringVar(targetUniv, "t", "universe-main", "Target universe ID (shorthand)")
+		hubFlag := fs.String("hub", "", "Topocosm Hub target (e.g. http://127.0.0.1:51204/org/cosm or org/cosm)")
+		propID := fs.String("id", "", "Proposal ID on Topocosm Hub")
 		_ = fs.Parse(args[1:])
+
+		if *hubFlag != "" {
+			pID := *propID
+			if pID == "" && *source != "" {
+				pID = *source
+			}
+			if pID == "" && len(fs.Args()) > 0 {
+				pID = fs.Args()[0]
+			}
+			if pID == "" {
+				fmt.Println("Error: --id <proposal_id> is required for hub merge")
+				os.Exit(1)
+			}
+			hubURL, orgSlug, cosmName := resolveHubTarget(*hubFlag)
+			client := topocosm.NewHubClient(hubURL, "did:key:z6MkuCLIMerger")
+			res, err := client.MergeProposal(context.Background(), orgSlug, cosmName, pID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to merge proposal on %s: %v\n", hubURL, err)
+				os.Exit(1)
+			}
+			fmt.Printf("✅ Topocosm Hub Proposal %s merged successfully into target universe!\n", pID)
+			if root, ok := res["merkle_root_hash"].(string); ok && root != "" {
+				fmt.Printf("   New Head Merkle Root: %s\n", root)
+			}
+			return
+		}
 
 		if *source == "" {
 			fmt.Println("Error: --source flag is required")
@@ -1229,27 +1944,32 @@ func runStack(args []string) {
 	defer graphEngine.Close()
 	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
 	stackMgr := distributed.NewStackManager(universeMgr, blobStore)
+	stackFilePath := filepath.Join(".cosm", "stack.json")
+	_ = stackMgr.LoadFromFile(stackFilePath)
 
 	sub := args[0]
 	switch sub {
 	case "list":
-		universes := universeMgr.ListUniverses()
-		fmt.Println("🥞 Jujutsu-Style Stacked Proposals & Change Chains:")
-		order := 0
-		for _, u := range universes {
-			if u.UniverseID != "universe-main" {
-				_ = stackMgr.RegisterChange(&distributed.StackedProposal{
-					ChangeID:       fmt.Sprintf("c/%s", strings.TrimPrefix(u.UniverseID, "u/")),
-					ProposalID:     fmt.Sprintf("prop-%s", u.UniverseID),
-					Title:          fmt.Sprintf("Change: %s", u.UniverseID),
-					ParentChangeID: "universe-main",
-					UniverseID:     u.UniverseID,
-					ManifestHash:   u.HeadManifestHash,
-					OrderIndex:     order,
-				})
-				order++
+		if len(stackMgr.ListStack()) == 0 {
+			universes := universeMgr.ListUniverses()
+			order := 0
+			for _, u := range universes {
+				if u.UniverseID != "universe-main" {
+					_ = stackMgr.RegisterChange(&distributed.StackedProposal{
+						ChangeID:       fmt.Sprintf("c/%s", strings.TrimPrefix(u.UniverseID, "u/")),
+						ProposalID:     fmt.Sprintf("prop-%s", u.UniverseID),
+						Title:          fmt.Sprintf("Change: %s", u.UniverseID),
+						ParentChangeID: "universe-main",
+						UniverseID:     u.UniverseID,
+						ManifestHash:   u.HeadManifestHash,
+						OrderIndex:     order,
+					})
+					order++
+				}
 			}
+			_ = stackMgr.SaveToFile(stackFilePath)
 		}
+		fmt.Println("🥞 Jujutsu-Style Stacked Proposals & Change Chains:")
 		stack := stackMgr.ListStack()
 		if len(stack) == 0 {
 			fmt.Println("   (No stacked changes active. Create one with 'cosm stack create')")
@@ -1263,9 +1983,13 @@ func runStack(args []string) {
 	case "create":
 		fs := flag.NewFlagSet("stack create", flag.ExitOnError)
 		changeID := fs.String("c", "", "Change ID (e.g. c/billing-v1)")
+		fs.StringVar(changeID, "change", "", "Change ID (e.g. c/billing-v1)")
 		parentID := fs.String("p", "universe-main", "Parent change ID or base branch")
+		fs.StringVar(parentID, "parent", "universe-main", "Parent change ID or base branch")
 		universeID := fs.String("u", "", "Micro-universe ID")
+		fs.StringVar(universeID, "universe", "", "Micro-universe ID")
 		title := fs.String("title", "Stacked Change", "Proposal title")
+		fs.StringVar(title, "t", "Stacked Change", "Proposal title (shorthand)")
 		_ = fs.Parse(args[1:])
 
 		if *changeID == "" || *universeID == "" {
@@ -1288,6 +2012,7 @@ func runStack(args []string) {
 			ManifestHash:   manifestHash,
 			OrderIndex:     len(stackMgr.ListStack()),
 		})
+		_ = stackMgr.SaveToFile(stackFilePath)
 
 		fmt.Printf("🥞 Registered Stacked Change '%s' (Parent: '%s')\n", *changeID, *parentID)
 		fmt.Printf("   Descendants will automatically evolve when parent mutates.\n")
@@ -1295,6 +2020,7 @@ func runStack(args []string) {
 	case "evolve":
 		fs := flag.NewFlagSet("stack evolve", flag.ExitOnError)
 		parentChangeID := fs.String("c", "", "Parent change ID to evolve descendants from")
+		fs.StringVar(parentChangeID, "change", "", "Parent change ID to evolve descendants from")
 		_ = fs.Parse(args[1:])
 
 		if *parentChangeID == "" {
@@ -1307,6 +2033,7 @@ func runStack(args []string) {
 			fmt.Fprintf(os.Stderr, "Stack evolution error: %v\n", err)
 			return
 		}
+		_ = stackMgr.SaveToFile(stackFilePath)
 		fmt.Printf("⚡ Auto-evolved %d descendant changes in stack:\n", len(res.EvolvedChanges))
 		for _, ch := range res.EvolvedChanges {
 			fmt.Printf("   ✓ Rebased %s onto new parent AST root without conflict\n", ch)
@@ -1330,12 +2057,54 @@ func runPeer(args []string) {
 	sub := args[0]
 	switch sub {
 	case "status":
+		authCfg, _ := topocosm.LoadAuthConfig()
+		localDID := "did:key:z6MkuLocalNode"
+		if authCfg != nil && authCfg.CallerDID != "" {
+			localDID = authCfg.CallerDID
+		}
+
+		var totalBlobs int
+		var totalBytes int64
+		objectsDir := filepath.Join(".cosm", "objects")
+		_ = filepath.Walk(objectsDir, func(path string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() {
+				totalBlobs++
+				totalBytes += info.Size()
+			}
+			return nil
+		})
+
+		universes := universeMgr.ListUniverses()
+		universeCount := len(universes)
+
+		hubURL := "https://topocosm.dev"
+		if authCfg != nil && authCfg.HubURL != "" {
+			hubURL = authCfg.HubURL
+		}
+
+		hubStatus := "Offline / Standalone Local Mesh (Zero Cloud)"
+		client := &http.Client{Timeout: 600 * time.Millisecond}
+		startPing := time.Now()
+		resp, pErr := client.Get(hubURL + "/health")
+		if pErr == nil {
+			_ = resp.Body.Close()
+			latency := time.Since(startPing).Round(time.Millisecond)
+			hubStatus = fmt.Sprintf("Connected (%s, Latency: %s)", hubURL, latency)
+		} else {
+			resp2, pErr2 := client.Get(hubURL)
+			if pErr2 == nil {
+				_ = resp2.Body.Close()
+				latency := time.Since(startPing).Round(time.Millisecond)
+				hubStatus = fmt.Sprintf("Connected (%s, Latency: %s)", hubURL, latency)
+			}
+		}
+
 		fmt.Println("🌐 Cosm Decentralized P2P & Seed Node Mesh Status:")
-		fmt.Println("   • Local Node DID:  did:key:z6MkuP17... (Ed25519 Verified)")
+		fmt.Printf("   • Local Node DID:  %s (Ed25519 Verified)\n", localDID)
 		fmt.Println("   • Swarm Protocol:  cosm-gossip/v1 (Sparse AST Merkle Replication)")
-		fmt.Println("   • Active Peers:    3 local agent workers connected")
-		fmt.Println("   • Seed Nodes:      seed.cosm.network:4433 (Online, Latency: 12ms)")
-		fmt.Println("   • Shared CAS:      Ready (Content-Addressable Build Cache)")
+		fmt.Printf("   • Local Headspace: %d micro-universe(s) registered\n", universeCount)
+		fmt.Printf("   • Content Store:   Ready (%d immutable AST blobs, %d bytes cached)\n", totalBlobs, totalBytes)
+		fmt.Printf("   • Hub / Backplane: %s\n", hubStatus)
 
 	case "sync":
 		fs := flag.NewFlagSet("peer sync", flag.ExitOnError)
@@ -1399,148 +2168,23 @@ func runImportRepo(args []string) {
 }
 
 func runSymbol(args []string) {
-	if len(args) == 0 {
-		fmt.Println("Usage: cosm symbol <view|edit|impact> [flags]")
-		return
-	}
-
-	blobStore, graphEngine, err := openStorage()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Storage error: %v\n", err)
-		os.Exit(1)
-	}
-	defer graphEngine.Close()
-
-	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
-
-	sub := args[0]
-	switch sub {
-	case "view":
-		fs := flag.NewFlagSet("symbol view", flag.ExitOnError)
-		symID := fs.String("id", "", "Target Symbol ID or Identifier")
-		format := fs.String("format", "terminal", "Output format (ast, code, contract, terminal, markdown)")
-		_ = fs.Parse(args[1:])
-
-		if *symID == "" && len(fs.Args()) > 0 {
-			*symID = fs.Args()[0]
-		}
-		if *symID == "" {
-			fmt.Println("Error: symbol ID is required. Example: cosm symbol view <sym_id> --format ast")
-			return
-		}
-
-		resolvedID := resolveNodeID(graphEngine, *symID)
-		var data []byte
-		if node, gErr := graphEngine.GetNode(resolvedID); gErr == nil && node != nil {
-			data, err = blobStore.Get(node.MerkleHash)
-		} else {
-			data, err = blobStore.Get(resolvedID)
-		}
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Symbol %s not found in object store: %v\n", *symID, err)
-			return
-		}
-
-		viewer := materialize.NewViewer()
-		var sym core.ASTSymbolNode
-		if err := json.Unmarshal(data, &sym); err == nil && sym.Identifier != "" {
-			renderFmt := materialize.RenderFormat(*format)
-			fmt.Println(viewer.RenderSymbolNode(&sym, renderFmt))
-			return
-		}
-		fmt.Println(string(data))
-
-	case "edit":
-		fs := flag.NewFlagSet("symbol edit", flag.ExitOnError)
-		symID := fs.String("id", "", "Target Symbol ID")
-		body := fs.String("body", "", "New Symbol AST payload")
-		code := fs.String("code", "", "New Symbol Source Code (auto-parsed to AST)")
-		astPayload := fs.String("ast", "", "New Symbol AST JSON")
-		universeID := fs.String("u", "universe-main", "Universe ID")
-		prompt := fs.String("p", "Surgical symbol mutation", "User prompt")
-		agentID := fs.String("a", "cosm-surgeon", "Agent ID")
-		_ = fs.Parse(args[1:])
-
-		if *symID == "" && len(fs.Args()) > 0 {
-			*symID = fs.Args()[0]
-		}
-		if *body == "" && *code != "" {
-			*body = *code
-		}
-		if *body == "" && *astPayload != "" {
-			*body = *astPayload
-		}
-		if *symID == "" || *body == "" {
-			fmt.Println("Error: symbol ID and (--code, --ast, or --body) are required")
-			return
-		}
-
-		resolvedID := resolveNodeID(graphEngine, *symID)
-
-		lineageEnv := core.LineageEnvelope{
-			UserID:           os.Getenv("USER"),
-			UserPrompt:       *prompt,
-			ExecutingAgentID: *agentID,
-			Intent:           "Symbol Surgery",
-			Timestamp:        time.Now().UTC(),
-		}
-
-		surgeryEngine := mutation.NewSurgeryEngine(blobStore, graphEngine, universeMgr)
-		var res *mutation.MutationResult
-		if *code != "" {
-			res, err = surgeryEngine.MutateSymbolFromCode(*universeID, resolvedID, *code, lineageEnv)
-		} else {
-			res, err = surgeryEngine.MutateSymbol(*universeID, resolvedID, []byte(*body), lineageEnv)
-		}
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Mutation error: %v\n", err)
-			return
-		}
-
-		fmt.Println("✨ AST Symbol Surgery Complete!")
-		fmt.Printf("   • Universe:         %s\n", res.UniverseID)
-		fmt.Printf("   • Target Symbol:    %s\n", res.OldSymbolID)
-		fmt.Printf("   • New Symbol Hash:  %s\n", res.NewSymbolID)
-		fmt.Printf("   • Deduplicated:     %d sibling symbols reused\n", res.DeduplicatedSymbolsCount)
-		fmt.Printf("   • New Merkle Head:  %s -> %s\n", res.OldManifestHash[:12], res.NewManifestHash[:12])
-
-	case "impact":
-		fs := flag.NewFlagSet("symbol impact", flag.ExitOnError)
-		symID := fs.String("id", "", "Target Symbol ID")
-		_ = fs.Parse(args[1:])
-
-		if *symID == "" && len(fs.Args()) > 0 {
-			*symID = fs.Args()[0]
-		}
-		if *symID == "" {
-			fmt.Println("Error: symbol ID is required")
-			return
-		}
-
-		resolvedID := resolveNodeID(graphEngine, *symID)
-		cascadeEngine := mutation.NewContractCascadeEngine(graphEngine)
-		assessment, err := cascadeEngine.AssessImpact(resolvedID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Cascade impact error: %v\n", err)
-			os.Exit(1)
-		}
-
-		fmt.Printf("🎯 Blast-Radius & Contract Impact for '%s':\n", resolvedID)
-		fmt.Printf("   • Risk Score:          %.2f / 1.00\n", assessment.RiskScore)
-		fmt.Printf("   • Incoming Contracts:  %d\n", len(assessment.IncomingEdges))
-		fmt.Printf("   • Outgoing Contracts:  %d\n", len(assessment.OutgoingEdges))
-		if len(assessment.Warnings) > 0 {
-			fmt.Println("\n   Warnings:")
-			for _, w := range assessment.Warnings {
-				fmt.Printf("   ⚠️  %s\n", w)
-			}
-		}
-	}
+	fmt.Fprintln(os.Stderr, "⚠️  'cosm symbol' has been retired in favor of canonical Cosm commands:")
+	fmt.Fprintln(os.Stderr, "   • 'cosm ast edit' (for declarative AST mutations with disk sync)")
+	fmt.Fprintln(os.Stderr, "   • 'cosm view' (for viewing symbols and components)")
+	fmt.Fprintln(os.Stderr, "   • 'cosm blast-radius' (for auditing contract impact and blast radius)")
+	os.Exit(1)
 }
 
 func runAST(args []string) {
 	if len(args) == 0 {
-		fmt.Println("Usage: cosm ast <edit|resolve> [flags]")
+		fmt.Println("Usage: cosm ast <create|edit|resolve|tree> [flags]")
+		return
+	}
+
+	sub := args[0]
+	switch sub {
+	case "tree":
+		runASTTree(args[1:])
 		return
 	}
 
@@ -1554,15 +2198,35 @@ func runAST(args []string) {
 	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
 	surgeryEngine := mutation.NewSurgeryEngine(blobStore, graphEngine, universeMgr)
 
-	sub := args[0]
 	switch sub {
 	case "resolve":
 		fs := flag.NewFlagSet("ast resolve", flag.ExitOnError)
 		universeID := fs.String("u", "universe-main", "Universe ID")
+		fs.StringVar(universeID, "universe", "universe-main", "Universe ID (alias)")
 		target := fs.String("target", "", "Target symbol path or ID")
 		format := fs.String("format", "terminal", "Output format (terminal, json)")
-		_ = fs.Parse(args[1:])
 
+		var flagArgs []string
+		var posArgs []string
+		for i := 1; i < len(args); i++ {
+			arg := args[i]
+			if strings.HasPrefix(arg, "-") {
+				flagArgs = append(flagArgs, arg)
+				if !strings.Contains(arg, "=") && (arg == "-u" || arg == "--u" || arg == "-universe" || arg == "--universe" || arg == "-target" || arg == "--target" || arg == "-format" || arg == "--format") {
+					if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+						i++
+						flagArgs = append(flagArgs, args[i])
+					}
+				}
+			} else {
+				posArgs = append(posArgs, arg)
+			}
+		}
+		_ = fs.Parse(flagArgs)
+
+		if *target == "" && len(posArgs) > 0 {
+			*target = posArgs[0]
+		}
 		if *target == "" && len(fs.Args()) > 0 {
 			*target = fs.Args()[0]
 		}
@@ -1599,6 +2263,7 @@ func runAST(args []string) {
 		content := fs.String("content", "", "Content payload or code")
 		batchFile := fs.String("batch", "", "Path to AST edit batch JSON file")
 		universeID := fs.String("u", "universe-main", "Universe ID")
+		fs.StringVar(universeID, "universe", "universe-main", "Universe ID (alias)")
 		writeDisk := fs.Bool("write-disk", true, "Automatically synchronize modified components to workspace disk files (VS Code ready)")
 		fs.BoolVar(writeDisk, "w", true, "Alias for --write-disk")
 		prompt := fs.String("p", "Declarative AST edit", "User prompt")
@@ -1689,6 +2354,21 @@ func runAST(args []string) {
 		fmt.Printf("   • Universe:           %s\n", res.UniverseID)
 		fmt.Printf("   • Operations Applied: %d\n", res.AppliedOperations)
 		fmt.Printf("   • Modified Symbols:   %d\n", len(res.ModifiedSymbols))
+		for _, det := range res.ModifiedSymbolsDetails {
+			idPrefix := det.NodeID
+			if len(idPrefix) > 12 {
+				idPrefix = idPrefix[:12]
+			}
+			typeStr := ""
+			if det.NodeType != "" {
+				typeStr = fmt.Sprintf(" (%s)", det.NodeType)
+			}
+			compStr := ""
+			if det.ComponentName != "" {
+				compStr = fmt.Sprintf(" in %s", det.ComponentName)
+			}
+			fmt.Printf("     └─ %s %s%s%s\n", idPrefix, det.Identifier, typeStr, compStr)
+		}
 		fmt.Printf("   • Added Symbols:      %d\n", len(res.AddedSymbols))
 		fmt.Printf("   • Deleted Symbols:    %d\n", len(res.DeletedSymbols))
 		fmt.Printf("   • Sibling Dedup:      %d unchanged nodes preserved\n", res.DeduplicatedSymbols)
@@ -1715,16 +2395,577 @@ func runAST(args []string) {
 						exporter := materialize.NewExporter()
 						report, expErr := exporter.ExportToDisk(".", changedFiles, true)
 						if expErr == nil && report != nil {
-							fmt.Printf("   • Disk Sync (VS Code): %d file(s) synchronized to workspace\n", report.FilesWritten)
+							fmt.Printf("   • Disk Sync (VS Code): %d file(s) synchronized to workspace (Materialized Lens)\n", report.FilesWritten)
 						}
 					}
 				}
 			}
 		}
 
+	case "create":
+		fs := flag.NewFlagSet("ast create", flag.ExitOnError)
+		compName := fs.String("component", "", "Component name (e.g. services/campsite)")
+		fs.StringVar(compName, "c", "", "Alias for --component")
+		filePath := fs.String("file", "", "Target file path projection (e.g. cmd/server/main.go)")
+		fs.StringVar(filePath, "f", "", "Alias for --file")
+		lang := fs.String("lang", "", "Language for scaffolding (go, python, typescript, sql)")
+		fs.StringVar(lang, "l", "", "Alias for --lang")
+		compType := fs.String("type", "", "Component type (service, database, infra, frontend, library)")
+		fs.StringVar(compType, "t", "", "Alias for --type")
+		code := fs.String("code", "", "Source code or content")
+		codeFile := fs.String("code-file", "", "Path to file containing source code")
+		universeID := fs.String("u", "universe-main", "Universe ID")
+		fs.StringVar(universeID, "universe", "universe-main", "Alias for -u")
+		writeDisk := fs.Bool("write-disk", true, "Automatically synchronize component to workspace disk")
+		fs.BoolVar(writeDisk, "w", true, "Alias for --write-disk")
+		prompt := fs.String("p", "AST Component Creation", "User prompt")
+		agentID := fs.String("a", "cosm-ast-surgeon", "Agent ID")
+		_ = fs.Parse(args[1:])
+
+		// Allow positional argument for component name e.g. "cosm ast create services/billing --lang go"
+		if *compName == "" && len(fs.Args()) > 0 {
+			*compName = fs.Args()[0]
+		}
+
+		if *code == "" && *codeFile != "" {
+			data, rErr := os.ReadFile(*codeFile)
+			if rErr != nil {
+				fmt.Fprintf(os.Stderr, "Reading code file failed: %v\n", rErr)
+				return
+			}
+			*code = string(data)
+		}
+
+		// Auto-scaffold starter code if --lang is specified and no explicit code given
+		if *code == "" && *lang != "" {
+			starterSrc, defaultPath, defaultType, sErr := mutation.GetStarterSource(*lang)
+			if sErr != nil {
+				fmt.Fprintf(os.Stderr, "Scaffold error: %v\n", sErr)
+				return
+			}
+			*code = starterSrc
+			if *filePath == "" {
+				if *compName != "" {
+					ext := filepath.Ext(defaultPath)
+					*filePath = *compName + ext
+				} else {
+					*filePath = defaultPath
+				}
+			}
+			if *compType == "" {
+				*compType = string(defaultType)
+			}
+		}
+
+		if *compName == "" && *filePath != "" {
+			*compName = *filePath
+		}
+		if *compName == "" || *code == "" {
+			fmt.Println("Error: --component (-c) and either --code, --code-file, or --lang (-l) are required.")
+			fmt.Println("Examples:")
+			fmt.Println("  cosm ast create -c services/billing --lang go")
+			fmt.Println("  cosm ast create -c services/billing -f services/main.go --code 'package main...'")
+			return
+		}
+		if *filePath == "" {
+			*filePath = *compName
+		}
+
+		lineageEnv := core.LineageEnvelope{
+			UserID:           os.Getenv("USER"),
+			UserPrompt:       *prompt,
+			ExecutingAgentID: *agentID,
+			Intent:           "AST Component Creation",
+			Timestamp:        time.Now().UTC(),
+		}
+
+		batch := mutation.ASTEditBatch{
+			UniverseID: *universeID,
+			Lineage:    lineageEnv,
+			Operations: []mutation.ASTOperation{
+				{
+					Operation: mutation.OpCreateComponent,
+					Target:    *compName,
+					Content:   *code,
+					Metadata: map[string]string{
+						"file_path": *filePath,
+					},
+				},
+			},
+		}
+
+		res, err := surgeryEngine.ApplyASTEditBatch(&batch)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "AST component creation failed: %v\n", err)
+			return
+		}
+
+		fmt.Println("✨ AST Component Inception Complete!")
+		fmt.Printf("   • Universe:           %s\n", res.UniverseID)
+		fmt.Printf("   • Component:          %s (%s)\n", *compName, *filePath)
+		fmt.Printf("   • Added Symbols:      %d\n", len(res.AddedSymbols))
+		if len(res.OldManifestHash) >= 12 && len(res.NewManifestHash) >= 12 {
+			fmt.Printf("   • Merkle Head Delta:  %s -> %s\n", res.OldManifestHash[:12], res.NewManifestHash[:12])
+		}
+
+		if *writeDisk {
+			updatedHead, hErr := universeMgr.GetUniverseManifest(res.UniverseID)
+			if hErr == nil && updatedHead != nil {
+				compMap, symMap := loadManifestState(blobStore, graphEngine, updatedHead)
+				hydrator := materialize.NewHydrator()
+				allFiles, hydErr := hydrator.HydrateWorkspace(updatedHead, compMap, symMap)
+				if hydErr == nil && len(allFiles) > 0 {
+					exporter := materialize.NewExporter()
+					report, expErr := exporter.ExportToDisk(".", allFiles, true)
+					if expErr == nil && report != nil {
+						fmt.Printf("   • Disk Sync (VS Code): %d file(s) synchronized to workspace (Materialized Lens)\n", report.FilesWritten)
+					}
+				}
+			}
+		}
+
 	default:
-		fmt.Println("Usage: cosm ast <edit|resolve> [flags]")
+		fmt.Println("Usage: cosm ast <edit|resolve|tree|create> [flags]")
 	}
+}
+
+// ASTTreeLineage encapsulates provenance metadata in the AST tree wire format.
+type ASTTreeLineage struct {
+	UserPrompt       string `json:"user_prompt,omitempty"`
+	ExecutingAgentID string `json:"executing_agent_id,omitempty"`
+	Intent           string `json:"intent,omitempty"`
+	Timestamp        string `json:"timestamp,omitempty"`
+}
+
+// ASTTreeEdge represents a cross-boundary semantic dependency in the AST tree wire format.
+type ASTTreeEdge struct {
+	SourceNodeID     string            `json:"source_node_id,omitempty"`
+	TargetID         string            `json:"target_id"`
+	TargetNodeID     string            `json:"target_node_id,omitempty"`
+	EdgeType         core.EdgeType     `json:"edge_type"`
+	Type             core.EdgeType     `json:"type,omitempty"`
+	Label            string            `json:"label,omitempty"`
+	ContractSchemaID string            `json:"contract_schema_id,omitempty"`
+	Metadata         map[string]string `json:"metadata,omitempty"`
+}
+
+// ASTTreeSymbol represents an individual symbol node with outgoing cross-edges in the AST tree wire format.
+type ASTTreeSymbol struct {
+	NodeID        string          `json:"node_id"`
+	Identifier    string          `json:"identifier"`
+	NodeType      string          `json:"node_type"`
+	Language      core.Language   `json:"language"`
+	Signature     string          `json:"signature,omitempty"`
+	Docstring     string          `json:"docstring,omitempty"`
+	Visibility    string          `json:"visibility,omitempty"`
+	Dependencies  []string        `json:"dependencies,omitempty"`
+	OutgoingEdges []*ASTTreeEdge  `json:"outgoing_edges,omitempty"`
+	Lineage       *ASTTreeLineage `json:"lineage,omitempty"`
+}
+
+// ASTTreeComponent bundles symbols for a source file/module in the AST tree wire format.
+type ASTTreeComponent struct {
+	ComponentID string           `json:"component_id"`
+	Name        string           `json:"name"`
+	Language    core.Language    `json:"language"`
+	Type        string           `json:"type"`
+	Symbols     []*ASTTreeSymbol `json:"symbols"`
+	Lineage     *ASTTreeLineage  `json:"lineage,omitempty"`
+}
+
+// ASTTreeGraph is the canonical wire DTO for the complete AST hierarchy and symbol dependencies.
+type ASTTreeGraph struct {
+	UniverseID      string              `json:"universe_id"`
+	MerkleRoot      string              `json:"merkle_root"`
+	ManifestHash    string              `json:"manifest_hash,omitempty"`
+	TotalComponents int                 `json:"total_components"`
+	TotalSymbols    int                 `json:"total_symbols"`
+	TotalEdges      int                 `json:"total_edges"`
+	Components      []*ASTTreeComponent `json:"components"`
+	Lineage         *ASTTreeLineage     `json:"lineage,omitempty"`
+}
+
+func toASTTreeLineage(env core.LineageEnvelope) *ASTTreeLineage {
+	if env.UserPrompt == "" && env.ExecutingAgentID == "" && env.Intent == "" && env.Timestamp.IsZero() {
+		return nil
+	}
+	var ts string
+	if !env.Timestamp.IsZero() {
+		ts = env.Timestamp.UTC().Format(time.RFC3339)
+	}
+	return &ASTTreeLineage{
+		UserPrompt:       env.UserPrompt,
+		ExecutingAgentID: env.ExecutingAgentID,
+		Intent:           env.Intent,
+		Timestamp:        ts,
+	}
+}
+
+func extractSignature(symNode *core.ASTSymbolNode) string {
+	if symNode.Signature != "" {
+		return symNode.Signature
+	}
+	if len(symNode.ASTPayload) == 0 {
+		return ""
+	}
+
+	// 1. Try Go struct / func unmarshaling
+	if symNode.Language == core.LangGo {
+		var fn struct {
+			Name     string `json:"name"`
+			Receiver string `json:"receiver_type"`
+			Params   []struct {
+				Name string `json:"name"`
+				Type string `json:"type"`
+			} `json:"params"`
+			Results []string `json:"results"`
+		}
+		if err := json.Unmarshal(symNode.ASTPayload, &fn); err == nil && fn.Name != "" {
+			var paramStrs []string
+			for _, p := range fn.Params {
+				paramStrs = append(paramStrs, fmt.Sprintf("%s %s", p.Name, p.Type))
+			}
+			recvStr := ""
+			if fn.Receiver != "" {
+				recvStr = fmt.Sprintf("(%s) ", fn.Receiver)
+			}
+			sig := fmt.Sprintf("func %s%s(%s)", recvStr, fn.Name, strings.Join(paramStrs, ", "))
+			if len(fn.Results) == 1 {
+				sig += " " + fn.Results[0]
+			} else if len(fn.Results) > 1 {
+				sig += fmt.Sprintf(" (%s)", strings.Join(fn.Results, ", "))
+			}
+			return sig
+		}
+
+		var st struct {
+			Name   string `json:"name"`
+			Fields []struct {
+				Name string `json:"name"`
+				Type string `json:"type"`
+			} `json:"fields"`
+		}
+		if err := json.Unmarshal(symNode.ASTPayload, &st); err == nil && st.Name != "" {
+			return fmt.Sprintf("type %s struct", st.Name)
+		}
+	}
+
+	// 2. Try raw source snippet (e.g. Python, HCL, generic)
+	firstLine := strings.SplitN(string(symNode.ASTPayload), "\n", 2)[0]
+	firstLine = strings.TrimSpace(firstLine)
+	firstLine = strings.TrimSuffix(firstLine, ":")
+	if strings.HasPrefix(firstLine, "def ") || strings.HasPrefix(firstLine, "class ") ||
+		strings.HasPrefix(firstLine, "func ") || strings.HasPrefix(firstLine, "fn ") ||
+		strings.HasPrefix(firstLine, "resource ") || strings.HasPrefix(firstLine, "variable ") {
+		return firstLine
+	}
+
+	return ""
+}
+
+func runASTTree(args []string) {
+	fs := flag.NewFlagSet("ast tree", flag.ExitOnError)
+	universeID := fs.String("u", "universe-main", "Universe ID")
+	fs.StringVar(universeID, "universe", "universe-main", "Universe ID")
+	format := fs.String("format", "text", "Output format (text, json)")
+	fs.StringVar(format, "f", "text", "Alias for --format")
+	_ = fs.Parse(args)
+
+	if *universeID == "universe-main" && len(fs.Args()) > 0 && !strings.HasPrefix(fs.Args()[0], "-") {
+		*universeID = fs.Args()[0]
+	}
+
+	blobStore, graphEngine, err := openStorage()
+	if err != nil {
+		if *format == "json" {
+			res, _ := json.Marshal(map[string]interface{}{"status": "ERROR", "error": err.Error()})
+			fmt.Println(string(res))
+		} else {
+			fmt.Fprintf(os.Stderr, "Storage error: %v\n", err)
+		}
+		return
+	}
+	defer graphEngine.Close()
+
+	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
+	head, err := universeMgr.GetUniverseManifest(*universeID)
+	if err != nil {
+		if *format == "json" {
+			res, _ := json.Marshal(map[string]interface{}{"status": "ERROR", "error": err.Error()})
+			fmt.Println(string(res))
+		} else {
+			fmt.Fprintf(os.Stderr, "Error getting universe manifest for %q: %v\n", *universeID, err)
+		}
+		return
+	}
+	compMap, symMap := loadManifestState(blobStore, graphEngine, head)
+
+	// Index cross edges by source node ID
+	edgesBySource := make(map[string][]*ASTTreeEdge)
+	for _, e := range head.CrossEdges {
+		lbl := string(e.Type)
+		if ep, ok := e.Metadata["backend_endpoint"]; ok {
+			lbl = fmt.Sprintf("CALLS %s", ep)
+		} else if env, ok := e.Metadata["env_var"]; ok {
+			lbl = fmt.Sprintf("BINDS %s", env)
+		} else if res, ok := e.Metadata["resource_id"]; ok {
+			lbl = fmt.Sprintf("DEPLOYS TO %s", res)
+		} else if e.ContractSchemaID != "" {
+			lbl = fmt.Sprintf("%s (%s)", e.Type, e.ContractSchemaID)
+		}
+
+		edgeDTO := &ASTTreeEdge{
+			SourceNodeID:     e.SourceNodeID,
+			TargetID:         e.TargetNodeID,
+			TargetNodeID:     e.TargetNodeID,
+			EdgeType:         e.Type,
+			Type:             e.Type,
+			Label:            lbl,
+			ContractSchemaID: e.ContractSchemaID,
+			Metadata:         e.Metadata,
+		}
+		edgesBySource[e.SourceNodeID] = append(edgesBySource[e.SourceNodeID], edgeDTO)
+	}
+
+	var components []*ASTTreeComponent
+	totalSymbols := 0
+	totalEdges := len(head.CrossEdges)
+
+	seenComps := make(map[string]bool)
+	for _, cID := range head.Components {
+		if seenComps[cID] {
+			continue
+		}
+		seenComps[cID] = true
+
+		compNode, ok := compMap[cID]
+		if !ok || compNode == nil {
+			continue
+		}
+
+		compName := ""
+		if compNode.Metadata != nil {
+			compName = compNode.Metadata["file_path"]
+		}
+		if compName == "" {
+			compName = compNode.Name
+		}
+		if compName == "" {
+			compName = compNode.ComponentID
+		}
+
+		compDTO := &ASTTreeComponent{
+			ComponentID: compNode.ComponentID,
+			Name:        compName,
+			Language:    compNode.Language,
+			Type:        string(compNode.Type),
+			Symbols:     make([]*ASTTreeSymbol, 0),
+			Lineage:     toASTTreeLineage(compNode.Lineage),
+		}
+
+		seenSyms := make(map[string]bool)
+		for _, sID := range compNode.SymbolNodes {
+			if seenSyms[sID] {
+				continue
+			}
+			seenSyms[sID] = true
+
+			symNode, ok := symMap[sID]
+			if !ok || symNode == nil {
+				continue
+			}
+
+			// Associate cross-edges to source symbols as outgoing_edges
+			var matchedEdges []*ASTTreeEdge
+			seenEdges := make(map[*ASTTreeEdge]bool)
+			addEdges := func(list []*ASTTreeEdge) {
+				for _, edge := range list {
+					if !seenEdges[edge] {
+						seenEdges[edge] = true
+						matchedEdges = append(matchedEdges, edge)
+					}
+				}
+			}
+
+			if list, ok := edgesBySource[symNode.NodeID]; ok {
+				addEdges(list)
+			}
+			if symNode.Identifier != "" {
+				if list, ok := edgesBySource[symNode.Identifier]; ok {
+					addEdges(list)
+				}
+			}
+			for srcID, list := range edgesBySource {
+				if srcID != symNode.NodeID && srcID != symNode.Identifier {
+					if len(srcID) >= 8 && (strings.HasPrefix(symNode.NodeID, srcID) || strings.HasPrefix(srcID, symNode.NodeID)) {
+						addEdges(list)
+					}
+				}
+			}
+
+			sort.Slice(matchedEdges, func(i, j int) bool {
+				if matchedEdges[i].TargetID != matchedEdges[j].TargetID {
+					return matchedEdges[i].TargetID < matchedEdges[j].TargetID
+				}
+				return matchedEdges[i].EdgeType < matchedEdges[j].EdgeType
+			})
+
+			deps := symNode.LocalDependencies
+			if len(deps) == 0 {
+				deps = symNode.Dependencies
+			}
+
+			sig := symNode.Signature
+			if sig == "" {
+				sig = extractSignature(symNode)
+			}
+
+			symDTO := &ASTTreeSymbol{
+				NodeID:        symNode.NodeID,
+				Identifier:    symNode.Identifier,
+				NodeType:      symNode.NodeType,
+				Language:      symNode.Language,
+				Signature:     sig,
+				Docstring:     symNode.Docstring,
+				Visibility:    symNode.Visibility,
+				Dependencies:  deps,
+				OutgoingEdges: matchedEdges,
+				Lineage:       toASTTreeLineage(symNode.Lineage),
+			}
+
+			compDTO.Symbols = append(compDTO.Symbols, symDTO)
+			totalSymbols++
+		}
+
+		sort.Slice(compDTO.Symbols, func(i, j int) bool {
+			if compDTO.Symbols[i].Identifier != compDTO.Symbols[j].Identifier {
+				return compDTO.Symbols[i].Identifier < compDTO.Symbols[j].Identifier
+			}
+			return compDTO.Symbols[i].NodeID < compDTO.Symbols[j].NodeID
+		})
+
+		components = append(components, compDTO)
+	}
+
+	sort.Slice(components, func(i, j int) bool {
+		return components[i].Name < components[j].Name
+	})
+
+	treeGraph := &ASTTreeGraph{
+		UniverseID:      *universeID,
+		MerkleRoot:      head.MerkleRootHash,
+		ManifestHash:    head.MerkleRootHash,
+		TotalComponents: len(components),
+		TotalSymbols:    totalSymbols,
+		TotalEdges:      totalEdges,
+		Components:      components,
+		Lineage:         toASTTreeLineage(head.Lineage),
+	}
+
+	if *format == "json" {
+		data, err := json.MarshalIndent(treeGraph, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "JSON encoding error: %v\n", err)
+			return
+		}
+		fmt.Println(string(data))
+		return
+	}
+
+	fmt.Print(renderASTTreeASCII(treeGraph, symMap))
+}
+
+func renderASTTreeASCII(graph *ASTTreeGraph, symMap map[string]*core.ASTSymbolNode) string {
+	var sb strings.Builder
+
+	headStr := graph.MerkleRoot
+	if headStr == "" {
+		headStr = graph.ManifestHash
+	}
+	if headStr == "" {
+		headStr = "uncommitted"
+	}
+	fmt.Fprintf(&sb, "🌌 %s (Head: %s)\n", graph.UniverseID, shortHash(headStr))
+
+	if len(graph.Components) == 0 {
+		sb.WriteString("└── (empty universe - no components tracked)\n")
+		return sb.String()
+	}
+
+	numComps := len(graph.Components)
+	for i, comp := range graph.Components {
+		isLastComp := (i == numComps-1)
+		compPrefix := "├── "
+		compIndent := "│   "
+		if isLastComp {
+			compPrefix = "└── "
+			compIndent = "    "
+		}
+
+		compDesc := comp.Name
+		if comp.Language != "" && comp.Type != "" {
+			compDesc = fmt.Sprintf("%s (%s, %s)", comp.Name, comp.Language, comp.Type)
+		} else if comp.Language != "" {
+			compDesc = fmt.Sprintf("%s (%s)", comp.Name, comp.Language)
+		}
+
+		fmt.Fprintf(&sb, "%s📦 %s\n", compPrefix, compDesc)
+
+		if len(comp.Symbols) == 0 {
+			fmt.Fprintf(&sb, "%s└── (no symbols)\n", compIndent)
+			continue
+		}
+
+		numSyms := len(comp.Symbols)
+		for j, sym := range comp.Symbols {
+			isLastSym := (j == numSyms-1)
+			symPrefix := "├── "
+			symIndent := "│   "
+			if isLastSym {
+				symPrefix = "└── "
+				symIndent = "    "
+			}
+
+			symDesc := sym.Identifier
+			if sym.NodeType != "" {
+				symDesc = fmt.Sprintf("%s (%s)", sym.Identifier, sym.NodeType)
+			}
+			fmt.Fprintf(&sb, "%s%s🔹 %s\n", compIndent, symPrefix, symDesc)
+
+			var details []string
+			if sym.Signature != "" {
+				details = append(details, fmt.Sprintf("Signature: %s", sym.Signature))
+			}
+			for _, edge := range sym.OutgoingEdges {
+				tgt := edge.TargetID
+				if tgt == "" {
+					tgt = edge.TargetNodeID
+				}
+				if symMap != nil {
+					if tgtSym, ok := symMap[tgt]; ok && tgtSym.Identifier != "" {
+						tgt = tgtSym.Identifier
+					}
+				}
+				edgeStr := fmt.Sprintf("🔗 %s -> %s", edge.EdgeType, tgt)
+				if edge.ContractSchemaID != "" {
+					edgeStr += fmt.Sprintf(" [contract: %s]", edge.ContractSchemaID)
+				}
+				details = append(details, edgeStr)
+			}
+
+			numDetails := len(details)
+			for k, d := range details {
+				isLastDetail := (k == numDetails-1)
+				detailPrefix := "├── "
+				if isLastDetail {
+					detailPrefix = "└── "
+				}
+				fmt.Fprintf(&sb, "%s%s%s%s\n", compIndent, symIndent, detailPrefix, d)
+			}
+		}
+	}
+
+	return sb.String()
 }
 
 func runExport(args []string) {
@@ -2012,15 +3253,81 @@ func openStorage() (*storage.BlobStore, *storage.GraphEngine, error) {
 	return blobStore, graphEngine, nil
 }
 
-func resolveNodeID(graphEngine *storage.GraphEngine, query string) string {
-	if len(query) == 64 {
-		return query
+func isHex(s string) bool {
+	if len(s) == 0 {
+		return false
 	}
-	allNodes := graphEngine.ListNodes("", "")
-	for _, n := range allNodes {
-		if strings.HasPrefix(n.NodeID, query) {
-			return n.NodeID
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
 		}
+	}
+	return true
+}
+
+// resolveNodeOrSymbol centralizes query resolution across hex IDs, short prefixes, and human symbol identifiers.
+func resolveNodeOrSymbol(
+	graphEngine *storage.GraphEngine,
+	universeMgr *storage.UniverseManager,
+	universeID, query string,
+) (string, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return "", fmt.Errorf("node or symbol query cannot be empty")
+	}
+	if universeID == "" {
+		universeID = "universe-main"
+	}
+
+	// 1. If query is 64 hex characters -> return exact node ID / hash.
+	if len(query) == 64 && isHex(query) {
+		return query, nil
+	}
+
+	// 2. If query is a short hex prefix (e.g. >= 7 chars) -> search graphEngine.ListNodes() for prefix match.
+	if len(query) >= 7 && isHex(query) && !strings.Contains(query, "::") {
+		if graphEngine != nil {
+			allNodes := graphEngine.ListNodes("", "")
+			for _, n := range allNodes {
+				if strings.HasPrefix(n.NodeID, query) || strings.HasPrefix(n.MerkleHash, query) {
+					return n.NodeID, nil
+				}
+			}
+		}
+	}
+
+	// 3. If query is a human symbol identifier (e.g. contains '::' or has no hex representation) -> call mutation.ResolveSymbol
+	if universeMgr != nil {
+		res, err := mutation.ResolveSymbol(universeMgr, universeID, query)
+		if err == nil && res != nil && res.SymbolNode != nil && res.SymbolNode.NodeID != "" {
+			return res.SymbolNode.NodeID, nil
+		}
+	}
+
+	// Fallback 1: search graphEngine for exact node ID match or prefix match (e.g. comp-raw-... or non-hex ID)
+	if graphEngine != nil {
+		allNodes := graphEngine.ListNodes("", "")
+		for _, n := range allNodes {
+			if n.NodeID == query || strings.HasPrefix(n.NodeID, query) {
+				return n.NodeID, nil
+			}
+		}
+	}
+
+	// Fallback 2: if universeID != "universe-main", check universe-main
+	if universeMgr != nil && universeID != "universe-main" {
+		if res, err := mutation.ResolveSymbol(universeMgr, "universe-main", query); err == nil && res != nil && res.SymbolNode != nil {
+			return res.SymbolNode.NodeID, nil
+		}
+	}
+
+	return "", fmt.Errorf("symbol or node %q not found in universe %s", query, universeID)
+}
+
+func resolveNodeID(graphEngine *storage.GraphEngine, query string) string {
+	res, err := resolveNodeOrSymbol(graphEngine, nil, "universe-main", query)
+	if err == nil && res != "" {
+		return res
 	}
 	return query
 }
@@ -2224,7 +3531,7 @@ Subcommands:
 
 func runPublish(args []string) {
 	if len(args) == 0 {
-		fmt.Println("Usage: cosm publish [flags] <hub_url>/<org>/<cosm>")
+		fmt.Println("Usage: cosm publish [flags] <hub_url>/<org>/<cosm> or <org>/<cosm>")
 		fmt.Println("  e.g.: cosm publish http://127.0.0.1:51204/demo-org/cloud-platform")
 		return
 	}
@@ -2232,23 +3539,16 @@ func runPublish(args []string) {
 	fs := flag.NewFlagSet("publish", flag.ExitOnError)
 	universeID := fs.String("u", "universe-main", "Universe ID to publish")
 	intent := fs.String("i", "Publish cosm snapshot to Topocosm Hub", "Publish intent")
-	_ = fs.Parse(args[:len(args)-1])
+	_ = fs.Parse(args)
 
-	targetURI := args[len(args)-1]
-
-	// Parse targetURI -> hubURL, orgSlug, cosmName
-	parts := strings.Split(targetURI, "/")
-	if len(parts) < 3 {
-		fmt.Println("Target must be in format <hub_url>/<org>/<cosm> or <org>/<cosm>")
-		os.Exit(1)
+	remain := fs.Args()
+	if len(remain) == 0 {
+		fmt.Println("Usage: cosm publish [flags] <hub_url>/<org>/<cosm> or <org>/<cosm>")
+		return
 	}
 
-	cosmName := parts[len(parts)-1]
-	orgSlug := parts[len(parts)-2]
-	hubURL := strings.Join(parts[:len(parts)-2], "/")
-	if hubURL == "" {
-		hubURL = "http://127.0.0.1:51204"
-	}
+	targetURI := remain[0]
+	hubURL, orgSlug, cosmName := resolveHubTarget(targetURI)
 
 	blobStore, graphEngine, err := openStorage()
 	if err != nil {
@@ -2354,15 +3654,7 @@ func runClone(args []string) {
 		destDir = remain[1]
 	}
 
-	parts := strings.Split(targetURI, "/")
-	if len(parts) < 3 {
-		fmt.Println("Target must be in format <hub_url>/<org>/<cosm>")
-		os.Exit(1)
-	}
-
-	cosmName := parts[len(parts)-1]
-	orgSlug := parts[len(parts)-2]
-	hubURL := strings.Join(parts[:len(parts)-2], "/")
+	hubURL, orgSlug, cosmName := resolveHubTarget(targetURI)
 
 	client := topocosm.NewHubClient(hubURL, "did:key:z6MkuCLICloner")
 
@@ -2474,6 +3766,9 @@ func runClone(args []string) {
 
 func resolveHubTarget(rawTarget string) (hubURL, orgSlug, cosmName string) {
 	hubURL = "http://127.0.0.1:51204"
+	if envHub := os.Getenv("TOPOCOSM_HUB_URL"); envHub != "" {
+		hubURL = envHub
+	}
 	orgSlug = "demo-org"
 	cosmName = "cloud-platform"
 

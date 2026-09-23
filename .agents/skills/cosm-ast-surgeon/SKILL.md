@@ -25,6 +25,7 @@ Use this skill whenever an AI agent needs to modify code inside a Cosm repositor
 
 | Operation | Target Syntax | Description | Example Payload |
 |---|---|---|---|
+| `create_component` | Component / Path | Incepts a new component and auto-parses symbols into DAG (zero-disk) | `package main...` or auto-scaffolded |
 | `replace_function_body` | `Func` or `Class.method` | Replaces body while strictly preserving signature, decorators, and types | `return self.cache.get(key, None)` |
 | `replace_function` | `Func` or `Class.method` | Completely replaces function signature and body | `def get(self, key: str) -> Optional[V]: ...` |
 | `add_method` | `ClassName` | Appends a new method to a class/struct | `def evict(self) -> None:\n    self.cache.clear()` |
@@ -49,13 +50,22 @@ Target symbols can be resolved using any of the following formats:
 
 ## 4. CLI Usage Examples
 
-### Single Operation Edit
+### Blank-Slate Component Inception (`cosm ast create`)
+```bash
+# Incept a new component with auto-scaffolded starter AST nodes directly into the DAG
+cosm ast create -c services/billing --lang go -w
+
+# Or incept a component with explicit source code
+cosm ast create -c services/campsite -f cmd/server/main.go --code "package main..." -w
+```
+
+### Single Operation Edit (`cosm ast edit`)
 ```bash
 # Replace function body
-cosm ast edit --op replace_function_body --target LRUCache.get --content "return self.cache.get(key)"
+cosm ast edit --op replace_function_body --target LRUCache.get --content "return self.cache.get(key)" -w
 
 # Add new endpoint after existing handler
-cosm ast edit --op add_after --target read_root --content "@app.get('/health')\ndef health():\n    return {'status':'ok'}"
+cosm ast edit --op add_after --target read_root --content "@app.get('/health')\ndef health():\n    return {'status':'ok'}" -w
 
 # Resolve symbol details
 cosm ast resolve "services/auth::ValidateToken"
@@ -117,7 +127,7 @@ Content-Type: application/json
   "lineage": {
     "user_prompt": "Fix payment return status",
     "executing_agent_id": "cosm-ast-surgeon",
-    "llm_version": "gemini-3.7-flash",
+    "llm_version": "gemini-3.8-flash",
     "tokens": {
       "prompt_tokens": 820,
       "completion_tokens": 140,
@@ -146,7 +156,7 @@ cosm commit \
   -p "Implement RS256 token verification" \
   --session-id "sess-4491-a8b2" \
   -a cosm-ast-surgeon \
-  -m "gemini-3.7-flash" \
+  -m "gemini-3.8-flash" \
   --prompt-tokens 1420 \
   --completion-tokens 312 \
   --reasoning-tokens 850 \
@@ -156,7 +166,7 @@ cosm commit \
   --span-id "00f067aa0ba902b7"
 ```
 
-For complete specification details, see [Agent Commit Contract Reference](file:///Users/jasondavenport/GitHub/cosm/docs/reference/agent-commit-contract.md).
+For complete specification details, see [Agent Commit Contract Reference](../../../docs/reference/agent-commit-contract.md).
 
 ---
 
@@ -186,13 +196,17 @@ When operating in an interactive developer environment (such as VS Code, Cursor,
 
 When operating as an autonomous agent within a multi-agent swarm:
 
-1. **Acquire Blackboard Domain Leases First**:
-   - Before mutating shared components or interface contracts, claim the target domain:
+1. **Acquire Blackboard Leases First (Hierarchical URIs)**:
+   - Before mutating shared components or interface contracts, claim the target domain, component, or specific symbol:
      ```bash
-     cosm claim services/billing --ttl 600 --agent "$AGENT_DID" --goal "Refactoring Stripe webhook"
+     # Symbol-level claim (allows other agents to edit sibling functions simultaneously)
+     cosm claim services/billing::ProcessPayment --granularity symbol --ttl 600 --agent "$AGENT_DID" --goal "Refactoring Stripe webhook"
+
+     # Or component-level claim
+     cosm claim services/billing --granularity component --ttl 600 --agent "$AGENT_DID"
      ```
-   - If the claim returns conflict (`409`), yield and re-queue rather than attempting concurrent edits on the same component.
-   - Release the lease immediately upon proposal submission or failure (`cosm release services/billing`).
+   - If the claim returns conflict (`409`), yield and re-queue rather than attempting concurrent edits on overlapping paths.
+   - Release the lease immediately upon proposal submission or failure (`cosm release services/billing::ProcessPayment`).
 
 2. **Audit Cross-Boundary Blast Radius**:
    - Before modifying any function signature or interface, inspect connected edges:
@@ -213,5 +227,35 @@ When operating as an autonomous agent within a multi-agent swarm:
      ```bash
      cosm ast resolve --conflict <conflict_id> --choose-version 0
      ```
+
+---
+
+## 9. Post-Mutation Verification & Lifecycle Protocol
+
+To avoid diagnostic loops or false alerts when verifying mutations:
+
+1. **Immediate Test Execution (Compiler/Test Parity)**:
+   - With `--write-disk` (default `true` / `-w`), `cosm ast edit` immediately updates enclosing workspace files on disk.
+   - Run unit tests or build commands immediately (e.g. `go test -v ./...`, `pytest`, `npm test`) without manual export steps.
+
+2. **AST Verification via Explicit Symbol Node ID**:
+   - `cosm ast edit` outputs the exact new Node ID of every modified symbol:
+     ```text
+     • Modified Symbols: 1
+       └─ 5f9faf5d034b main.(Server).HandleHealth (FunctionDecl) in cmd/server/main.go
+     ```
+   - To inspect the reconstituted symbol in the AST DAG, always query using the **exact Node ID**:
+     ```bash
+     cosm view 5f9faf5d034b
+     ```
+   - Avoid querying by ambiguous human symbol strings immediately post-mutation unless specifying the micro-universe explicitly (`cosm view <symbol> -u <universe_id>`).
+
+3. **Solidifying Branch Frontier with Cosm Commit**:
+   - `cosm ast edit` applies and persists the mutation into the micro-universe manifest.
+   - To seal the frontier and clear "File drift detected" in `cosm status`, execute a commit:
+     ```bash
+     cosm commit -u <universe_id> -i "<intent>"
+     ```
+
 
 

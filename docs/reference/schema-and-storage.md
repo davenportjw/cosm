@@ -136,16 +136,26 @@ type CrossBoundaryEdge struct {
 ### `ComponentNode`
 Subsystem grouping of symbol nodes with its own binary Merkle root:
 ```go
+type TriviaEnvelope struct {
+    HeaderDirectives []string `json:"header_directives,omitempty"` // e.g. //go:build, //go:embed, # -*- coding
+    LicenseHeader    string   `json:"license_header,omitempty"`
+    ModuleDocstring  string   `json:"module_docstring,omitempty"`
+}
+
 type ComponentNode struct {
     ComponentID string            `json:"component_id"` // Merkle root hash of sorted symbol hashes
     Name        string            `json:"name"`         // e.g. "services/billing", "frontend/auth"
     Type        ComponentType     `json:"type"`         // service, database, infra, etc.
     Language    Language          `json:"language"`
     SymbolNodes []string          `json:"symbol_nodes"` // List of ASTSymbolNode NodeIDs
+    Trivia      *TriviaEnvelope   `json:"trivia,omitempty"` // Top-of-file directives, pragmas, and license
     Metadata    map[string]string `json:"metadata,omitempty"`
     Lineage     LineageEnvelope   `json:"lineage"`
 }
 ```
+
+> [!NOTE]
+> **Lossless Trivia Preservation**: Polyglot codecs capture top-of-file build directives (e.g., `//go:build !ignore`), encoding pragmas (e.g., `# -*- coding: utf-8 -*-`), license commentary blocks, and module docstrings into `ComponentNode.Trivia`. When hydrating AST components into ephemeral staging sandboxes or disk files, `pkg/materialize/hydrator.go` prepends these directives ahead of package headers and import lists to ensure lossless, byte-level compilation compatibility.
 
 ---
 
@@ -162,6 +172,69 @@ type WorkspaceManifestNode struct {
     CreatedAt      time.Time           `json:"created_at"`
 }
 ```
+
+---
+
+### `ASTTreeGraph` & Hierarchical Projection
+The canonical projection DTO for inspecting the full AST Merkle hierarchy, components, symbols, and cross-boundary edges across micro-universes:
+
+```go
+type ASTTreeGraph struct {
+    UniverseID      string              `json:"universe_id"`
+    MerkleRoot      string              `json:"merkle_root"`
+    ManifestHash    string              `json:"manifest_hash,omitempty"`
+    TotalComponents int                 `json:"total_components"`
+    TotalSymbols    int                 `json:"total_symbols"`
+    TotalEdges      int                 `json:"total_edges"`
+    Components      []*ASTTreeComponent `json:"components"`
+    Lineage         *ASTTreeLineage     `json:"lineage,omitempty"`
+}
+
+type ASTTreeComponent struct {
+    ComponentID string           `json:"component_id"`
+    Name        string           `json:"name"`
+    Language    core.Language    `json:"language"`
+    Type        string           `json:"type"`
+    Symbols     []*ASTTreeSymbol `json:"symbols"`
+    Lineage     *ASTTreeLineage  `json:"lineage,omitempty"`
+}
+
+type ASTTreeSymbol struct {
+    NodeID        string          `json:"node_id"`
+    Identifier    string          `json:"identifier"`
+    NodeType      string          `json:"node_type"`
+    Language      core.Language   `json:"language"`
+    Signature     string          `json:"signature,omitempty"`
+    Docstring     string          `json:"docstring,omitempty"`
+    Visibility    string          `json:"visibility,omitempty"`
+    Dependencies  []string        `json:"dependencies,omitempty"`
+    OutgoingEdges []*ASTTreeEdge  `json:"outgoing_edges,omitempty"`
+    Lineage       *ASTTreeLineage `json:"lineage,omitempty"`
+}
+
+type ASTTreeEdge struct {
+    SourceNodeID     string            `json:"source_node_id,omitempty"`
+    TargetID         string            `json:"target_id"`
+    TargetNodeID     string            `json:"target_node_id,omitempty"`
+    EdgeType         core.EdgeType     `json:"edge_type"`
+    Type             core.EdgeType     `json:"type,omitempty"`
+    Label            string            `json:"label,omitempty"`
+    ContractSchemaID string            `json:"contract_schema_id,omitempty"`
+    Metadata         map[string]string `json:"metadata,omitempty"`
+}
+```
+
+#### CLI Inspection: `cosm ast tree`
+Inspects and visualizes the complete AST Merkle Tree hierarchy for a micro-universe:
+
+```bash
+cosm ast tree [-u universe] [--format text|json]
+```
+
+- `-u`, `--universe <id>`: Target micro-universe to inspect (defaults to `universe-main`).
+- `--format`, `-f <text|json>`: Output format (defaults to `text`).
+  - `text`: Formatted ASCII tree view with component symbols, language badges, signatures, and contracts.
+  - `json`: Machine-readable `ASTTreeGraph` payload consumed by the VS Code extension (`cosm.astTreeView`), language servers, and autonomous agent swarms.
 
 ---
 

@@ -2,7 +2,7 @@
 name: cosm-core-dev
 description: >-
   Develop, test, and debug the core Cosm AST Source Control Management (SCM) system,
-  including content-addressed storage (.cosm/objects/), SQLite WAL graph engine (.cosm/graph.db),
+  including content-addressed storage (.cosm/objects/), pure-Go custom WAL graph engine (.cosm/graph.db),
   micro-universe branching, lineage tracing, and developer CLI commands (`cosm`).
 ---
 
@@ -16,18 +16,22 @@ Use this skill when modifying, extending, or debugging the core Cosm Go codebase
 
 1. **Storage Layer (`pkg/storage/`)**:
    - `blobstore.go`: Content-addressed immutable blob storage under `.cosm/objects/` with atomic write-and-rename (`fsync`).
-   - `graphengine.go`: Pure-Go SQLite database (`modernc.org/sqlite`) running in Write-Ahead Log (`WAL`) mode with recursive CTEs.
+   - `graphengine.go`: Pure-Go zero-dependency custom Write-Ahead Log (`WAL`) graph engine with framed binary records and IEEE CRC32 checksums (`.cosm/graph.db`).
    - `universe.go`: Zero-copy branching and micro-universe frontier manager.
    - `oplog.go`: Event-sourced append-only mutation stream.
    - `vectorindex.go`: Intent and natural language search index.
 
 2. **Core Domain Primitives (`pkg/core/`)**:
-   - `schema.go`: `ASTSymbolNode`, `ComponentNode`, `WorkspaceManifestNode`, `LineageEnvelope`, `TokenTelemetry`, `TraceCarrier`, `CrossBoundaryEdge`.
+   - `schema.go`: `ASTSymbolNode`, `ComponentNode` (with `TriviaEnvelope`), `WorkspaceManifestNode`, `LineageEnvelope`, `TokenTelemetry`, `TraceCarrier`, `CrossBoundaryEdge`.
    - `hasher.go`: Deterministic SHA-256 Merkle root computation.
    - `crossboundary.go`: Inference engine linking frontend, backend, and cloud infrastructure symbols (`CONSUMES_API`, `DEPLOYS_TO`, `BINDS_ENV`).
 
 3. **Developer CLI (`cmd/cosm/`) & Agent Commit Contract**:
-   - Implements CLI commands: `init`, `add`, `commit`, `status`, `view`, `topology`, `lineage`, `blast-radius`, `universe`, `proposal`, `ship`, `git`, `dashboard`, `ast edit`, `ast resolve`.
+   - Implements CLI commands: `init`, `add`, `commit`, `status`, `view`, `topology`, `lineage`, `blast-radius`, `universe`, `proposal`, `ship`, `git`, `dashboard`, `log`, `ast create`, `ast edit`, `ast resolve`, `ast tree`.
+   - **AST Inception**: `cosm ast create -c <comp> --lang <go|python|ts|sql>` scaffolds and commits components directly into the AST Merkle-DAG without requiring pre-existing disk files.
+   - **Recursive Directory Staging**: `cosm add .` recursively traverses directories, ignoring `.cosm`, `.git`, `node_modules`, `vendor`, and honoring `.cosmignore`.
+   - **Causal History**: `cosm log` traverses commit lineage and outputs symbol deltas (`+ Added`, `~ Modified`, `- Removed`).
+   - **Human Symbol Resolution**: `cosm view`, `cosm lineage`, and `cosm blast-radius` accept qualified symbol names (e.g. `services/campsite::main.HandleHealth` or `HandleHealth`) or short hex hashes.
    - Telemetry flags for agents: `--prompt`, `--session-id`, `--orchestrator-id`, `--model`, `--prompt-tokens`, `--completion-tokens`, `--reasoning-tokens`, `--cost-usd`, `--latency-ms`, `--trace-id`, `--span-id`.
    - Complete agent contract reference: `docs/reference/agent-commit-contract.md`.
 
@@ -97,8 +101,8 @@ When developing or extending `pkg/storage/graphengine.go`, `pkg/storage/universe
 
 ## Rules to Remember
 
-- **Pure Go Only**: Never introduce CGO dependencies (use `modernc.org/sqlite`).
-- **Atomic Persistence**: Always persist AST symbol nodes to `.cosm/objects/` before recording node IDs in SQLite.
+- **Pure Go Only**: Never introduce CGO dependencies (pure-Go custom WAL binary format engine).
+- **Atomic Persistence**: Always persist AST symbol nodes to `.cosm/objects/` before recording node IDs in the graph engine WAL.
 - **Deduplication**: Unchanged sibling AST symbols must share identical SHA-256 hashes and avoid redundant disk writes.
 - **Edge Write Synchronization**: In `GraphEngine`, all edge mutations must be synchronized via `g.mu.Lock()` and committed through framed WAL records with CRC32 verification before updating in-memory indices.
 - **IDE Disk Sync**: Commands performing AST surgery (`cosm ast edit`) must auto-synchronize changes to workspace disk files by default (`-w`) to keep VS Code and Language Servers in sync.

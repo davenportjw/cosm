@@ -30,7 +30,7 @@ Subcommands:
 
 Flags:
   --scenario <name>       Scenario name (e.g. fastapi-react-tf, go-gin-vue-tf, rust-axum-react-postgres-tf, swift-go-tf, kotlin-py-sql, csharp-react-proto)
-  --model <model>         LLM model to use (default: gemini-3.7-flash)
+  --model <model>         LLM model to use (default: gemini-3.8-flash)
   --workdir <dir>         Workspace directory (default: temp directory)
   --universe <id>         Target universe ID for verification (default: universe-main)
   --mock                  Use hermetic Mock LLM provider without network access
@@ -123,7 +123,7 @@ func runAgentCommand(args []string) {
 
 	var provider llm.LLMProvider
 	if *mockMode {
-		mock := llm.NewMockProvider("mock-gemini-3.7-flash")
+		mock := llm.NewMockProvider("mock-gemini-3.8-flash")
 		mock.EnqueueToolCall("cosm_init", `{"universe_id":"universe-main"}`)
 		var files []string
 		for k := range scenario.Files {
@@ -270,7 +270,7 @@ func runSuiteCommand(args []string) {
 
 		var provider llm.LLMProvider
 		if *mockMode {
-			mock := llm.NewMockProvider("mock-gemini-3.7-flash")
+			mock := llm.NewMockProvider("mock-gemini-3.8-flash")
 			mock.EnqueueToolCall("cosm_init", `{"universe_id":"universe-main"}`)
 			var files []string
 			for k := range sc.Files {

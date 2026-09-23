@@ -25,27 +25,32 @@ cosm <command> [arguments] [flags]
 ## Commands
 
 ### 1. `cosm init`
-Initializes a new `.cosm/` repository structure in the current directory.
+Initializes a new `.cosm/` repository structure in the current directory and prepares the initial universe head.
 ```bash
 cosm init [-u <universe_id>]
 ```
 * **Exit Code 0**: Successfully initialized repository.
 * **Exit Code 1**: Directory permissions error or already initialized.
+* **Onboarding Guidance**: Displays explicit next steps for both the **AST-First Paradigm** (`cosm ast create`) and the **Filesystem Staging Lens** (`cosm add .`).
 
 ---
 
 ### 2. `cosm add`
-Parses specified polyglot source files into AST symbol nodes or stages non-AST raw files (such as `LICENSE`, `README.md`, YAML/TOML configs, and assets) as content-addressed `RawBlobNode`s.
+Stages specified files or recursively walks directory trees into AST symbol nodes. Non-AST raw files (such as `LICENSE`, `README.md`, YAML/TOML configs, and assets) are staged as content-addressed `RawBlobNode`s.
 ```bash
-cosm add <files...> [-u <universe>] [-p <prompt>] [-i <intent>] [-a <agent>]
+cosm add <files_or_dirs...> [-u <universe>] [-p <prompt>] [-i <intent>] [-a <agent>]
 ```
+* **Recursive Directory Expansion**: Passing a directory (such as `.` or `services/`) automatically traverses and stages all non-ignored source files, skipping `.cosm/`, `.git/`, `node_modules/`, `vendor/`, and `.cosmignore` entries.
 * **AST Codec Extensions**: `.go`, `.tf`, `.hcl`, `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.rs`, `.java`, `.cpp`, `.cc`, `.sql`, `.proto`.
 * **Raw Non-AST Files**: Any non-code file (e.g. `LICENSE`, `README.md`, `.gitignore`, `Makefile`, configs) is automatically wrapped into a `RawBlobNode` (`language: "raw"`) with verbatim byte preservation, content hashing, and cryptographic lineage tracking.
 
 #### Examples:
 ```bash
-# Stage code symbols and repository metadata (README, LICENSE)
-cosm add main.go infra/main.tf LICENSE README.md \
+# Stage entire workspace recursively into AST symbol DAG
+cosm add .
+
+# Stage specific code symbols, subtrees, and repository metadata
+cosm add services/ infra/main.tf LICENSE README.md \
   -p "Add core service, terraform infra, and Apache-2.0 license" \
   -i "Initial project bootstrap"
 ```
@@ -61,11 +66,26 @@ cosm commit -i <intent> [-u <universe>] [-a <agent>]
 ---
 
 ### 4. `cosm status`
-Displays the active micro-universe head Merkle hash, component counts, and working tree modification status.
+Displays the active micro-universe head Merkle hash, component counts, and the synchronization status of the **Materialized Working Tree Lens** (reporting clean sync or highlighting drifted files on disk).
 ```bash
 cosm status [-u <universe>] [-format json|-f json]
 ```
-Returns structured JSON containing `status`, `universe_id`, `merkle_root`, `components_count`, `cross_edges_count`, and array of `components`.
+Returns human-readable status or structured JSON containing:
+```json
+{
+  "status": "SUCCESS",
+  "universe_id": "universe-main",
+  "merkle_root": "1c170a7199e6ca461bacbffaa78e33df68d51256fe41739b0d404930a3b1f3c8",
+  "components_count": 9,
+  "cross_edges_count": 0,
+  "components": ["..."],
+  "working_tree_lens": {
+    "status": "clean",
+    "projected_files_count": 5,
+    "drifted_files": []
+  }
+}
+```
 
 ---
 
@@ -79,41 +99,59 @@ Returns structured JSON with arrays of `frontend_nodes`, `backend_nodes`, `infra
 ---
 
 ### 6. `cosm lineage`
-Traverses the unbroken causal provenance graph for a given AST symbol or component node back to the originating prompt and agent session.
+Traverses the unbroken causal provenance graph for a given AST symbol or component node back to the originating prompt and agent session. Accepts a 64-character Merkle node ID, a short hex prefix, or a human scoped symbol name (e.g. `services/campsite::main.HandleHealth` or `HandleHealth`).
 ```bash
-cosm lineage <node_id> [-u <universe>]
+cosm lineage <node_id_or_symbol> [-u <universe>]
 ```
 
 ---
 
 ### 7. `cosm blast-radius`
-Audits the downstream blast radius, affected services, and contract risks for code produced by a specific agent or LLM model version.
+Audits the downstream blast radius, affected services, and contract risks for a given symbol, component, or agent ID. Accepts a 64-character Merkle node ID, short hex prefix, human scoped symbol name, or agent ID.
 ```bash
-cosm blast-radius <agent_id> [-u <universe>] [-format json|-f json]
+cosm blast-radius <node_id_or_symbol> [-u <universe>] [-format json|-f json]
 ```
 Returns structured JSON with `agent_id`, `total_nodes`, `affected_components`, `risk_score`, and `contracts_at_risk`.
 
 ---
 
 ### 8. `cosm view`
-Reconstitutes an AST symbol or component node from raw binary AST payload into syntax-highlighted source code with full lineage provenance metadata.
+Reconstitutes an AST symbol or component node from raw binary AST payload into syntax-highlighted source code with full lineage provenance metadata. Supports human symbol identifiers (e.g. `services/campsite::main.HandleHealth` or `HandleHealth`), short hex prefixes, or 64-character Merkle hashes.
 ```bash
-cosm view <node_id> [-u <universe>]
+cosm view <node_id_or_symbol> [-u <universe>] [--format terminal|source|ast|markdown|raw]
 ```
+* `--format terminal`: Colorized inspection card with syntax-aligned line numbers and causal provenance.
+* `--format source`: Plain hydrated source code.
+* `--format ast`: Formatted JSON AST payload.
+* `--format markdown`: GitHub Flavored Markdown snippet.
+* `--format raw`: Raw unparsed bytes.
 
 ---
 
-### 9. `cosm ship`
-Executes the Go shipping sidecar: runs `terraform fmt` and `terraform validate`, compiles Go services, packages composite artifacts, and launches an ephemeral local preview sandbox.
+### 9. `cosm log`
+Traverses universe commit ancestry in the WAL graph engine, diffing consecutive component symbol manifests to display author, executing agent, prompt, timestamp, and AST symbol deltas.
 ```bash
-cosm ship [-u <universe>] [-t <target_profile>]
+cosm log [-u <universe>] [--format terminal|json] [-n <limit>]
 ```
-- `-u <universe>`: Target universe to hydrate and compile (defaults to `universe-main`).
-- `-t <target_profile>`: Packaging target profile (`target:cosm`, `target:local-preview`, `target:cloud-run`, etc.). Defaults to `target:cosm`.
+* `-u, --universe <id>`: Universe branch to traverse (defaults to active universe or `universe-main`).
+* `--format terminal`: Colorized terminal log with commit hashes, author, agent, intent, originating prompt, and symbol diffs (`+ Added`, `~ Modified`, `- Removed`).
+* `--format json`: Machine-readable JSON array of `CommitLogEntry` objects.
+* `-n <limit>`: Maximum number of commits to display (default: all commits).
 
 ---
 
-### 10. `cosm universe` (alias: `cosm branch`)
+### 10. `cosm ship`
+Executes the autonomous target compilation sidecar. Ephemerally hydrates source code directly from the universe AST Merkle-DAG into an isolated build sandbox (completely decoupled from local workspace disk drift), automatically stages repository build manifests (`go.mod`, `go.sum`, `package.json`, `tsconfig.json`), executes real compilers without synthetic mock fallbacks, captures genuine toolchain diagnostics, and launches an ephemeral local preview sandbox.
+```bash
+cosm ship [-u|--universe <universe>] [-t|--target <target_profile>]
+```
+- `-u, --universe <universe>`: Target universe to hydrate and compile (defaults to `universe-main`).
+- `-t, --target <target_profile>`: Packaging target profile (`target:cosm`, `target:local-preview`, `target:cloud-run`, etc.). Defaults to `target:cosm`.
+- `--format terminal|json`: Output format.
+
+---
+
+### 11. `cosm universe` (alias: `cosm branch`)
 Manages zero-copy micro-universes.
 ```bash
 cosm universe list
@@ -124,7 +162,7 @@ cosm universe merge --source <source_u> --target <target_u>
 
 ---
 
-### 11. `cosm proposal` (alias: `cosm pr`)
+### 12. `cosm proposal` (alias: `cosm pr`)
 Manages AI-native universe proposals (semantic PRs).
 ```bash
 cosm proposal create --source <u_src> --target <u_tgt> -i <intent>
@@ -136,7 +174,7 @@ cosm proposal merge <proposal_id>
 
 ---
 
-### 12. `cosm stack`
+### 13. `cosm stack`
 Manages Jujutsu-style stacked proposals and executes automatic AST-level rebasing across dependent proposal chains.
 ```bash
 # List all active stacked changes and auto-rebase statuses
@@ -156,23 +194,26 @@ cosm stack evolve -c <parent_change_id>
 
 ---
 
-### 13. `cosm symbol`
-Inspects, edits, and audits individual AST symbol nodes in the content-addressed DAG.
-```bash
-cosm symbol view <symbol_id> [--format terminal|ast|code|contract]
-cosm symbol edit --id <symbol_id> --code "<code>" [-u <universe>]
-cosm symbol impact --id <symbol_id> [-u <universe>]
-```
-
----
-
 ### 14. `cosm ast`
-Executes high-precision declarative AST mutation operations (9 Geometric AST verbs) and scoped symbol resolution without whole-file serialization roundtrips.
+Executes high-precision declarative AST mutation operations (the 10 Geometric AST verbs), scoped symbol resolution, and blank-slate component inception without whole-file serialization roundtrips.
 ```bash
+# Incept a new empty or scaffolded AST component directly in the DAG (blank-slate inception)
+cosm ast create -c <component_name> --lang <go|python|typescript|sql> [-w]
+# Or incept a component with explicit source code or projection file
+cosm ast create -c <component_name> -f <file_path> --code "<code>" [-w]
+# Examples:
+cosm ast create -c "services/billing" --lang go --type service
+cosm ast create -c "services/campsite" -f "services/campsite/main.go" --code "package main..." -w
+
 # Resolve symbol by scoped dotted identifier or name
 cosm ast resolve <scoped_target> [-u <universe>] [--format terminal|json]
 # Example:
 cosm ast resolve "services/auth::ValidateToken"
+
+# Inspect complete AST Merkle Tree hierarchy (ASCII tree or machine JSON)
+cosm ast tree [-u <universe>] [--format text|json]
+# Example:
+cosm ast tree -u universe-main --format json
 
 # Declaratively edit an AST symbol (auto-synchronizes to workspace disk files by default)
 cosm ast edit --op <op> --target <target> --content "<content>" [-u <universe>] [--write-disk=true|-w]
@@ -187,13 +228,14 @@ cosm ast edit --batch <batch.json> [-u <universe>] [--write-disk=true|-w]
 - `--write-disk`, `-w` (default: `true`): Automatically synchronizes modified components to workspace disk files so VS Code, Cursor, and Language Server Protocols (LSP) immediately reload updated symbols. Set to `false` for headless DAG-only batch workflows.
 
 **Supported Operations (`--op`)**:
-- `replace_function_body`: Spliced replacement of function body retaining signature, docstring, and annotations.
+- `replace_function_body`: Spliced replacement of function body retaining signature, docstring, annotations, and parameters.
 - `replace_function`: Full signature and body replacement.
 - `add_method`: Appends method to class/struct symbol.
 - `add_before` / `add_after`: Inserts new symbol node relative to target.
 - `delete`: Removes symbol node from component Merkle list.
 - `add_import` / `replace_imports`: Package header manipulation.
 - `replace_global`: Variable / constant declaration replacement.
+- `create_component`: Incepts new component directly in the AST Merkle-DAG.
 
 ---
 
@@ -317,7 +359,60 @@ cosm blackboard http://127.0.0.1:51204/demo-org/cloud-platform
 
 ---
 
-### 26. `cosm mcp`
+### 26. `cosm peer`
+Inspects P2P swarm mesh status and performs sparse AST subtree replication across micro-universes.
+```bash
+# Query local node DID, CAS cache statistics, and hub connectivity
+cosm peer status
+
+# Perform sparse AST subtree synchronization
+cosm peer sync -u <universe_id> [--sparse <component_name>]
+# Example:
+cosm peer sync -u universe-main --sparse "services/billing"
+```
+
+---
+
+### 27. `cosm auth`
+Manages developer and agent authentication, Personal Access Tokens (PATs), and Topocosm Hub identities.
+```bash
+# Authenticate against Topocosm Hub
+cosm auth login [--token <pat>] [--hub <url>]
+
+# Query active user and DID identity
+cosm auth whoami
+
+# Manage Personal Access Tokens
+cosm auth token list
+cosm auth token create <name> [--days <ttl>]
+cosm auth token revoke <token_hash>
+cosm auth token set <pat>
+
+# Log out and erase cached credentials
+cosm auth logout
+```
+
+---
+
+### 28. `cosm credential-helper`
+Git-compatible credential helper implementation allowing Git tooling and IDEs to authenticate seamlessly with Cosm and Topocosm Hub.
+```bash
+cosm credential-helper get
+cosm credential-helper store
+cosm credential-helper erase
+```
+
+---
+
+### 29. `cosm share`
+Generates cryptographically sealed, recipient-addressed share bundles for secure peer-to-peer collaboration without exposing raw tokens.
+```bash
+cosm share [-u <universe>] [--recipient <did>]
+```
+
+---
+
+### 30. `cosm mcp`
 Launches the Model Context Protocol (MCP) JSON-RPC 2.0 stdio server for AI agents and IDE extensions (Antigravity IDE, Cursor, Windsurf, Claude Desktop).
 ```bash
 cosm mcp [-d <dir>]
@@ -326,7 +421,7 @@ cosm mcp [-d <dir>]
 * **Tools Exposed**:
   * `cosm_status`: Query active universe, staged components, untracked files, and cross-boundary edges.
   * `cosm_ast_resolve`: Scoped symbol resolution (`path::Class.Method`).
-  * `cosm_ast_edit`: Surgical AST operations (the 9 Geometric verbs) with workspace disk synchronization.
+  * `cosm_ast_edit`: Surgical AST operations (the 10 Geometric verbs) with workspace disk synchronization.
   * `cosm_blast_radius`: Multi-tier downstream dependency impact analysis.
   * `cosm_topology`: Cross-boundary topology visualization (ASCII/Mermaid).
   * `cosm_universe_create`: Zero-copy micro-universe branching.
@@ -335,7 +430,7 @@ cosm mcp [-d <dir>]
 
 ---
 
-### 27. `cosm lsp`
+### 31. `cosm lsp`
 Launches the Language Server Protocol (LSP) stdio server (`Content-Length` framed JSON-RPC 2.0) providing real-time cross-boundary contract diagnostics, cross-language definition jumps, and causal lineage CodeLens annotations.
 ```bash
 cosm lsp [-d <dir>]
@@ -347,7 +442,7 @@ cosm lsp [-d <dir>]
 
 ---
 
-### 28. `cosm watch`
+### 32. `cosm watch`
 Runs the background filesystem monitoring daemon that auto-detects source code mutations, parses AST symbol nodes via `codecs.ParseSourceFile`, re-links cross-boundary edges, and commits updated working manifests to the active micro-universe.
 ```bash
 cosm watch [-d <dir>] [-u <universe>] [--interval <ms>]
@@ -358,7 +453,7 @@ cosm watch [-d <dir>] [-u <universe>] [--interval <ms>]
 
 ---
 
-### 29. `cosm git init-bridge`
+### 33. `cosm git init-bridge`
 Initializes a synthetic `.git` directory structure (`.git/HEAD`, `.git/config`, `.git/objects/`, `refs/`) synchronized with the active micro-universe so standard Git-aware IDEs and toolchains identify the workspace as a valid repository.
 ```bash
 cosm git init-bridge [-d <dir>] [-u <universe>]

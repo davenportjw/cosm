@@ -162,7 +162,37 @@ cosm import-repo -d ./existing-repo -u universe-main
 
 ---
 
-## 4. Interactive Terminal Dashboard
+## 4. Compiling the Customer Zero Camping App into Cosm (from Git)
+
+Cosm bundles a complete production-grade polyglot application in [`examples/camping_app`](../examples/camping_app/): **Alpine Escapes Camping & Cabin Reservation App** (Go HTTP backend, HTMX interactive UI, PostgreSQL DDL migrations, and Terraform HCL cloud infrastructure).
+
+Because Git only stores flat text files and `.cosm/` is intentionally gitignored, compile the Camping App into Cosm's AST Merkle-DAG to start:
+
+```bash
+# 1. Enter the example directory
+cd examples/camping_app
+
+# 2. Compile into Cosm's AST Merkle-DAG (or run ./compile_into_cosm.sh)
+cosm init --universe universe-main
+cosm add .
+cosm commit -u universe-main -i "Compile camping app into cosm"
+
+# 3. Verify universe status and clean working tree lens
+cosm status
+
+# 4. Visualize cross-domain topology (Backend -> SQL -> Cloud Infra)
+cosm topology
+
+# 5. Compile target preview and launch server
+cosm ship
+go run ./cmd/server
+```
+
+Open `http://localhost:8080` to experience the live application! See [`examples/camping_app/README.md`](../examples/camping_app/README.md) for full documentation and multi-agent Topocosm Hub journeys.
+
+---
+
+## 5. Interactive Terminal Dashboard
 
 Launch the full-screen Bubble Tea TUI dashboard to inspect micro-universes, review AST graphs, and browse prompt lineage interactively:
 
@@ -172,7 +202,7 @@ cosm dashboard
 
 ---
 
-## 5. AI Agent Setup & Antigravity Skills
+## 6. AI Agent Setup & Antigravity Skills
 
 Cosm is built from the ground up for AI agent pair programming. While legacy SCM systems force agents to manipulate lines of raw text (often resulting in hallucinated indentation, malformed brackets, or git merge conflicts), Cosm allows agents to perform **direct semantic AST mutations** and project changes into isolated micro-universes.
 

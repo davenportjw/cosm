@@ -37,6 +37,7 @@ type PythonParseResult struct {
 	Imports    []string
 	EnvVars    []string
 	AllSymbols []*core.ASTSymbolNode
+	Trivia     *core.TriviaEnvelope
 }
 
 // ParseSource parses Python source bytes into symbol nodes with attached lineage.
@@ -45,6 +46,7 @@ func (p *PythonParser) ParseSource(filename string, src []byte, lineage core.Lin
 	lines := strings.Split(content, "\n")
 	res := &PythonParseResult{
 		Filename: filename,
+		Trivia:   ExtractTrivia(src),
 	}
 
 	// 1. Extract Imports
@@ -158,6 +160,7 @@ func (p *PythonParser) BuildComponentNode(
 		Type:        core.CompService,
 		Language:    core.LangPython,
 		SymbolNodes: symIDs,
+		Trivia:      res.Trivia,
 		Metadata:    meta,
 		Lineage:     lineage,
 	}

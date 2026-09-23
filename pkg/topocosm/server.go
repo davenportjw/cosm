@@ -137,12 +137,13 @@ func (s *HubServer) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	blobsList, _ := s.bp.BlobStore().List()
+	activeLeases, _ := s.bp.LeaseManager().GetActiveLeases(r.Context())
 
 	stats := HubStats{
 		TotalCosms:       len(s.repos),
 		TotalBlobs:       len(blobsList),
 		TotalProposals:   totalProps,
-		ActiveClaims:     len(s.blackboards),
+		ActiveClaims:     len(activeLeases),
 		RegisteredAgents: len(s.agents),
 		UptimeSec:        int64(time.Since(s.startTime).Seconds()),
 		Timestamp:        time.Now().UTC(),
@@ -731,9 +732,15 @@ func (s *HubServer) handleSparsePull(w http.ResponseWriter, r *http.Request, org
 			matches = true
 		} else {
 			for _, name := range req.ComponentNames {
-				if strings.Contains(comp.Name, name) {
+				if strings.Contains(comp.Name, name) || strings.Contains(name, comp.Name) {
 					matches = true
 					break
+				}
+				if comp.Metadata != nil {
+					if fp, ok := comp.Metadata["file_path"]; ok && (strings.Contains(fp, name) || strings.Contains(name, fp)) {
+						matches = true
+						break
+					}
 				}
 			}
 			if !matches {

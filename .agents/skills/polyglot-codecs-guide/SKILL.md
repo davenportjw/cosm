@@ -35,18 +35,24 @@ Every language codec must provide:
    - `ParseSource(path string, content []byte, env core.LineageEnvelope)`: Returns structured AST symbols.
    - Extracts symbol identifiers, type signatures, and local dependency tokens.
    - Handles syntax errors gracefully without crashing the engine.
+   - Populates `TriviaEnvelope` (capturing shebangs, build tags like `//go:build`, module docstrings, and license headers).
 
 2. **Hydrator (`hydrator.go` or in `pkg/materialize/hydrator.go`)**:
    - Converts serialized `ASTSymbolNode` binary payloads back into clean, canonical source text.
+   - Preserves `TriviaEnvelope` at the head of materialized files.
+   - Accurately renders aliased imports (`alias "path"`) and grouped import blocks.
    - Must satisfy structural AST roundtrip isomorphism:
      $$\text{Source} \xrightarrow{\text{Parse}} \text{AST} \xrightarrow{\text{Hydrate}} \text{Source'} \xrightarrow{\text{Parse}} \text{AST' == AST}$$
 
-3. **Cross-Boundary Edge Discovery (`pkg/core/crossboundary.go`)**:
+3. **Starter Source & Scaffolding (`mutation.GetStarterSource(lang)`)**:
+   - Each codec defines idiomatic minimal starter AST source for zero-disk component inception via `cosm ast create -c <comp> --lang <lang>`.
+
+4. **Cross-Boundary Edge Discovery (`pkg/core/crossboundary.go`)**:
    - `CONSUMES_API`: Links client fetch/HTTP calls to backend route declarations.
    - `DEPLOYS_TO`: Links backend service definitions to Terraform container/compute resources.
    - `BINDS_ENV`: Links application environment variable lookups to Terraform `env` declarations.
 
-4. **Lossless Raw Fallback**:
+5. **Lossless Raw Fallback**:
    - Non-AST assets (markdown, YAML configs, images, binaries) are wrapped in `core.CompService` as `RawBlobNode`s to guarantee zero data loss.
 
 ---

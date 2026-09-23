@@ -75,14 +75,24 @@ type GoImport struct {
 
 // GoFileSymbols encapsulates all extracted symbols from a single Go source file.
 type GoFileSymbols struct {
-	PackageName     string              `json:"package_name"`
-	FilePath        string              `json:"file_path"`
-	Structs         []GoStructSymbol    `json:"structs"`
-	Interfaces      []GoInterfaceSymbol `json:"interfaces"`
-	Functions       []GoFuncSymbol      `json:"functions"`
-	Routes          []GoRouteBinding    `json:"routes"`
-	Imports         []GoImport          `json:"imports"`
-	EnvVarsAccessed []string            `json:"env_vars_accessed"`
+	PackageName     string               `json:"package_name"`
+	FilePath        string               `json:"file_path"`
+	Structs         []GoStructSymbol     `json:"structs"`
+	Interfaces      []GoInterfaceSymbol  `json:"interfaces"`
+	Functions       []GoFuncSymbol       `json:"functions"`
+	GeneralDecls    []GoGeneralDecl      `json:"general_decls,omitempty"`
+	Routes          []GoRouteBinding     `json:"routes"`
+	Imports         []GoImport           `json:"imports"`
+	EnvVarsAccessed []string             `json:"env_vars_accessed"`
+	Trivia          *core.TriviaEnvelope `json:"trivia,omitempty"`
+}
+
+// GoGeneralDecl encapsulates package-level variables, constants, or custom typedefs.
+type GoGeneralDecl struct {
+	Name       string `json:"name"`
+	Kind       string `json:"kind"` // "ConstDecl", "VarDecl", "TypeDecl"
+	SourceCode string `json:"source_code"`
+	Doc        string `json:"doc,omitempty"`
 }
 
 // GoPackageResult contains aggregated symbols across all files in a Go package.
@@ -93,6 +103,7 @@ type GoPackageResult struct {
 	AllSymbols  []*core.ASTSymbolNode     `json:"all_symbols"`
 	AllRoutes   []GoRouteBinding          `json:"all_routes"`
 	AllImports  []GoImport                `json:"all_imports"`
+	Trivia      *core.TriviaEnvelope      `json:"trivia,omitempty"`
 }
 
 // StructToASTSymbolNode converts a GoStructSymbol to a core.ASTSymbolNode.
@@ -214,6 +225,27 @@ func RouteToASTSymbolNode(r GoRouteBinding, pkgName string, lineage core.Lineage
 	return node, nil
 }
 
+// GeneralDeclToASTSymbolNode converts a GoGeneralDecl to a core.ASTSymbolNode.
+func GeneralDeclToASTSymbolNode(decl GoGeneralDecl, pkgName string, lineage core.LineageEnvelope) (*core.ASTSymbolNode, error) {
+	node := &core.ASTSymbolNode{
+		Language:   core.LangGo,
+		NodeType:   decl.Kind,
+		Identifier: fmt.Sprintf("%s.%s", pkgName, decl.Name),
+		ASTPayload: []byte(decl.SourceCode),
+		Docstring:  decl.Doc,
+		Lineage:    lineage,
+	}
+
+	nodeID, err := core.HashASTSymbolNode(node)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute hash for general decl %s: %w", decl.Name, err)
+	}
+	node.NodeID = nodeID
+
+	return node, nil
+}
+
+
 // BuildComponentNode bundles package symbols into a core.ComponentNode.
 func BuildComponentNode(compName string, compType core.ComponentType, pkgResult *GoPackageResult, lineage core.LineageEnvelope) (*core.ComponentNode, error) {
 	if compName == "" {
@@ -254,6 +286,7 @@ func BuildComponentNode(compName string, compType core.ComponentType, pkgResult 
 		Type:        compType,
 		Language:    core.LangGo,
 		SymbolNodes: symbolIDs,
+		Trivia:      pkgResult.Trivia,
 		Metadata:    metadata,
 		Lineage:     lineage,
 	}

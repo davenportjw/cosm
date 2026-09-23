@@ -134,7 +134,7 @@ export class LineageHoverProvider implements vscode.HoverProvider {
     md.supportHtml = true;
 
     const lin: LineageEnvelope = resolved?.symbol_node?.lineage || {
-      user_id: 'jasondavenport',
+      user_id: 'developer',
       user_prompt: `Originating prompt for ${word}`,
       session_id: `sess-${Date.now().toString(16)}`,
       orchestrator_agent_id: 'cosm-orchestrator',

@@ -10,7 +10,7 @@ Ensure **Go 1.22+** is installed on your system:
 
 ```bash
 # Clone and build the cosm CLI binary
-cd /Users/jasondavenport/GitHub/cosm
+cd cosm
 go build -o cosm ./cmd/cosm
 
 # Optional: Add to PATH for the current session

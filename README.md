@@ -81,7 +81,7 @@ code --install-extension cosm-vscode-0.1.0.vsix          # VS Code
 antigravity --install-extension cosm-vscode-0.1.0.vsix   # Antigravity IDE
 cursor --install-extension cosm-vscode-0.1.0.vsix        # Cursor
 ```
-*(For live dev symlink mode, see [editors/vscode/README.md](file:///Users/jasondavenport/GitHub/cosm/editors/vscode/README.md) and [IDE Quickstart Guide](file:///Users/jasondavenport/GitHub/cosm/docs/guides/ide-quickstart-for-developers.md)).*
+*(For live dev symlink mode, see [editors/vscode/README.md](editors/vscode/README.md) and [IDE Quickstart Guide](docs/guides/ide-quickstart-for-developers.md)).*
 
 ### Verify Installation
 ```bash
@@ -143,6 +143,27 @@ cosm ship --target local-preview
 ```bash
 cosm dashboard
 ```
+
+### 8. Try the Customer Zero Example (Camping App)
+
+When cloning Cosm from Git, the repository includes the full-stack polyglot **Alpine Escapes Camping App** (`examples/camping_app`). Because `.cosm/` is gitignored, compile the source files into Cosm's AST Merkle-DAG to start:
+
+```bash
+cd examples/camping_app
+
+# Compile into Cosm AST Merkle-DAG (or run ./compile_into_cosm.sh)
+cosm init --universe universe-main
+cosm add .
+cosm commit -u universe-main -i "Compile camping app into cosm"
+
+# Verify active universe and clean working tree lens
+cosm status
+
+# Compile ephemeral preview sandbox and run
+cosm ship
+go run ./cmd/server
+```
+Navigate to `http://localhost:8080` to experience the app! (See [`examples/camping_app/README.md`](examples/camping_app/README.md) for full walkthrough).
 
 ---
 

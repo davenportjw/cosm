@@ -45,7 +45,7 @@ This document establishes durable conventions, architectural invariants, environ
 
 6. **Test Agent & Rater Harness Isolation**:
    - The external autonomous test agent and rater harness live strictly in `test/agents/` and `cmd/cosm-agent-harness/`, isolated from the application runtime.
-   - Always use the latest model for LLM evaluations: `gemini-3.7-flash` is the default.
+   - Always use the latest model for LLM evaluations: `gemini-3.8-flash` is the default.
    - Hermetic CI tests use `test/agents/llm/mock.go` to run without API keys or network.
 
 7. **IDE & Workspace Disk Synchronization**:
@@ -76,8 +76,21 @@ This document establishes durable conventions, architectural invariants, environ
 # Initialize a new Cosm repository (.cosm/)
 cosm init [--universe universe-main]
 
-# Stage polyglot source code into AST symbol nodes
-cosm add <file_or_dir> [--intent "description"] [--prompt "user prompt"]
+# --- Paradigm A: Direct AST Inception (Agent / AST-First, No Files Required) ---
+# Incept component directly into the DAG with auto-scaffolding
+cosm ast create -c <component_name> --lang <go|python|typescript|sql> [-w]
+# Or incept component with explicit source code
+cosm ast create -c <component_name> -f <path> --code "..." [-w]
+# Perform surgical AST mutations directly on symbols
+cosm ast edit --op replace_function_body --target <symbol> --content "..." [-w]
+# Inspect AST Merkle hierarchy
+cosm ast tree
+
+# --- Paradigm B: Filesystem Staging Lens (Disk / Hybrid) ---
+# Stage all workspace files recursively into AST symbol DAG
+cosm add .
+# Or stage specific files or subdirectories
+cosm add <file_or_dir...> [--intent "description"] [--prompt "user prompt"]
 
 # Commit staged AST symbols with causal lineage
 cosm commit [--universe universe-main] [--intent "Commit message"]
@@ -111,7 +124,7 @@ cosm proposal view <proposal_id>
 cosm ship --target local-preview
 
 # Run autonomous agent test harness
-cosm-agent-harness run --scenario polyglot-fastapi-react --model gemini-3.7-flash
+cosm-agent-harness run --scenario polyglot-fastapi-react --model gemini-3.8-flash
 cosm-agent-harness rate --session <session_id>
 cosm-agent-harness suite --all
 ```

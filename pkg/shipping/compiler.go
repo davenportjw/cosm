@@ -64,86 +64,52 @@ func (c *Compiler) CompileGo(workspace *StagingWorkspace, outBinaryName string) 
 		return nil, fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	// Check if 'go' toolchain is installed
-	_, err := exec.LookPath("go")
-	hasGoToolchain := (err == nil)
-
-	if hasGoToolchain {
-		// 1. Check if Target has a specific build command
-		if workspace.Target != nil && workspace.Target.BuildCommand != "" {
-			cmdParts := strings.Fields(workspace.Target.BuildCommand)
-			if len(cmdParts) > 0 {
-				res, err := workspace.ExecuteCommand(cmdParts[0], cmdParts[1:]...)
-				if err == nil && res.Successful {
-					stat, statErr := os.Stat(outPath)
-					size := int64(0)
-					if statErr == nil {
-						size = stat.Size()
-					}
-					content, _ := os.ReadFile(outPath)
-					sum := sha256.Sum256(content)
-					return &BuildResult{
-						TargetName:      workspace.Target.Name,
-						Successful:      true,
-						ArtifactPath:    outPath,
-						OutputLogs:      res.Stdout + res.Stderr,
-						Duration:        time.Since(start),
-						BinarySizeBytes: size,
-						SHA256Checksum:  hex.EncodeToString(sum[:]),
-					}, nil
-				}
-			}
-		}
-
-		// 2. Try entrypoint or known paths
-		buildTargets := []string{"./cmd/cosm", ".", "./services/..."}
-		for _, bt := range buildTargets {
-			res, err := workspace.ExecuteCommand("go", "build", "-o", outPath, bt)
-			if err == nil && res.Successful {
-				stat, statErr := os.Stat(outPath)
-				size := int64(0)
-				if statErr == nil {
-					size = stat.Size()
-				}
-				content, _ := os.ReadFile(outPath)
-				sum := sha256.Sum256(content)
-				return &BuildResult{
-					TargetName:      workspace.Target.Name,
-					Successful:      true,
-					ArtifactPath:    outPath,
-					OutputLogs:      res.Stdout + res.Stderr,
-					Duration:        time.Since(start),
-					BinarySizeBytes: size,
-					SHA256Checksum:  hex.EncodeToString(sum[:]),
-				}, nil
-			}
-		}
+	targetName := "go"
+	if workspace.Target != nil && workspace.Target.Name != "" {
+		targetName = workspace.Target.Name
 	}
 
-	// Pure-Go syntax validation and mock build fallback
+	// 1. Pure-Go syntax validation and package main discovery
 	fset := token.NewFileSet()
 	var parseErrors []string
 
-	files, _ := workspace.ListFiles()
-	goFileCount := 0
+	files, err := workspace.ListFiles()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list workspace files: %w", err)
+	}
+
+	var goFiles []string
+	var mainDirs []string
+	seenDirs := make(map[string]bool)
 
 	for _, f := range files {
 		if strings.HasSuffix(f, ".go") {
-			goFileCount++
+			goFiles = append(goFiles, f)
 			data, readErr := workspace.ReadFile(f)
 			if readErr != nil {
 				parseErrors = append(parseErrors, fmt.Sprintf("%s: %v", f, readErr))
 				continue
 			}
-			if _, parseErr := parser.ParseFile(fset, f, data, parser.ParseComments); parseErr != nil {
+			parsed, parseErr := parser.ParseFile(fset, f, data, parser.ParseComments)
+			if parseErr != nil {
 				parseErrors = append(parseErrors, fmt.Sprintf("%s: syntax error: %v", f, parseErr))
+			} else if parsed.Name != nil && parsed.Name.Name == "main" {
+				dir := filepath.Dir(f)
+				relDir := "."
+				if dir != "." && dir != "" {
+					relDir = "./" + filepath.ToSlash(dir)
+				}
+				if !seenDirs[relDir] {
+					seenDirs[relDir] = true
+					mainDirs = append(mainDirs, relDir)
+				}
 			}
 		}
 	}
 
 	if len(parseErrors) > 0 {
 		return &BuildResult{
-			TargetName: workspace.Target.Name,
+			TargetName: targetName,
 			Successful: false,
 			OutputLogs: strings.Join(parseErrors, "\n"),
 			Duration:   time.Since(start),
@@ -151,22 +117,118 @@ func (c *Compiler) CompileGo(workspace *StagingWorkspace, outBinaryName string) 
 		}, fmt.Errorf("Go compilation failed with %d syntax error(s):\n%s", len(parseErrors), strings.Join(parseErrors, "\n"))
 	}
 
-	// Write standalone executable payload artifact
-	execData := []byte(fmt.Sprintf("#!/bin/sh\n# Cosm Synthetic Runtime Binary\n# Target: %s\n# Compiled files: %d\necho 'Service running'\n", workspace.Target.Name, goFileCount))
-	if err := os.WriteFile(outPath, execData, 0755); err != nil {
-		return nil, fmt.Errorf("failed to write binary artifact: %w", err)
+	if len(goFiles) == 0 {
+		return &BuildResult{
+			TargetName: targetName,
+			Successful: false,
+			OutputLogs: "no Go source files found in staging workspace",
+			Duration:   time.Since(start),
+			Errors:     []string{"no Go source files found in staging workspace"},
+		}, fmt.Errorf("no Go source files found in staging workspace")
 	}
 
-	sum := sha256.Sum256(execData)
+	// 2. Check if 'go' toolchain is installed
+	_, err = exec.LookPath("go")
+	if err != nil {
+		return &BuildResult{
+			TargetName: targetName,
+			Successful: false,
+			OutputLogs: "Go toolchain ('go') not found in PATH",
+			Duration:   time.Since(start),
+			Errors:     []string{"go toolchain not found"},
+		}, fmt.Errorf("Go toolchain ('go') not found in PATH")
+	}
+
+	var lastOutput string
+
+	// Helper to verify and return success if binary was generated
+	checkSuccess := func(logs string) (*BuildResult, bool) {
+		stat, statErr := os.Stat(outPath)
+		if statErr == nil && stat.Size() > 0 {
+			content, readErr := os.ReadFile(outPath)
+			if readErr == nil {
+				sum := sha256.Sum256(content)
+				return &BuildResult{
+					TargetName:      targetName,
+					Successful:      true,
+					ArtifactPath:    outPath,
+					OutputLogs:      logs,
+					Duration:        time.Since(start),
+					BinarySizeBytes: stat.Size(),
+					SHA256Checksum:  hex.EncodeToString(sum[:]),
+				}, true
+			}
+		}
+		return nil, false
+	}
+
+	// 3. Check if Target has a specific build command
+	if workspace.Target != nil && workspace.Target.BuildCommand != "" {
+		cmdParts := strings.Fields(workspace.Target.BuildCommand)
+		if len(cmdParts) > 0 {
+			res, execErr := workspace.ExecuteCommand(cmdParts[0], cmdParts[1:]...)
+			combined := strings.TrimSpace(res.Stderr + "\n" + res.Stdout)
+			if combined != "" {
+				lastOutput = combined
+			}
+			if execErr == nil && res.Successful {
+				if resSuccess, ok := checkSuccess(res.Stdout + res.Stderr); ok {
+					return resSuccess, nil
+				}
+			}
+		}
+	}
+
+	// 4. Try candidate main package directories (e.g. ".", "./server", "./cmd/cosm")
+	if len(mainDirs) == 0 {
+		mainDirs = []string{"."}
+	}
+	for _, dir := range mainDirs {
+		res, execErr := workspace.ExecuteCommand("go", "build", "-o", outPath, dir)
+		combined := strings.TrimSpace(res.Stderr + "\n" + res.Stdout)
+		if combined != "" {
+			lastOutput = combined
+		}
+		if execErr == nil && res.Successful {
+			if resSuccess, ok := checkSuccess(res.Stdout + res.Stderr); ok {
+				return resSuccess, nil
+			}
+		}
+	}
+
+	// 5. Fallback: try building direct Go files if in root directory
+	var rootGoFiles []string
+	for _, f := range goFiles {
+		if filepath.Dir(f) == "." || filepath.Dir(f) == "" {
+			rootGoFiles = append(rootGoFiles, f)
+		}
+	}
+	if len(rootGoFiles) > 0 {
+		buildArgs := append([]string{"build", "-o", outPath}, rootGoFiles...)
+		res, execErr := workspace.ExecuteCommand("go", buildArgs...)
+		combined := strings.TrimSpace(res.Stderr + "\n" + res.Stdout)
+		if combined != "" {
+			lastOutput = combined
+		}
+		if execErr == nil && res.Successful {
+			if resSuccess, ok := checkSuccess(res.Stdout + res.Stderr); ok {
+				return resSuccess, nil
+			}
+		}
+	}
+
+	// All build attempts failed - surface real compiler diagnostics. STRICT NEVER MOCK DIRECTIVE.
+	if lastOutput == "" {
+		lastOutput = "go build failed to generate executable binary"
+	}
+
 	return &BuildResult{
-		TargetName:      workspace.Target.Name,
-		Successful:      true,
-		ArtifactPath:    outPath,
-		OutputLogs:      fmt.Sprintf("Successfully compiled %d Go source files into %s", goFileCount, outBinaryName),
-		Duration:        time.Since(start),
-		BinarySizeBytes: int64(len(execData)),
-		SHA256Checksum:  hex.EncodeToString(sum[:]),
-	}, nil
+		TargetName: targetName,
+		Successful: false,
+		OutputLogs: lastOutput,
+		Duration:   time.Since(start),
+		Errors:     []string{lastOutput},
+	}, fmt.Errorf("Go compilation failed:\n%s", lastOutput)
 }
 
 // CompileFrontend parses and bundles TypeScript / TSX components into a frontend bundle.

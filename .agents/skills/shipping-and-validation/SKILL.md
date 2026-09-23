@@ -36,13 +36,16 @@ Use this skill when running pre-commit toolchain checks, validating multi-langua
    - Declares build targets: `target:local-preview`, `target:cloud-run`, `target:static-web`.
 
 2. **Ephemeral Staging Runner (`staging.go`)**:
-   - Materializes the AST universe into an isolated in-memory or temporary directory (`/tmp/cosm-staging-*`).
-   - Runs compilers against the staging directory without polluting the primary workspace tree.
+   - Materializes the AST universe into an isolated staging directory (`/tmp/cosm-staging-*`).
+   - **Automatic Dependency Staging (`AutoStageDependencies`)**: Staging automatically mirrors critical workspace configuration files (`go.mod`, `go.sum`, `package.json`, `tsconfig.json`) into the sandbox so polyglot compilers find all packages without errors.
+   - Runs real host compilers against the staging directory without polluting the primary workspace tree.
 
-3. **Incremental Compilers (`compiler.go`)**:
-   - Compiles Go binaries (`go build`).
+3. **Compiler Fidelity & Strict Never Mock (`compiler.go`)**:
+   - **Zero Synthetic Shell Scripts**: All compilers invoke real native binaries (`go build`, `npm run build`, `tsc`, `terraform validate`).
+   - Surfaces real compiler standard error output and line diagnostics directly in `cosm ship` build badge results.
+   - Compiles Go binaries (`go build -o ...`).
    - Bundles TypeScript/React frontends.
-   - Validates Terraform plans (`terraform validate`).
+   - Validates Terraform plans (`terraform validate` and `terraform fmt`).
 
 4. **Running `cosm ship` from the CLI**:
    ```bash
