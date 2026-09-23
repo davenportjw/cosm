@@ -416,6 +416,9 @@ func (h *Hydrator) HydrateComponent(comp *core.ComponentNode, symbolMap map[stri
 			if !ok {
 				continue
 			}
+			if sym.NodeType == "RouteBinding" {
+				continue
+			}
 			code, err := h.HydrateSymbol(sym)
 			if err != nil {
 				return nil, err

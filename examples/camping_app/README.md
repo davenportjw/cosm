@@ -217,15 +217,13 @@ cosm view sym-HandleCreateBooking-main --format raw
 
 ## 4. Tracked Components in Universe `universe-main`
 
-The Camping App consists of 9 AST components tracked in `universe-main`:
+The Camping App consists of 45 polyglot AST components spanning 3 architectural tiers in `universe-main`:
 
-| Component Name | Language | Type | Materialized Disk File | Description |
-| :--- | :--- | :--- | :--- | :--- |
-| `services/campsite` | Go | `service` | `cmd/server/main.go` | HTTP server, booking endpoints, and in-memory store |
-| `services/campsite_test` | Go | `service` | `cmd/server/main_test.go` | 5 user journey integration and race contention tests |
-| `database/schema` | SQL | `schema` | `migrations/001_initial_schema.sql` | Users, campsites, and reservations DDL schema |
-| `infra/cloudrun` | HCL | `infra` | `deploy/main.tf` | Terraform Google Cloud Run and IAM infrastructure |
-| `infra/dockerfile` | Dockerfile | `infra` | `Dockerfile` | Multi-stage Alpine container build definition |
+| Architectural Tier | Primary Languages | Materialized Disk Pathways | Semantic AST Symbol Capabilities |
+| :--- | :--- | :--- | :--- |
+| **Backend Core & Domain Engines** | Go | `cmd/server/`, `internal/weather/`, `internal/sos/`, `internal/astronomy/`, `internal/sync/`, `internal/telemetry/`, `internal/profile/`, `internal/ranger/`, `internal/outfitter/`, `internal/backcountry/`, `internal/environmental/`, `internal/pms/`, `internal/lease/` | HTTP handlers, booking transactions, NFDRS fire safety, SAR emergency beacons, ALPR gate cache, outfitter lockers |
+| **Database Schemas & Migrations** | SQL | `migrations/001_*.sql` through `008_emergency_sos_beacon.sql` | Table definitions, foreign key constraints, spatial/status indexes |
+| **Cloud Infrastructure & Packaging** | HCL (Terraform) & Dockerfile | `deploy/main.tf`, `Dockerfile` | Cloud Run v2 service, Memorystore for Redis, IAM bindings, multi-stage Alpine build |
 
 ---
 
@@ -287,4 +285,47 @@ A fully self-contained bash script executes all three tracks against a local Top
 
 For an in-depth walkthrough of each command, wire DTO schemas, and the 11 friction points resolved during implementation, see the complete tutorial:
 📖 [Camping App 2.0: Multi-Agent Collaboration with Topocosm Hub](../../docs/guides/camping-app-2.0-topocosm-journeys.md)
+
+---
+
+## 7. Interactive Agent Demo Playbook & Production Cloud Run Service
+
+### 🚀 Live Cloud Run Service
+Alpine Escapes is fully deployed to Google Cloud Run in `davenport-boutique` (`us-central1`):
+- **Live URL**: `https://cosm-camping-app-txgsracloq-uc.a.run.app`
+- **Active Revision**: `cosm-camping-app-00005-zjl`
+- **Health Check**: `https://cosm-camping-app-txgsracloq-uc.a.run.app/health`
+
+### 🎮 Live Features & Hands-On Agent Exercises
+For a complete, tool-agnostic agent walkthrough (compatible with Antigravity, Claude, and OpenAI Codex), see:
+📖 [**Cosm Interactive Demo Guide & Agent Playbook**](DEMO_INSTRUCTIONS.md)
+
+### 🛠️ Installing Cosm CLI & Activating Agent Skills
+
+#### 1. Compile & Install the Cosm Binary
+Cosm is written in pure Go (`go 1.22+`) with zero CGO dependencies:
+```bash
+# Global system installation (recommended):
+go build -o /usr/local/bin/cosm ./cmd/cosm
+
+# Or local repository build:
+go build -o bin/cosm ./cmd/cosm && export PATH="$(pwd)/bin:$PATH"
+```
+
+#### 2. Installing Agent Skills for AI Coding Agents
+Cosm includes **6 specialized agent skills** located in [`.agents/skills/`](../../.agents/skills/):
+- **`cosm-core-dev`**: Merkle-DAG storage, WAL engine, micro-universes, and CLI workflows.
+- **`cosm-ast-surgeon`**: Precision AST mutations using 9 Geometric AST verbs without full-file overwrites.
+- **`cosm-agent-harness`**: Autonomous test agent execution, benchmarks, and 6-dimension scoring oracles.
+- **`polyglot-codecs-guide`**: AST codecs, hydrators, and cross-boundary contract inferencers.
+- **`shipping-and-validation`**: Ephemeral target sandbox builds (`cosm ship`), Terraform validation, and `uv`.
+- **`topocosm-cloud-deploy`**: Cloud Run, GCS CAS, Memorystore for Redis deployment and live updates.
+
+**Setup by Agent Environment**:
+- **Google Antigravity (AGY)**: Eagerly auto-detected in workspace, or install globally via: `mkdir -p ~/.gemini/antigravity/skills && cp -r .agents/skills/* ~/.gemini/antigravity/skills/`.
+- **Anthropic Claude Code**: Auto-discovered via `CLAUDE.md`, or symlink via: `mkdir -p .claude/skills && ln -sf $(pwd)/.agents/skills/* .claude/skills/`.
+- **OpenAI Codex / Cursor / Copilot**: System rules in [`AGENTS.md`](../../AGENTS.md) and [`GEMINI.md`](../../GEMINI.md) index these skills for on-demand file inspection.
+
+For complete copy-paste walkthroughs and command references, see [**DEMO_INSTRUCTIONS.md (Section 2)**](DEMO_INSTRUCTIONS.md#2-installing-cosm--agent-skills).
+
 
