@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -554,3 +555,145 @@ func TestCLIGitRevertAndReset(t *testing.T) {
 	}
 	graphEngine3.Close()
 }
+
+func TestCLIPolyglotMultiFileUndo(t *testing.T) {
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd failed: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir failed: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(origDir)
+	}()
+
+	// 1. Initialize repository
+	runInit([]string{"-u", "universe-main"})
+
+	// 2. Writes polyglot files: Go (main.go), Python (app.py), Terraform (main.tf)
+	mainGoV1 := `package main
+
+import (
+	"fmt"
+)
+
+func Version() string {
+	return "1.0.0"
+}
+
+func main() {
+	fmt.Println(Version())
+}
+`
+	appPyV1 := `def get_status():
+    return {"status": "ok", "service": "api"}
+`
+	mainTfV1 := `# Terraform Infrastructure Configuration
+# Component: main.tf
+
+resource "local_file" "config" {
+  filename = "output.txt"
+  content  = "database_url=postgres://localhost/db"
+}
+`
+	if err := os.WriteFile("main.go", []byte(mainGoV1), 0644); err != nil {
+		t.Fatalf("WriteFile main.go failed: %v", err)
+	}
+	if err := os.WriteFile("app.py", []byte(appPyV1), 0644); err != nil {
+		t.Fatalf("WriteFile app.py failed: %v", err)
+	}
+	if err := os.WriteFile("main.tf", []byte(mainTfV1), 0644); err != nil {
+		t.Fatalf("WriteFile main.tf failed: %v", err)
+	}
+
+	// 3. Commits v1
+	runAdd([]string{"."})
+	runCommit([]string{"-u", "universe-main", "-i", "v1 polyglot base stack"})
+
+	// Verify initial commit state
+	blobStore, graphEngine, err := openStorage()
+	if err != nil {
+		t.Fatalf("openStorage failed: %v", err)
+	}
+	mgr := storage.NewUniverseManager(graphEngine, blobStore)
+	headV1, err := mgr.GetUniverse("universe-main")
+	if err != nil {
+		t.Fatalf("GetUniverse failed: %v", err)
+	}
+	v1Hash := headV1.HeadManifestHash
+	graphEngine.Close()
+
+	// 4. Adds new file worker.py, modifies main.go, commits v2
+	workerPyV2 := `def run_worker_task():
+    return "task processed"
+`
+	mainGoV2 := `package main
+
+import "fmt"
+
+func Version() string {
+	return "2.0.0"
+}
+
+func main() {
+	fmt.Println(Version())
+}
+`
+	if err := os.WriteFile("worker.py", []byte(workerPyV2), 0644); err != nil {
+		t.Fatalf("WriteFile worker.py failed: %v", err)
+	}
+	if err := os.WriteFile("main.go", []byte(mainGoV2), 0644); err != nil {
+		t.Fatalf("WriteFile main.go modified failed: %v", err)
+	}
+
+	runAdd([]string{"."})
+	runCommit([]string{"-u", "universe-main", "-i", "v2 add worker.py and update main.go"})
+
+	if _, err := os.Stat("worker.py"); os.IsNotExist(err) {
+		t.Fatalf("worker.py should exist before undo")
+	}
+
+	// 5. Runs cosm undo -w
+	runUndo([]string{"-u", "universe-main", "-w"})
+
+	// 6. Asserts that worker.py is removed from disk
+	if _, err := os.Stat("worker.py"); !os.IsNotExist(err) {
+		t.Fatalf("expected worker.py to be removed from disk after undo, got err: %v", err)
+	}
+
+	// 7. Asserts that main.go content matches v1
+	mainGoAfter, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("ReadFile main.go failed: %v", err)
+	}
+	if strings.TrimSpace(string(mainGoAfter)) != strings.TrimSpace(mainGoV1) {
+		t.Fatalf("expected main.go content to match v1, got:\n%s", string(mainGoAfter))
+	}
+
+	// 8. Asserts that main.tf remains intact
+	mainTfAfter, err := os.ReadFile("main.tf")
+	if err != nil {
+		t.Fatalf("ReadFile main.tf failed: %v", err)
+	}
+	if strings.TrimSpace(string(mainTfAfter)) != strings.TrimSpace(mainTfV1) {
+		t.Fatalf("expected main.tf content to match v1, got:\n%s", string(mainTfAfter))
+	}
+
+	// Asserts that universe head is restored to v1Hash
+	blobStoreAfter, graphEngineAfter, err := openStorage()
+	if err != nil {
+		t.Fatalf("openStorage after undo failed: %v", err)
+	}
+	defer graphEngineAfter.Close()
+	mgrAfter := storage.NewUniverseManager(graphEngineAfter, blobStoreAfter)
+	headAfter, err := mgrAfter.GetUniverse("universe-main")
+	if err != nil {
+		t.Fatalf("GetUniverse after undo failed: %v", err)
+	}
+	if headAfter.HeadManifestHash != v1Hash {
+		t.Fatalf("expected universe head after undo to be %s, got %s", v1Hash, headAfter.HeadManifestHash)
+	}
+}
+

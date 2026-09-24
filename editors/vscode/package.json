@@ -53,7 +53,7 @@
       "scm": [
         {
           "id": "cosm.scmView",
-          "name": "Cosm Micro-Universes",
+          "name": "Cosm Stacks (Jujutsu-style)",
           "type": "list"
         }
       ]
@@ -76,6 +76,12 @@
         "title": "Cosm: Open Cross-Domain Topology Canvas",
         "category": "Cosm",
         "icon": "$(type-hierarchy-sub)"
+      },
+      {
+        "command": "cosm.commit",
+        "title": "Cosm: Commit AST Changes",
+        "category": "Cosm",
+        "icon": "$(check)"
       },
       {
         "command": "cosm.commitWithPrompt",
@@ -110,6 +116,18 @@
       {
         "command": "cosm.unstageFile",
         "title": "Cosm: Unstage AST Component",
+        "category": "Cosm",
+        "icon": "$(remove)"
+      },
+      {
+        "command": "cosm.stageAll",
+        "title": "Cosm: Stage All AST Components",
+        "category": "Cosm",
+        "icon": "$(plus)"
+      },
+      {
+        "command": "cosm.unstageAll",
+        "title": "Cosm: Unstage All AST Components",
         "category": "Cosm",
         "icon": "$(remove)"
       },
@@ -158,6 +176,24 @@
         "title": "Cosm: Refresh Architecture Topology",
         "category": "Cosm",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "cosm.createStack",
+        "title": "Cosm: Create Stacked Change (Jujutsu-style)",
+        "category": "Cosm",
+        "icon": "$(layers)"
+      },
+      {
+        "command": "cosm.evolveStack",
+        "title": "Cosm: Evolve Stack (Auto-Rebase Descendants)",
+        "category": "Cosm",
+        "icon": "$(zap)"
+      },
+      {
+        "command": "cosm.refreshStack",
+        "title": "Cosm: Refresh Stacked Proposals",
+        "category": "Cosm",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {
@@ -181,6 +217,21 @@
           "command": "cosm.refreshTopologyTree",
           "group": "navigation@2",
           "when": "view == cosm.topologyTreeView"
+        },
+        {
+          "command": "cosm.createStack",
+          "group": "navigation@1",
+          "when": "view == cosm.scmView"
+        },
+        {
+          "command": "cosm.evolveStack",
+          "group": "navigation@2",
+          "when": "view == cosm.scmView"
+        },
+        {
+          "command": "cosm.refreshStack",
+          "group": "navigation@3",
+          "when": "view == cosm.scmView"
         }
       ],
       "view/item/context": [
@@ -203,42 +254,71 @@
           "command": "cosm.blastRadius",
           "when": "viewItem == cosm.symbol || viewItem == cosm.topologyNode",
           "group": "cosm@2"
+        },
+        {
+          "command": "cosm.switchUniverse",
+          "group": "inline@1",
+          "when": "view == cosm.scmView && viewItem == stackedChange"
+        },
+        {
+          "command": "cosm.evolveStack",
+          "group": "inline@2",
+          "when": "view == cosm.scmView && viewItem == stackedChange"
         }
       ],
       "scm/title": [
         {
-          "command": "cosm.commitWithPrompt",
-          "group": "navigation",
+          "command": "cosm.commit",
+          "group": "navigation@1",
+          "when": "scmProvider == cosm"
+        },
+        {
+          "command": "cosm.createStack",
+          "group": "navigation@2",
           "when": "scmProvider == cosm"
         },
         {
           "command": "cosm.refreshSCM",
-          "group": "navigation",
+          "group": "navigation@3",
           "when": "scmProvider == cosm"
         },
         {
           "command": "cosm.switchUniverse",
-          "group": "navigation",
+          "group": "navigation@4",
+          "when": "scmProvider == cosm"
+        },
+        {
+          "command": "cosm.commitWithPrompt",
+          "group": "1_modification",
           "when": "scmProvider == cosm"
         }
       ],
       "scm/resourceGroup/context": [
         {
-          "command": "cosm.stageFile",
+          "command": "cosm.stageAll",
+          "group": "inline@1",
           "when": "scmResourceGroup == modified"
+        },
+        {
+          "command": "cosm.unstageAll",
+          "group": "inline@1",
+          "when": "scmResourceGroup == staged"
         }
       ],
       "scm/resourceState/context": [
         {
           "command": "cosm.stageFile",
+          "group": "inline@1",
           "when": "scmResourceGroup == modified"
         },
         {
           "command": "cosm.unstageFile",
+          "group": "inline@1",
           "when": "scmResourceGroup == staged"
         },
         {
-          "command": "cosm.diffSymbol"
+          "command": "cosm.diffSymbol",
+          "group": "inline@2"
         }
       ],
       "editor/context": [

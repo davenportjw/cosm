@@ -34,12 +34,21 @@ class MockTreeItem {
   }
 }
 
+class MockThemeColor {
+  id: string;
+  constructor(id: string) {
+    this.id = id;
+  }
+}
+
 class MockThemeIcon {
   static readonly File = new MockThemeIcon('file');
   static readonly Folder = new MockThemeIcon('folder');
   id: string;
-  constructor(id: string) {
+  color?: any;
+  constructor(id: string, color?: any) {
     this.id = id;
+    this.color = color;
   }
 }
 
@@ -79,6 +88,17 @@ class MockMarkdownString {
   }
 }
 
+class MockUri {
+  fsPath: string;
+  scheme: string;
+  constructor(fsPath: string, scheme = 'file') {
+    this.fsPath = fsPath;
+    this.scheme = scheme;
+  }
+  static file(p: string) { return new MockUri(p, 'file'); }
+  static parse(s: string) { return new MockUri(s, 'cosm'); }
+}
+
 const vscodeMock = {
   workspace: {
     workspaceFolders: undefined,
@@ -86,7 +106,14 @@ const vscodeMock = {
       get: (key: string, defaultValue: any) => defaultValue
     }),
     findFiles: async () => [],
-    openTextDocument: async () => ({})
+    openTextDocument: async () => ({}),
+    registerTextDocumentContentProvider: () => ({ dispose: () => {} }),
+    createFileSystemWatcher: () => ({
+      onDidChange: () => ({ dispose: () => {} }),
+      onDidCreate: () => ({ dispose: () => {} }),
+      onDidDelete: () => ({ dispose: () => {} }),
+      dispose: () => {}
+    })
   },
   window: {
     createStatusBarItem: () => ({
@@ -99,17 +126,35 @@ const vscodeMock = {
     showErrorMessage: async () => undefined,
     showWarningMessage: async () => undefined
   },
-  Uri: {
-    file: (p: string) => ({ fsPath: p, scheme: 'file' }),
-    parse: (s: string) => ({ fsPath: s, scheme: 'cosm' })
-  },
+  Uri: MockUri,
   StatusBarAlignment: { Left: 1, Right: 2 },
   ViewColumn: { One: 1, Beside: -2 },
   TreeItem: MockTreeItem,
   ThemeIcon: MockThemeIcon,
+  ThemeColor: MockThemeColor,
   MarkdownString: MockMarkdownString,
   TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
-  EventEmitter: MockEventEmitter
+  EventEmitter: MockEventEmitter,
+  scm: {
+    createSourceControl: (id: string, label: string, rootUri?: any) => {
+      const scmObj: any = {
+        id,
+        label,
+        rootUri,
+        inputBox: { value: '', placeholder: '' },
+        count: 0,
+        createResourceGroup: (groupId: string, groupLabel: string) => ({
+          id: groupId,
+          label: groupLabel,
+          resourceStates: [],
+          hideWhenEmpty: false,
+          dispose: () => {}
+        }),
+        dispose: () => {}
+      };
+      return scmObj;
+    }
+  }
 };
 
 require.cache['vscode'] = {

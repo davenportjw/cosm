@@ -162,14 +162,37 @@ Any changes you save in TypeScript will automatically recompile into `out/`. Pre
 
 ## 3. Key Features & Walkthrough
 
-### 3.1. Source Control Management (SCM) Panel
+### 3.1. Source Control Management (SCM) Panel & Human Commit Flow
 - **Active Universe Header**: Displays current micro-universe and head Merkle root.
-- **Staged AST Components**: Polyglot files and symbol nodes ready for commit.
-- **Working Tree AST Symbols**: Uncommitted or modified symbols detected across the workspace.
-- **Intent & Prompt Commit Flow**: The commit box captures both high-level semantic intent (`feat(auth): add JWT cache`) and originating user prompt for causal lineage tracking.
+- **Title Bar Actions**:
+  - `$(check)` **Commit (`cosm.commit`)**: Direct one-click commit of staged AST components using the commit message box (`navigation@1`).
+  - `$(layers)` **Create Stack (`cosm.createStack`)**: Launch interactive Jujutsu-style stacked proposal inception wizard (`navigation@2`).
+  - `$(refresh)` **Refresh (`cosm.refreshSCM`)**: Re-scans working tree AST components and head state (`navigation@3`).
+  - `$(globe)` **Switch Universe (`cosm.switchUniverse`)**: Quick-switch active micro-universe directly from the SCM title bar (`navigation@4`).
+- **Resource Group & State Inline Controls**:
+  - **Stage All (`+`) / Unstage All (`-`)**: Inline group actions on `Changes` and `Staged Changes` groups (`cosm.stageAll`, `cosm.unstageAll`).
+  - **Stage File (`+`) / Unstage File (`-`)**: Inline resource state actions for individual polyglot files (`cosm.stageFile`, `cosm.unstageFile`).
+  - **Diff Symbol (`↔`)**: Inline side-by-side AST comparison against universe head reconstitution (`cosm.diffSymbol`).
+- **Human Intent & Prompt Commit Flow**: The commit input box captures high-level human semantic intent (`feat(auth): add JWT cache`). The secondary commit action (`cosm.commitWithPrompt`) additionally prompts for originating causal prompt telemetry for 5-tier lineage tracking.
 - **Side-by-Side Symbol Diff**: Compare active working tree code directly against the universe head AST reconstitution via the virtual `cosm://` document scheme.
 
-### 3.2. Status Bar & Micro-Universe QuickPick
+### 3.2. Jujutsu-Style Stacked Proposals View (`cosm.scmView`)
+Integrated directly into the VS Code Source Control View Container as **Cosm Stacks (Jujutsu-style)** (`cosm.scmView`):
+- **Ordered Proposal Stack**: Visualizes chained micro-universe proposals (`🥞 [order_index] change_id`) ordered from base to frontier tip.
+- **Active Universe Badge**: The currently checked-out micro-universe is highlighted with a green `$(pass-filled)` icon and `(Active)` indicator badge.
+- **One-Click Universe Switching**: Clicking any stacked proposal automatically switches the workspace micro-universe to that change's universe (`cosm.switchUniverse`).
+- **Head & Lineage Tooltips**: Hovering over any proposal reveals its parent change lineage, universe ID, head Merkle hash, author DID, and review status.
+- **Autonomous Stack Evolution (`cosm.evolveStack`)**:
+  - Rebase descendants automatically whenever upstream contract symbols change (`$(zap)` icon inline on each item and in the view title bar).
+  - Maintains topological consistency across stacked PRs without manual conflict-heavy rebases.
+- **Interactive Stack Wizard (`cosm.createStack`)**:
+  - Step-by-step QuickPick wizard prompting for Change ID (e.g. `c/auth-jwt`), Micro-Universe ID, Parent Change, and Proposal Title.
+- **View Header Actions**:
+  - `$(layers)` **Create Stack**: Incept new stacked change atop the current universe.
+  - `$(zap)` **Evolve Stack**: Auto-rebase descendant changes.
+  - `$(refresh)` **Refresh Stack**: Refresh stack proposals from the WAL storage engine.
+
+### 3.3. Status Bar & Micro-Universe QuickPick
 Located in the bottom-left status bar:
 ```
 $(globe) [🌌 universe-main]
@@ -182,7 +205,7 @@ Clicking the status bar item opens the QuickPick action controller:
 - **Ship Ephemeral Preview**: Build and launch the autonomous shipping sidecar.
 - **Audit Blast Radius**: Audit downstream contract dependencies and risk score.
 
-### 3.3. Cross-Domain Architecture Canvas (Webview: `cosm.topologyView`)
+### 3.4. Cross-Domain Architecture Canvas (Webview: `cosm.topologyView`)
 Visualizes your polyglot application across 3 swimlanes:
 1. **Frontend Tier (React / TypeScript)**: Component declarations, API client calls, routes.
 2. **Backend / API Tier (Go Microservices / Python FastAPI)**: Handlers, endpoints, database models.
@@ -194,7 +217,7 @@ Visualizes your polyglot application across 3 swimlanes:
 - **Search & Filter**: Filter symbols in real time across all three tiers.
 - **Inline Ship Trigger**: Run `cosm ship` directly from the canvas header.
 
-### 3.4. AST Merkle Tree Explorer (Tree View: `cosm.astTreeView`)
+### 3.5. AST Merkle Tree Explorer (Tree View: `cosm.astTreeView`)
 Accessible via the **Cosm AST** container in the Activity Bar alongside the **Architecture Topology** canvas, the **AST Merkle Tree Explorer** (`cosm.astTreeView`) provides fine-grained visual inspection and interaction with the codebase's content-addressed AST Merkle-DAG.
 
 #### Tree Hierarchy:
@@ -231,7 +254,7 @@ Accessible via the **Cosm AST** container in the Activity Bar alongside the **Ar
 - `cosm.viewASTPayload`: Opens a side-by-side virtual editor displaying the symbol's reconstituted AST Intermediate Representation (IR), JSON payload, and resolved metadata. Available inline on symbol items.
 - `cosm.copyNodeId`: Copies the selected symbol or detail node's content-addressed SHA-256 Node ID to the system clipboard. Available inline on symbol items and Node ID detail items.
 
-### 3.5. 5-Tier Causal Lineage CodeLens & Hover
+### 3.6. 5-Tier Causal Lineage CodeLens & Hover
 Every function, method, class, and Terraform resource displays an unobtrusive CodeLens:
 ```
 🌌 Pedigree: "Implement OAuth2 PKCE..." • Agent: gemini-3.8-flash • [Verified Ed25519 ✓]
@@ -246,24 +269,30 @@ Hovering over the symbol header reveals the complete 5-tier causal pedigree:
 | **Tier 4** | **Model Telemetry & Cost** | LLM version, sampling params, prompt/completion/reasoning token counts, latency, and estimated USD cost. |
 | **Tier 5** | **AST Node & Cryptography** | Content-addressed SHA-256 Merkle hash and Ed25519 cryptographic signature verification badge (`[Verified Valid Signature ✓]`). |
 
-### 3.6. Command Palette Reference
+### 3.7. Command Palette Reference
 
 | Command | Title | Category | Interface Context | Description |
 |---|---|---|---|---|
+| `cosm.commit` | Commit Staged AST Symbols | Cosm | SCM Title Bar, Palette | Direct one-click commit of staged AST components |
+| `cosm.commitWithPrompt` | Commit AST Symbols (with Prompt) | Cosm | SCM Title Bar, Palette | Commits staged AST symbols with causal prompt capture |
+| `cosm.createStack` | Create Stacked Change (Jujutsu-style) | Cosm | SCM Title, Stack Title, Palette | Interactive wizard to incept a stacked proposal |
+| `cosm.evolveStack` | Evolve Stack (Auto-Rebase Descendants) | Cosm | Stack View Item, Title, Palette | Automatically rebase dependent stacked proposals |
+| `cosm.refreshStack` | Refresh Stacked Proposals | Cosm | Stack View Title, Palette | Reloads active proposal stacks from WAL engine |
+| `cosm.stageAll` | Stage All AST Components | Cosm | SCM Group Inline, Palette | Stages all modified AST components in working tree |
+| `cosm.unstageAll` | Unstage All AST Components | Cosm | SCM Group Inline, Palette | Unstages all staged components back to working tree |
+| `cosm.stageFile` | Stage AST Component | Cosm | SCM Resource Inline, Palette | Stages modified component into commit set |
+| `cosm.unstageFile` | Unstage AST Component | Cosm | SCM Resource Inline, Palette | Removes component from staged commit set |
+| `cosm.diffSymbol` | Compare Symbol AST with Head | Cosm | SCM / Symbol Context, Palette | Diff working AST code against universe head |
+| `cosm.switchUniverse` | Switch Micro-Universe | Cosm | Status Bar, SCM Title, Palette | Non-linear switching across micro-universes |
+| `cosm.createUniverse` | Create Micro-Universe | Cosm | QuickPick, Palette | Creates a zero-copy branch from active Merkle head |
+| `cosm.refreshSCM` | Refresh Workspace State | Cosm | SCM Title Bar, Palette | Refreshes workspace and SCM status |
 | `cosm.refreshASTTree` | Refresh AST Merkle Tree | Cosm | AST View Title, Palette | Re-queries the AST Merkle DAG and refreshes tree nodes |
 | `cosm.navigateToSymbol` | Navigate to AST Symbol | Cosm | Tree Item Click, Palette | Focuses source file and selects symbol declaration |
 | `cosm.viewASTPayload` | View AST Payload & IR | Cosm | Symbol Item Context, Palette | Opens side-by-side virtual editor with JSON/YAML AST IR |
 | `cosm.copyNodeId` | Copy AST Node ID | Cosm | Symbol/NodeID Context, Palette | Copies SHA-256 AST node ID to system clipboard |
 | `cosm.openTopology` | Open Cross-Domain Topology Canvas | Cosm | Activity Bar, Editor, Palette | Launches 3-tier architecture visualization canvas |
-| `cosm.switchUniverse` | Switch Micro-Universe | Cosm | Status Bar, SCM Title, Palette | Non-linear switching across micro-universes |
-| `cosm.createUniverse` | Create Micro-Universe | Cosm | QuickPick, Palette | Creates a zero-copy branch from active Merkle head |
-| `cosm.commitWithPrompt` | Commit AST Symbols | Cosm | SCM Title, Palette | Commits staged AST symbols with intent and prompt |
 | `cosm.shipPreview` | Ship Target & Ephemeral Preview | Cosm | QuickPick, Canvas, Palette | Compiles target package and launches local preview |
 | `cosm.blastRadius` | Audit Blast Radius | Cosm | Symbol Context, Palette | Audits downstream contract dependencies and risk |
-| `cosm.refreshSCM` | Refresh Workspace State | Cosm | SCM Title, Palette | Refreshes workspace and SCM status |
-| `cosm.stageFile` | Stage AST Component | Cosm | SCM Resource, Palette | Stages modified component into commit set |
-| `cosm.unstageFile` | Unstage AST Component | Cosm | SCM Resource, Palette | Removes component from staged commit set |
-| `cosm.diffSymbol` | Compare Symbol AST with Head | Cosm | SCM / Symbol Context, Palette | Diff working AST code against universe head |
 | `cosm.resolveSymbol` | Resolve Symbol AST Details | Cosm | Palette | Resolves symbol metadata and IR representation |
 
 ---
@@ -342,7 +371,9 @@ editors/vscode/
     │   └── provider.ts            # vscode.SourceControl and virtual document provider
     ├── views/
     │   ├── astTreeProvider.ts     # AST Merkle Tree Explorer (Universe -> Dir -> Comp -> Symbol -> Details)
+    │   ├── stackedChangesProvider.ts # Jujutsu-style Stacked Changes Provider (cosm.scmView)
     │   ├── statusBar.ts           # Status bar item & interactive QuickPick controller
+    │   ├── topologyTreeProvider.ts # 3-Tier Architecture Tree View Provider
     │   └── topologyWebview.ts     # 3-Swimlane interactive architecture canvas (Webview)
     ├── providers/
     │   └── lineageCodeLens.ts     # CodeLens and 5-Tier Hover lineage providers

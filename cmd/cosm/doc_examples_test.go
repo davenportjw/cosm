@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/cosmscm/cosm/pkg/storage"
 )
 
 // setupDocTestEnv prepares an isolated temporary workspace for doc testing.
@@ -100,6 +102,8 @@ func TestDocExamples_HowToPRAndCollaboration(t *testing.T) {
 
 	// Step 5: Section 4.1 - Stack listing
 	runStack([]string{"list"})
+	runStack([]string{"list", "-format", "json"})
+	runStack([]string{"list", "-f", "json"})
 
 	// Step 6: Sections 1-3 - Universe Proposals (PR equivalent)
 	// Create proposal
@@ -428,6 +432,10 @@ func TestDocExamples_MarkdownCommandExtractorAndValidator(t *testing.T) {
 		"init":              true,
 		"add":               true,
 		"commit":            true,
+		"undo":              true,
+		"revert":            true,
+		"rollback":          true,
+		"reset":             true,
 		"status":            true,
 		"topology":          true,
 		"lineage":           true,
@@ -606,4 +614,241 @@ func TestDocExamples_CompileCampingAppIntoCosm(t *testing.T) {
 	// 7. cosm ship
 	runShip([]string{"-u", "universe-main", "-t", "target:cosm"})
 }
+
+// TestDocExamples_UndoRevertResetAndLedgerMode validates documentation examples for:
+// - cosm undo [count] [-u <universe>] [-w]
+// - cosm revert / cosm rollback <target_hash> [-u <universe>] [-i <intent>] [-w]
+// - cosm reset [--hard|--soft] <target_hash> [-u <universe>] [-w]
+// - cosm init [--ledger] [-u <universe>] and strict append-only linearity
+func TestDocExamples_UndoRevertResetAndLedgerMode(t *testing.T) {
+	t.Run("StandardMode", func(t *testing.T) {
+		dir, cleanup := setupDocTestEnv(t)
+		defer cleanup()
+
+		// 1. cosm init
+		runInit([]string{"-u", "universe-main"})
+
+		// 2. Creates sample files (main.go, app.py), commits v1
+		mainGo := filepath.Join(dir, "main.go")
+		appPy := filepath.Join(dir, "app.py")
+		mainGoV1 := "package main\n\nfunc Version() string { return \"1.0.0\" }\n"
+		appPyV1 := "def get_version():\n    return \"1.0.0\"\n"
+
+		if err := os.WriteFile(mainGo, []byte(mainGoV1), 0644); err != nil {
+			t.Fatalf("WriteFile main.go failed: %v", err)
+		}
+		if err := os.WriteFile(appPy, []byte(appPyV1), 0644); err != nil {
+			t.Fatalf("WriteFile app.py failed: %v", err)
+		}
+
+		runAdd([]string{"."})
+		runCommit([]string{"-u", "universe-main", "-i", "v1 initial commit"})
+
+		blobStore, graphEngine, err := openStorage()
+		if err != nil {
+			t.Fatalf("openStorage failed: %v", err)
+		}
+		mgr := storage.NewUniverseManager(graphEngine, blobStore)
+		headV1, err := mgr.GetUniverse("universe-main")
+		if err != nil {
+			t.Fatalf("GetUniverse failed: %v", err)
+		}
+		v1Hash := headV1.HeadManifestHash
+		graphEngine.Close()
+
+		// 3. Updates main.go, adds service.py, commits v2
+		mainGoV2 := "package main\n\nfunc Version() string { return \"2.0.0\" }\n"
+		servicePy := filepath.Join(dir, "service.py")
+		servicePyContent := "def run_service():\n    pass\n"
+
+		if err := os.WriteFile(mainGo, []byte(mainGoV2), 0644); err != nil {
+			t.Fatalf("WriteFile main.go failed: %v", err)
+		}
+		if err := os.WriteFile(servicePy, []byte(servicePyContent), 0644); err != nil {
+			t.Fatalf("WriteFile service.py failed: %v", err)
+		}
+
+		runAdd([]string{"."})
+		runCommit([]string{"-u", "universe-main", "-i", "v2 update main.go and add service.py"})
+
+		blobStore, graphEngine, err = openStorage()
+		if err != nil {
+			t.Fatalf("openStorage failed: %v", err)
+		}
+		mgr = storage.NewUniverseManager(graphEngine, blobStore)
+		headV2, err := mgr.GetUniverse("universe-main")
+		if err != nil {
+			t.Fatalf("GetUniverse failed: %v", err)
+		}
+		v2Hash := headV2.HeadManifestHash
+		graphEngine.Close()
+
+		if v2Hash == v1Hash {
+			t.Fatalf("v2Hash should differ from v1Hash")
+		}
+
+		// 4. Runs cosm undo -w, verifies service.py is removed from disk and main.go restored
+		runUndo([]string{"-u", "universe-main", "-w"})
+
+		if _, err := os.Stat(servicePy); !os.IsNotExist(err) {
+			t.Fatalf("expected service.py to be removed from disk after undo, got err: %v", err)
+		}
+
+		mainGoContent, err := os.ReadFile(mainGo)
+		if err != nil {
+			t.Fatalf("ReadFile main.go failed: %v", err)
+		}
+		if strings.TrimSpace(string(mainGoContent)) != strings.TrimSpace(mainGoV1) {
+			t.Fatalf("expected main.go to be restored to v1 content, got:\n%s", string(mainGoContent))
+		}
+
+		blobStore, graphEngine, err = openStorage()
+		if err != nil {
+			t.Fatalf("openStorage failed: %v", err)
+		}
+		mgr = storage.NewUniverseManager(graphEngine, blobStore)
+		headAfterUndo, err := mgr.GetUniverse("universe-main")
+		if err != nil {
+			t.Fatalf("GetUniverse failed: %v", err)
+		}
+		if headAfterUndo.HeadManifestHash != v1Hash {
+			t.Fatalf("expected head after undo to be %s, got %s", v1Hash, headAfterUndo.HeadManifestHash)
+		}
+		graphEngine.Close()
+
+		// 5. Runs cosm rollback (alias for revert) and cosm reset --hard
+		featurePy := filepath.Join(dir, "feature.py")
+		if err := os.WriteFile(featurePy, []byte("def feature():\n    return True\n"), 0644); err != nil {
+			t.Fatalf("WriteFile feature.py failed: %v", err)
+		}
+		runAdd([]string{"."})
+		runCommit([]string{"-u", "universe-main", "-i", "v3 add feature.py"})
+
+		blobStore, graphEngine, err = openStorage()
+		if err != nil {
+			t.Fatalf("openStorage failed: %v", err)
+		}
+		mgr = storage.NewUniverseManager(graphEngine, blobStore)
+		headV3, _ := mgr.GetUniverse("universe-main")
+		v3Hash := headV3.HeadManifestHash
+		graphEngine.Close()
+
+		// Test cosm rollback (alias for revert)
+		runRollback([]string{"-u", "universe-main", "-i", "rollback v3 feature", v3Hash, "-w"})
+
+		blobStore, graphEngine, err = openStorage()
+		if err != nil {
+			t.Fatalf("openStorage failed: %v", err)
+		}
+		mgr = storage.NewUniverseManager(graphEngine, blobStore)
+		headAfterRollback, _ := mgr.GetUniverse("universe-main")
+		if headAfterRollback.HeadManifestHash == v3Hash {
+			t.Fatalf("expected new compensating commit after rollback, but head is still v3Hash")
+		}
+		graphEngine.Close()
+
+		// Test cosm reset --hard back to v1
+		runReset([]string{"--hard", "-u", "universe-main", v1Hash})
+
+		blobStore, graphEngine, err = openStorage()
+		if err != nil {
+			t.Fatalf("openStorage failed: %v", err)
+		}
+		mgr = storage.NewUniverseManager(graphEngine, blobStore)
+		headAfterReset, _ := mgr.GetUniverse("universe-main")
+		if headAfterReset.HeadManifestHash != v1Hash {
+			t.Fatalf("expected head after reset to be %s, got %s", v1Hash, headAfterReset.HeadManifestHash)
+		}
+		graphEngine.Close()
+	})
+
+	t.Run("LedgerMode", func(t *testing.T) {
+		// 6. Tests ledger mode in an isolated workspace: cosm init --ledger, commits changes,
+		//    runs cosm revert, verifies new forward commit created,
+		//    runs cosm reset and verifies it fails with ledger violation.
+		dirLedger, cleanupLedger := setupDocTestEnv(t)
+		defer cleanupLedger()
+
+		runInit([]string{"--ledger", "-u", "universe-main"})
+
+		cfg, err := storage.LoadConfig(".cosm")
+		if err != nil {
+			t.Fatalf("LoadConfig failed: %v", err)
+		}
+		if !cfg.LedgerMode {
+			t.Fatalf("expected LedgerMode to be true in .cosm/config.json")
+		}
+
+		mainLedger := filepath.Join(dirLedger, "main.go")
+		if err := os.WriteFile(mainLedger, []byte("package main\n\nfunc Alpha() {}\n"), 0644); err != nil {
+			t.Fatalf("WriteFile failed: %v", err)
+		}
+		runAdd([]string{"."})
+		runCommit([]string{"-u", "universe-main", "-i", "ledger commit 1"})
+
+		blobStore, graphEngine, err := openStorage()
+		if err != nil {
+			t.Fatalf("openStorage failed: %v", err)
+		}
+		mgr := storage.NewUniverseManager(graphEngine, blobStore)
+		headL1, _ := mgr.GetUniverse("universe-main")
+		l1Hash := headL1.HeadManifestHash
+		graphEngine.Close()
+
+		if err := os.WriteFile(mainLedger, []byte("package main\n\nfunc Alpha() {}\nfunc Beta() {}\n"), 0644); err != nil {
+			t.Fatalf("WriteFile failed: %v", err)
+		}
+		runAdd([]string{"."})
+		runCommit([]string{"-u", "universe-main", "-i", "ledger commit 2"})
+
+		blobStore, graphEngine, err = openStorage()
+		if err != nil {
+			t.Fatalf("openStorage failed: %v", err)
+		}
+		mgr = storage.NewUniverseManager(graphEngine, blobStore)
+		headL2, _ := mgr.GetUniverse("universe-main")
+		l2Hash := headL2.HeadManifestHash
+		graphEngine.Close()
+
+		// cosm revert l2Hash in ledger mode: verifies new forward commit created
+		runRevert([]string{"-u", "universe-main", "-i", "revert commit 2", l2Hash, "-w"})
+
+		blobStore, graphEngine, err = openStorage()
+		if err != nil {
+			t.Fatalf("openStorage failed: %v", err)
+		}
+		mgr = storage.NewUniverseManager(graphEngine, blobStore)
+		headAfterRevert, _ := mgr.GetUniverse("universe-main")
+		l3Hash := headAfterRevert.HeadManifestHash
+		if l3Hash == l2Hash || l3Hash == l1Hash {
+			t.Fatalf("expected new forward compensating commit in ledger mode, got: %s", l3Hash)
+		}
+
+		// Verify ResetHead directly returns ErrLedgerLinearityViolation
+		mgr.SetLedgerMode(true)
+		_, resetErr := mgr.ResetHead("universe-main", l1Hash, true)
+		if resetErr != storage.ErrLedgerLinearityViolation {
+			t.Fatalf("expected ErrLedgerLinearityViolation, got: %v", resetErr)
+		}
+		graphEngine.Close()
+
+		// Verify CLI cosm reset exits with code 1 in ledger mode
+		origExit := exitFunc
+		var exitCalled bool
+		var exitCode int
+		exitFunc = func(code int) {
+			exitCalled = true
+			exitCode = code
+		}
+		defer func() {
+			exitFunc = origExit
+		}()
+
+		runReset([]string{"--hard", "-u", "universe-main", l1Hash})
+		if !exitCalled || exitCode != 1 {
+			t.Fatalf("expected cosm reset to fail with exit code 1 in ledger mode, exitCalled=%v, exitCode=%d", exitCalled, exitCode)
+		}
+	})
+}
+
 

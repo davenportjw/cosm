@@ -10,12 +10,14 @@ import {
   BlastRadiusReport,
   ShipResult,
   LineageEnvelope,
+  StackRecord,
   ASTTreeEdge,
   ASTTreeLineage,
   ASTTreeSymbol,
   ASTTreeComponent,
   ASTTreeGraph
 } from '../types';
+import { CosmSCMProvider } from '../scm/provider';
 import {
   CosmASTTreeDataProvider,
   UniverseItem,
@@ -35,6 +37,10 @@ import {
   TopologyEdgeItem,
   TopologyActionItem
 } from '../views/topologyTreeProvider';
+import {
+  CosmStackedChangesProvider,
+  StackedChangeTreeItem
+} from '../views/stackedChangesProvider';
 
 declare function describe(name: string, fn: () => void): void;
 declare function it(name: string, fn: () => void | Promise<void>): void;
@@ -916,6 +922,503 @@ describe('Cosm VS Code Extension Test Suite', () => {
       assert.strictEqual(report.warnings?.length, 1);
       assert.strictEqual(report.warnings?.[0], 'Contract breakage detected');
       assert.strictEqual(report.affected_components?.length, 2);
+    });
+  });
+
+  describe('8. Stack Operations, SCM Provider & Dynamic Commit Workflows', () => {
+    it('should validate StackRecord interface extension', () => {
+      const record: StackRecord = {
+        change_id: 'change-101',
+        universe_id: 'feat-auth',
+        parent_change_id: 'change-100',
+        title: 'feat: add session tokens',
+        status: 'open',
+        manifest_hash: '9f83ac1278de',
+        order_index: 2,
+        author_did: 'did:key:z6MkpTHR8VNsBxYAAWHuEc2Ka9txNddw6SQFO8vBQJpu5h8k'
+      };
+
+      assert.strictEqual(record.change_id, 'change-101');
+      assert.strictEqual(record.universe_id, 'feat-auth');
+      assert.strictEqual(record.parent_change_id, 'change-100');
+      assert.strictEqual(record.title, 'feat: add session tokens');
+      assert.strictEqual(record.manifest_hash, '9f83ac1278de');
+      assert.strictEqual(record.order_index, 2);
+      assert.strictEqual(record.author_did, 'did:key:z6MkpTHR8VNsBxYAAWHuEc2Ka9txNddw6SQFO8vBQJpu5h8k');
+    });
+
+    it('should execute createStack with expected CLI arguments', async () => {
+      const client = new CosmClient(process.cwd());
+      let capturedArgs: string[] = [];
+      (client as any).execCosm = async (args: string[]) => {
+        capturedArgs = args;
+        return 'Stacked change change-200 created';
+      };
+
+      const res = await client.createStack({
+        changeId: 'change-200',
+        universeId: 'feat-api',
+        parentId: 'change-199',
+        title: 'Add JWT verify endpoint'
+      });
+
+      assert.ok(res.includes('change-200'));
+      assert.deepStrictEqual(capturedArgs, [
+        'stack', 'create',
+        '-c', 'change-200',
+        '-u', 'feat-api',
+        '-p', 'change-199',
+        '--title', 'Add JWT verify endpoint'
+      ]);
+    });
+
+    it('should execute evolveStack with expected CLI arguments', async () => {
+      const client = new CosmClient(process.cwd());
+      let capturedArgs: string[] = [];
+      (client as any).execCosm = async (args: string[]) => {
+        capturedArgs = args;
+        return 'Evolved 3 descendants of change-root';
+      };
+
+      const res = await client.evolveStack('change-root');
+      assert.ok(res.includes('Evolved'));
+      assert.deepStrictEqual(capturedArgs, ['stack', 'evolve', '-c', 'change-root']);
+    });
+
+    it('should parse listStack JSON output into StackRecord array', async () => {
+      const client = new CosmClient(process.cwd());
+      (client as any).execCosm = async (args: string[]) => {
+        if (args.includes('-format') && args.includes('json')) {
+          return JSON.stringify([
+            {
+              change_id: 'change-1',
+              universe_id: 'universe-main',
+              parent_change_id: '',
+              title: 'Initial root change',
+              manifest_hash: 'abc123456789',
+              order_index: 0,
+              author_did: 'did:key:alice'
+            },
+            {
+              change_id: 'change-2',
+              universe_id: 'universe-feat',
+              parent_change_id: 'change-1',
+              title: 'Add auth middleware',
+              manifest_hash: 'def987654321',
+              order_index: 1,
+              author_did: 'did:key:bob'
+            }
+          ]);
+        }
+        return '';
+      };
+
+      const stack = await client.listStack();
+      assert.strictEqual(stack.length, 2);
+      assert.strictEqual(stack[0].change_id, 'change-1');
+      assert.strictEqual(stack[0].manifest_hash, 'abc123456789');
+      assert.strictEqual(stack[0].order_index, 0);
+      assert.strictEqual(stack[1].change_id, 'change-2');
+      assert.strictEqual(stack[1].parent_change_id, 'change-1');
+      assert.strictEqual(stack[1].author_did, 'did:key:bob');
+    });
+
+    it('should fallback to regex text parsing for listStack when JSON fails', async () => {
+      const client = new CosmClient(process.cwd());
+      (client as any).execCosm = async (args: string[]) => {
+        if (args.includes('-format') && args.includes('json')) {
+          throw new Error('flag -format not supported');
+        }
+        return [
+          'Jujutsu-Style Stacked Proposals:',
+          '   [0] 🔹 change-alpha (Universe: universe-main, Head: a1b2c3d4e5f6)',
+          '       Parent: change-root | Auto-Rebase: Active',
+          '   [1] 🔹 change-beta (Universe: universe-feat, Head: f6e5d4c3b2a1)',
+          '       Parent: change-alpha | Auto-Rebase: Active'
+        ].join('\n');
+      };
+
+      const stack = await client.listStack();
+      assert.strictEqual(stack.length, 2);
+      assert.strictEqual(stack[0].order_index, 0);
+      assert.strictEqual(stack[0].change_id, 'change-alpha');
+      assert.strictEqual(stack[0].universe_id, 'universe-main');
+      assert.strictEqual(stack[0].manifest_hash, 'a1b2c3d4e5f6');
+      assert.strictEqual(stack[0].parent_change_id, 'change-root');
+
+      assert.strictEqual(stack[1].order_index, 1);
+      assert.strictEqual(stack[1].change_id, 'change-beta');
+      assert.strictEqual(stack[1].universe_id, 'universe-feat');
+      assert.strictEqual(stack[1].manifest_hash, 'f6e5d4c3b2a1');
+      assert.strictEqual(stack[1].parent_change_id, 'change-alpha');
+    });
+
+    it('should conditionally append -p in commit only when prompt is non-empty', async () => {
+      const client = new CosmClient(process.cwd());
+      let capturedArgs: string[] = [];
+      (client as any).execCosm = async (args: string[]) => {
+        capturedArgs = args;
+        return 'Committed Merkle Root: e2b4f618a901';
+      };
+
+      // 1. Commit with empty prompt (standard human commit)
+      const res1 = await client.commit({
+        universe: 'universe-main',
+        intent: 'feat(api): optimize handlers',
+        prompt: ''
+      });
+      assert.strictEqual(res1.merkle_root, 'e2b4f618a901');
+      assert.strictEqual(capturedArgs.includes('-p'), false);
+
+      // 2. Commit with whitespace-only prompt
+      await client.commit({
+        universe: 'universe-main',
+        intent: 'feat(api): whitespace test',
+        prompt: '   '
+      });
+      assert.strictEqual(capturedArgs.includes('-p'), false);
+
+      // 3. Commit with valid non-empty prompt (AI lineage commit)
+      await client.commit({
+        universe: 'universe-main',
+        intent: 'feat(api): add caching',
+        prompt: 'Refactor database query to use redis cache'
+      });
+      assert.strictEqual(capturedArgs.includes('-p'), true);
+      const pIdx = capturedArgs.indexOf('-p');
+      assert.strictEqual(capturedArgs[pIdx + 1], 'Refactor database query to use redis cache');
+    });
+
+    it('should initialize SCM provider with actionButton and acceptInputCommand', () => {
+      const client = new CosmClient(process.cwd());
+      const mockContext = { subscriptions: [], extensionPath: process.cwd() } as any;
+      const provider = new CosmSCMProvider(client, mockContext);
+
+      const scmInstance = (provider as any).scm;
+      assert.ok(scmInstance);
+      assert.strictEqual(scmInstance.actionButton?.command?.command, 'cosm.commit');
+      assert.strictEqual(scmInstance.actionButton?.command?.title, '✓ Commit AST Changes');
+      assert.strictEqual(scmInstance.actionButton?.enabled, true);
+      assert.strictEqual(scmInstance.acceptInputCommand?.command, 'cosm.commit');
+    });
+
+    it('should scan working tree and extract drifted files from working_tree_lens', async () => {
+      const client = new CosmClient(process.cwd());
+      const mockContext = { subscriptions: [], extensionPath: process.cwd() } as any;
+      const provider = new CosmSCMProvider(client, mockContext);
+
+      const mockStatus: CosmStatus = {
+        status: 'SUCCESS',
+        universe_id: 'universe-main',
+        merkle_root: 'root-abc',
+        components_count: 2,
+        cross_edges_count: 1,
+        components: ['pkg/auth/token.go', 'pkg/auth/session.go'],
+        working_tree_lens: {
+          status: 'drift_detected',
+          projected_files_count: 2,
+          drifted_files: [
+            'pkg/auth/token.go (modified on disk)',
+            'pkg/auth/session.go (modified on disk)'
+          ]
+        }
+      };
+
+      await (provider as any).scanWorkingTree(mockStatus);
+
+      const modifiedGroup = (provider as any).modifiedGroup;
+      assert.ok(modifiedGroup.resourceStates.length >= 2);
+      const paths = modifiedGroup.resourceStates.map((r: any) => r.resourceUri.fsPath);
+      assert.ok(paths.some((p: string) => p.includes('pkg/auth/token.go')));
+      assert.ok(paths.some((p: string) => p.includes('pkg/auth/session.go')));
+    });
+
+    it('should handle stageFile with SourceControlResourceGroup, ResourceState, and undefined', async () => {
+      const client = new CosmClient(process.cwd());
+      let stagedFiles: string[] = [];
+      (client as any).stageFiles = async (files: string[]) => {
+        stagedFiles = files;
+        return 'Staged files';
+      };
+
+      const mockContext = { subscriptions: [], extensionPath: process.cwd() } as any;
+      const provider = new CosmSCMProvider(client, mockContext);
+      (provider as any).refresh = async () => {};
+
+      // 1. Stage group
+      const mockGroup = {
+        id: 'modified',
+        resourceStates: [
+          { resourceUri: { fsPath: path.resolve(process.cwd(), 'pkg/api/login.go') } },
+          { resourceUri: { fsPath: path.resolve(process.cwd(), 'pkg/api/logout.go') } }
+        ]
+      };
+      await provider.stageFile(mockGroup as any);
+      assert.strictEqual(stagedFiles.length, 2);
+      assert.ok(stagedFiles.some(f => f.includes('login.go')));
+
+      // 2. Stage single resource state
+      await provider.stageFile({ resourceUri: { fsPath: path.resolve(process.cwd(), 'pkg/api/user.go') } } as any);
+      assert.strictEqual(stagedFiles.length, 1);
+      assert.ok(stagedFiles[0].includes('user.go'));
+
+      // 3. Stage undefined -> stageAll
+      await provider.stageFile(undefined);
+      assert.ok(stagedFiles.length > 0);
+    });
+  });
+
+  describe('9. Stacked Changes View & SCM Menus', () => {
+    it('should return an informational TreeItem when stack is empty', async () => {
+      const client = new CosmClient(process.cwd());
+      (client as any).listStack = async () => [];
+
+      const mockSCM = { getActiveUniverse: () => 'universe-main' } as any;
+      const provider = new CosmStackedChangesProvider(client, mockSCM);
+
+      const items = await provider.getChildren();
+      assert.strictEqual(items.length, 1);
+      assert.strictEqual(items[0].label, 'No active stacked changes');
+      assert.strictEqual(items[0].description, 'Jujutsu-style stacked proposals');
+      assert.strictEqual(items[0].tooltip, 'Create a stacked change with cosm.createStack');
+      assert.strictEqual(items[0].contextValue, 'noStackedChanges');
+      assert.strictEqual((items[0].iconPath as any)?.id, 'info');
+    });
+
+    it('should return StackedChangeTreeItems when stack has records and highlight active universe', async () => {
+      const client = new CosmClient(process.cwd());
+      const mockRecords: StackRecord[] = [
+        {
+          change_id: 'c/auth-jwt',
+          universe_id: 'universe-main',
+          parent_change_id: 'universe-root',
+          title: 'JWT Authentication Service',
+          manifest_hash: '9f83ac1278de',
+          order_index: 0,
+          status: 'Active'
+        },
+        {
+          change_id: 'c/api-routes',
+          universe_id: 'u/api-routes',
+          parent_change_id: 'c/auth-jwt',
+          title: 'Protected API Routes',
+          manifest_hash: '1a2b3c4d5e6f',
+          order_index: 1,
+          status: 'Draft'
+        }
+      ];
+
+      (client as any).listStack = async () => mockRecords;
+
+      const mockSCM = { getActiveUniverse: () => 'universe-main' } as any;
+      const provider = new CosmStackedChangesProvider(client, mockSCM);
+
+      const items = await provider.getChildren();
+      assert.strictEqual(items.length, 2);
+
+      // Item 0: Active in universe-main
+      const activeItem = items[0];
+      assert.strictEqual(activeItem.label, '🥞 [0] c/auth-jwt (Active)');
+      assert.strictEqual(activeItem.description, 'universe-main | Head: 9f83ac12');
+      assert.ok(typeof activeItem.tooltip === 'string');
+      assert.ok(activeItem.tooltip.includes('Change ID: c/auth-jwt'));
+      assert.ok(activeItem.tooltip.includes('Title: JWT Authentication Service'));
+      assert.ok(activeItem.tooltip.includes('Universe: universe-main'));
+      assert.ok(activeItem.tooltip.includes('Parent: universe-root'));
+      assert.ok(activeItem.tooltip.includes('Status: Active'));
+      assert.strictEqual(activeItem.contextValue, 'stackedChange');
+      assert.strictEqual((activeItem.iconPath as any)?.id, 'pass-filled');
+      assert.strictEqual(activeItem.command?.command, 'cosm.switchUniverse');
+      assert.deepStrictEqual(activeItem.command?.arguments, ['universe-main']);
+      assert.strictEqual(activeItem.record?.change_id, 'c/auth-jwt');
+
+      // Item 1: Inactive in u/api-routes
+      const childItem = items[1];
+      assert.strictEqual(childItem.label, '🥞 [1] c/api-routes');
+      assert.strictEqual(childItem.description, 'u/api-routes | Head: 1a2b3c4d');
+      assert.ok(typeof childItem.tooltip === 'string');
+      assert.ok(childItem.tooltip.includes('Change ID: c/api-routes'));
+      assert.ok(childItem.tooltip.includes('Parent: c/auth-jwt'));
+      assert.ok(childItem.tooltip.includes('Status: Draft'));
+      assert.strictEqual(childItem.contextValue, 'stackedChange');
+      assert.strictEqual((childItem.iconPath as any)?.id, 'layers');
+      assert.strictEqual(childItem.command?.command, 'cosm.switchUniverse');
+      assert.deepStrictEqual(childItem.command?.arguments, ['u/api-routes']);
+      assert.strictEqual(childItem.record?.change_id, 'c/api-routes');
+    });
+
+    it('should return empty array for element children and identity for getTreeItem', async () => {
+      const client = new CosmClient(process.cwd());
+      (client as any).listStack = async () => [];
+      const provider = new CosmStackedChangesProvider(client);
+
+      const infoItem = new StackedChangeTreeItem();
+      const children = await provider.getChildren(infoItem);
+      assert.deepStrictEqual(children, []);
+
+      const treeItem = provider.getTreeItem(infoItem);
+      assert.strictEqual(treeItem, infoItem);
+    });
+
+    it('should fire onDidChangeTreeData when refresh is called', (done?: any) => {
+      const client = new CosmClient(process.cwd());
+      const provider = new CosmStackedChangesProvider(client);
+
+      let fired = false;
+      const sub = provider.onDidChangeTreeData(() => {
+        fired = true;
+      });
+
+      provider.refresh();
+      assert.strictEqual(fired, true);
+      sub.dispose();
+    });
+
+    it('should handle client.listStack failure gracefully with error item', async () => {
+      const client = new CosmClient(process.cwd());
+      (client as any).listStack = async () => {
+        throw new Error('Cosm WAL storage offline');
+      };
+
+      const provider = new CosmStackedChangesProvider(client);
+      const items = await provider.getChildren();
+      assert.strictEqual(items.length, 1);
+      assert.strictEqual(items[0].label, 'Error loading stacked proposals');
+      assert.strictEqual(items[0].description, 'Cosm WAL storage offline');
+      assert.strictEqual((items[0].iconPath as any)?.id, 'error');
+    });
+
+    it('should contribute cosm.createStack, cosm.evolveStack, and cosm.refreshStack in package.json', () => {
+      const pkgPath = path.resolve(__dirname, '../../package.json');
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+
+      const commands: any[] = pkg.contributes.commands;
+      const createStack = commands.find(c => c.command === 'cosm.createStack');
+      const evolveStack = commands.find(c => c.command === 'cosm.evolveStack');
+      const refreshStack = commands.find(c => c.command === 'cosm.refreshStack');
+
+      assert.ok(createStack, 'cosm.createStack command must be declared');
+      assert.strictEqual(createStack.title, 'Cosm: Create Stacked Change (Jujutsu-style)');
+      assert.strictEqual(createStack.icon, '$(layers)');
+
+      assert.ok(evolveStack, 'cosm.evolveStack command must be declared');
+      assert.strictEqual(evolveStack.title, 'Cosm: Evolve Stack (Auto-Rebase Descendants)');
+      assert.strictEqual(evolveStack.icon, '$(zap)');
+
+      assert.ok(refreshStack, 'cosm.refreshStack command must be declared');
+      assert.strictEqual(refreshStack.title, 'Cosm: Refresh Stacked Proposals');
+      assert.strictEqual(refreshStack.icon, '$(refresh)');
+    });
+
+    it('should contribute cosm.scmView with name Cosm Stacks (Jujutsu-style) in package.json', () => {
+      const pkgPath = path.resolve(__dirname, '../../package.json');
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+
+      const scmViews: any[] = pkg.contributes.views.scm;
+      assert.ok(scmViews && scmViews.length > 0);
+      const stackView = scmViews.find(v => v.id === 'cosm.scmView');
+      assert.ok(stackView, 'cosm.scmView view must be declared under contributes.views.scm');
+      assert.strictEqual(stackView.name, 'Cosm Stacks (Jujutsu-style)');
+    });
+
+    it('should configure scm/title menus with required navigation ordering and when clauses in package.json', () => {
+      const pkgPath = path.resolve(__dirname, '../../package.json');
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+
+      const scmTitleMenus: any[] = pkg.contributes.menus['scm/title'];
+      assert.ok(scmTitleMenus, 'scm/title menus must be defined');
+
+      const commitMenu = scmTitleMenus.find(m => m.command === 'cosm.commit');
+      assert.ok(commitMenu, 'cosm.commit must be in scm/title');
+      assert.strictEqual(commitMenu.group, 'navigation@1');
+      assert.strictEqual(commitMenu.when, 'scmProvider == cosm');
+
+      const createStackMenu = scmTitleMenus.find(m => m.command === 'cosm.createStack');
+      assert.ok(createStackMenu, 'cosm.createStack must be in scm/title');
+      assert.strictEqual(createStackMenu.group, 'navigation@2');
+      assert.strictEqual(createStackMenu.when, 'scmProvider == cosm');
+
+      const refreshSCMMenu = scmTitleMenus.find(m => m.command === 'cosm.refreshSCM');
+      assert.ok(refreshSCMMenu, 'cosm.refreshSCM must be in scm/title');
+      assert.strictEqual(refreshSCMMenu.group, 'navigation@3');
+      assert.strictEqual(refreshSCMMenu.when, 'scmProvider == cosm');
+
+      const switchUniverseMenu = scmTitleMenus.find(m => m.command === 'cosm.switchUniverse');
+      assert.ok(switchUniverseMenu, 'cosm.switchUniverse must be in scm/title');
+      assert.strictEqual(switchUniverseMenu.group, 'navigation@4');
+      assert.strictEqual(switchUniverseMenu.when, 'scmProvider == cosm');
+    });
+
+    it('should configure inline groups in scm/resourceGroup/context and scm/resourceState/context in package.json', () => {
+      const pkgPath = path.resolve(__dirname, '../../package.json');
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+
+      // scm/resourceGroup/context
+      const groupMenus: any[] = pkg.contributes.menus['scm/resourceGroup/context'];
+      assert.ok(groupMenus, 'scm/resourceGroup/context must be defined');
+
+      const stageAll = groupMenus.find(m => m.command === 'cosm.stageAll');
+      assert.ok(stageAll, 'cosm.stageAll must be in scm/resourceGroup/context');
+      assert.strictEqual(stageAll.when, 'scmResourceGroup == modified');
+      assert.strictEqual(stageAll.group, 'inline@1');
+
+      const unstageAll = groupMenus.find(m => m.command === 'cosm.unstageAll');
+      assert.ok(unstageAll, 'cosm.unstageAll must be in scm/resourceGroup/context');
+      assert.strictEqual(unstageAll.when, 'scmResourceGroup == staged');
+      assert.strictEqual(unstageAll.group, 'inline@1');
+
+      // scm/resourceState/context
+      const stateMenus: any[] = pkg.contributes.menus['scm/resourceState/context'];
+      assert.ok(stateMenus, 'scm/resourceState/context must be defined');
+
+      const stageFile = stateMenus.find(m => m.command === 'cosm.stageFile');
+      assert.ok(stageFile, 'cosm.stageFile must be in scm/resourceState/context');
+      assert.strictEqual(stageFile.when, 'scmResourceGroup == modified');
+      assert.strictEqual(stageFile.group, 'inline@1');
+
+      const unstageFile = stateMenus.find(m => m.command === 'cosm.unstageFile');
+      assert.ok(unstageFile, 'cosm.unstageFile must be in scm/resourceState/context');
+      assert.strictEqual(unstageFile.when, 'scmResourceGroup == staged');
+      assert.strictEqual(unstageFile.group, 'inline@1');
+
+      const diffSymbol = stateMenus.find(m => m.command === 'cosm.diffSymbol');
+      assert.ok(diffSymbol, 'cosm.diffSymbol must be in scm/resourceState/context');
+      assert.strictEqual(diffSymbol.group, 'inline@2');
+    });
+
+    it('should configure view/title and view/item/context for cosm.scmView in package.json', () => {
+      const pkgPath = path.resolve(__dirname, '../../package.json');
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+
+      // view/title
+      const viewTitleMenus: any[] = pkg.contributes.menus['view/title'];
+      const stackViewTitle = viewTitleMenus.filter(m => m.when === 'view == cosm.scmView');
+      assert.strictEqual(stackViewTitle.length, 3);
+
+      const createStack = stackViewTitle.find(m => m.command === 'cosm.createStack');
+      assert.ok(createStack);
+      assert.strictEqual(createStack.group, 'navigation@1');
+
+      const evolveStack = stackViewTitle.find(m => m.command === 'cosm.evolveStack');
+      assert.ok(evolveStack);
+      assert.strictEqual(evolveStack.group, 'navigation@2');
+
+      const refreshStack = stackViewTitle.find(m => m.command === 'cosm.refreshStack');
+      assert.ok(refreshStack);
+      assert.strictEqual(refreshStack.group, 'navigation@3');
+
+      // view/item/context
+      const viewItemMenus: any[] = pkg.contributes.menus['view/item/context'];
+      const stackViewItem = viewItemMenus.filter(m => m.when === 'view == cosm.scmView && viewItem == stackedChange');
+      assert.strictEqual(stackViewItem.length, 2);
+
+      const switchUniv = stackViewItem.find(m => m.command === 'cosm.switchUniverse');
+      assert.ok(switchUniv);
+      assert.strictEqual(switchUniv.group, 'inline@1');
+
+      const evolveItem = stackViewItem.find(m => m.command === 'cosm.evolveStack');
+      assert.ok(evolveItem);
+      assert.strictEqual(evolveItem.group, 'inline@2');
     });
   });
 });

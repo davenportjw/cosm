@@ -12,12 +12,14 @@ import {
 } from './views/astTreeProvider';
 import { CosmTopologyTreeDataProvider, TopologyNodeItem } from './views/topologyTreeProvider';
 import { LineageCodeLensProvider, LineageHoverProvider } from './providers/lineageCodeLens';
+import { CosmStackedChangesProvider, StackedChangeTreeItem } from './views/stackedChangesProvider';
 
 let cosmStatusBar: CosmStatusBar | undefined;
 let cosmSCMProvider: CosmSCMProvider | undefined;
 let topologyManager: TopologyWebviewManager | undefined;
 let astTreeProvider: CosmASTTreeDataProvider | undefined;
 let topologyTreeProvider: CosmTopologyTreeDataProvider | undefined;
+let stackedChangesProvider: CosmStackedChangesProvider | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
   const rootUri = vscode.workspace.workspaceFolders?.[0]?.uri;
@@ -78,7 +80,13 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.languages.registerHoverProvider(polyglotSelector, hoverProvider)
   );
 
-  // 6. Register Cosm Commands
+  // 6. Initialize Jujutsu-style Stacked Changes Provider on SCM View
+  stackedChangesProvider = new CosmStackedChangesProvider(client, cosmSCMProvider);
+  context.subscriptions.push(
+    vscode.window.registerTreeDataProvider('cosm.scmView', stackedChangesProvider)
+  );
+
+  // 7. Register Cosm Commands
   registerCommands(
     context,
     client,
@@ -87,11 +95,19 @@ export function activate(context: vscode.ExtensionContext): void {
     topologyManager,
     codeLensProvider,
     astTreeProvider,
+    stackedChangesProvider,
     workspaceRoot
   );
 
-  // 7. Set up File Watcher on .cosm/ store to auto-refresh IDE state
-  setupStoreWatcher(context, cosmSCMProvider, cosmStatusBar, topologyManager, astTreeProvider);
+  // 8. Set up File Watcher on .cosm/ store to auto-refresh IDE state
+  setupStoreWatcher(
+    context,
+    cosmSCMProvider,
+    cosmStatusBar,
+    topologyManager,
+    astTreeProvider,
+    stackedChangesProvider
+  );
 
   // Initial update
   cosmStatusBar.update();
@@ -105,13 +121,21 @@ function registerCommands(
   topology: TopologyWebviewManager,
   codeLens: LineageCodeLensProvider,
   astTree: CosmASTTreeDataProvider,
+  stackedChanges: CosmStackedChangesProvider,
   workspaceRoot: string
 ): void {
   // Command: cosm.switchUniverse
   context.subscriptions.push(
-    vscode.commands.registerCommand('cosm.switchUniverse', async () => {
-      await statusBar.showUniversePicker();
+    vscode.commands.registerCommand('cosm.switchUniverse', async (targetUniverse?: string) => {
+      if (typeof targetUniverse === 'string' && targetUniverse.trim()) {
+        scm.setActiveUniverse(targetUniverse.trim());
+        await statusBar.update();
+        vscode.window.showInformationMessage(`Switched to micro-universe '${targetUniverse.trim()}'.`);
+      } else {
+        await statusBar.showUniversePicker();
+      }
       astTree.refresh(statusBar.getActiveUniverse());
+      stackedChanges.refresh();
     })
   );
 
@@ -120,6 +144,7 @@ function registerCommands(
     vscode.commands.registerCommand('cosm.createUniverse', async () => {
       await statusBar.promptCreateUniverse();
       astTree.refresh(statusBar.getActiveUniverse());
+      stackedChanges.refresh();
     })
   );
 
@@ -130,6 +155,31 @@ function registerCommands(
     })
   );
 
+  // Command: cosm.commit
+  context.subscriptions.push(
+    vscode.commands.registerCommand('cosm.commit', async () => {
+      await scm.commit();
+      codeLens.refresh();
+      await topology.refresh();
+      astTree.refresh(statusBar.getActiveUniverse());
+      stackedChanges.refresh();
+    })
+  );
+
+  // Command: cosm.stageAll
+  context.subscriptions.push(
+    vscode.commands.registerCommand('cosm.stageAll', async () => {
+      await scm.stageAll();
+    })
+  );
+
+  // Command: cosm.unstageAll
+  context.subscriptions.push(
+    vscode.commands.registerCommand('cosm.unstageAll', async () => {
+      await scm.unstageAll();
+    })
+  );
+
   // Command: cosm.commitWithPrompt
   context.subscriptions.push(
     vscode.commands.registerCommand('cosm.commitWithPrompt', async () => {
@@ -137,6 +187,103 @@ function registerCommands(
       codeLens.refresh();
       await topology.refresh();
       astTree.refresh(statusBar.getActiveUniverse());
+      stackedChanges.refresh();
+    })
+  );
+
+  // Command: cosm.createStack
+  context.subscriptions.push(
+    vscode.commands.registerCommand('cosm.createStack', async () => {
+      const changeId = await vscode.window.showInputBox({
+        title: 'Cosm: Create Stacked Change (Jujutsu-style)',
+        prompt: 'Enter Change ID (e.g. c/auth-jwt)',
+        placeHolder: 'c/auth-jwt'
+      });
+      if (!changeId || !changeId.trim()) return;
+
+      const currentUniverse = scm.getActiveUniverse();
+      const defaultUniverse = currentUniverse && currentUniverse !== 'universe-main'
+        ? currentUniverse
+        : `u/${changeId.trim().replace(/^c\//, '')}`;
+
+      const universeId = await vscode.window.showInputBox({
+        title: 'Cosm: Create Stacked Change - Universe ID',
+        prompt: 'Enter Micro-Universe ID',
+        value: defaultUniverse,
+        placeHolder: 'e.g. u/auth-service'
+      });
+      if (!universeId || !universeId.trim()) return;
+
+      const parentId = await vscode.window.showInputBox({
+        title: 'Cosm: Create Stacked Change - Parent Change',
+        prompt: 'Enter parent change ID (or parent universe)',
+        value: 'universe-main',
+        placeHolder: 'e.g. universe-main or c/parent-change'
+      });
+
+      const title = await vscode.window.showInputBox({
+        title: 'Cosm: Create Stacked Change - Title',
+        prompt: 'Enter proposal title description',
+        placeHolder: 'e.g. JWT Authentication Service'
+      });
+
+      try {
+        await client.createStack({
+          changeId: changeId.trim(),
+          universeId: universeId.trim(),
+          parentId: parentId && parentId.trim() ? parentId.trim() : undefined,
+          title: title && title.trim() ? title.trim() : undefined
+        });
+        vscode.window.showInformationMessage(`🥞 Stacked change '${changeId.trim()}' created successfully.`);
+        stackedChanges.refresh();
+        await scm.refresh();
+        await statusBar.update();
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Create stacked change failed: ${err.message}`);
+      }
+    })
+  );
+
+  // Command: cosm.evolveStack
+  context.subscriptions.push(
+    vscode.commands.registerCommand('cosm.evolveStack', async (item?: any) => {
+      let parentChangeId: string | undefined;
+      if (item && item.record && item.record.change_id) {
+        parentChangeId = item.record.change_id;
+      } else if (item && typeof item.change_id === 'string') {
+        parentChangeId = item.change_id;
+      } else if (typeof item === 'string' && item.trim()) {
+        parentChangeId = item.trim();
+      } else {
+        const input = await vscode.window.showInputBox({
+          title: 'Cosm: Evolve Stack (Auto-Rebase Descendants)',
+          prompt: 'Enter parent change ID to rebase descendants onto',
+          placeHolder: 'e.g. c/auth-jwt or universe-main'
+        });
+        if (input && input.trim()) {
+          parentChangeId = input.trim();
+        }
+      }
+
+      if (!parentChangeId) return;
+
+      try {
+        const res = await client.evolveStack(parentChangeId.trim());
+        vscode.window.showInformationMessage(`⚡ Evolved stack on '${parentChangeId.trim()}'. ${res}`);
+        stackedChanges.refresh();
+        await scm.refresh();
+        await statusBar.update();
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Evolve stack failed: ${err.message}`);
+      }
+    })
+  );
+
+  // Command: cosm.refreshStack
+  context.subscriptions.push(
+    vscode.commands.registerCommand('cosm.refreshStack', () => {
+      stackedChanges.refresh();
+      vscode.window.showInformationMessage('Cosm Stacked Proposals refreshed.');
     })
   );
 
@@ -732,7 +879,8 @@ function setupStoreWatcher(
   scm: CosmSCMProvider,
   statusBar: CosmStatusBar,
   topology: TopologyWebviewManager,
-  astTree: CosmASTTreeDataProvider
+  astTree: CosmASTTreeDataProvider,
+  stackedChanges: CosmStackedChangesProvider
 ): void {
   // Watch for changes in .cosm/ directory (e.g. CLI commits, agent edits)
   const watcher = vscode.workspace.createFileSystemWatcher('**/.cosm/**');
@@ -745,6 +893,7 @@ function setupStoreWatcher(
       await statusBar.update();
       await topology.refresh();
       astTree.refresh(statusBar.getActiveUniverse());
+      stackedChanges.refresh();
     }, 400);
   };
 
@@ -760,4 +909,5 @@ export function deactivate(): void {
   cosmSCMProvider = undefined;
   topologyManager = undefined;
   astTreeProvider = undefined;
+  stackedChangesProvider = undefined;
 }

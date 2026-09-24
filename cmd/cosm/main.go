@@ -40,6 +40,8 @@ import (
 	"github.com/cosmscm/cosm/pkg/watcher"
 )
 
+var exitFunc = os.Exit
+
 func printHelp() {
 	fmt.Println(`cosm - AI-Native Polyglot AST SCM & Target Compilation System
 
@@ -824,7 +826,8 @@ func runUndo(args []string) {
 	blobStore, graphEngine, err := openStorage()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Storage error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 	defer graphEngine.Close()
 
@@ -852,7 +855,8 @@ func runUndo(args []string) {
 		manifest, undoneEvents, err := universeMgr.UndoLastCommit(*universeID, isLedger, lineage)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error undoing commit: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
+			return
 		}
 		lastManifest = manifest
 		totalUndone += len(undoneEvents)
@@ -891,14 +895,16 @@ func runRevert(args []string) {
 
 	if len(fs.Args()) < 1 {
 		fmt.Fprintf(os.Stderr, "Usage: cosm revert <target_hash> [-u <universe>] [-i <intent>] [-w]\n")
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 	targetHash := fs.Args()[0]
 
 	blobStore, graphEngine, err := openStorage()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Storage error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 	defer graphEngine.Close()
 
@@ -916,7 +922,8 @@ func runRevert(args []string) {
 	newManifest, err := universeMgr.RevertCommit(*universeID, targetHash, *intent, lineage)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reverting commit: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 
 	if *writeDisk {
@@ -953,7 +960,8 @@ func runReset(args []string) {
 
 	if len(fs.Args()) < 1 {
 		fmt.Fprintf(os.Stderr, "Usage: cosm reset [--hard|--soft] <target_hash> [-u <universe>] [-w]\n")
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 	targetHash := fs.Args()[0]
 
@@ -962,13 +970,15 @@ func runReset(args []string) {
 		fmt.Fprintln(os.Stderr, "❌ Error: 'reset' is prohibited in ledger mode.")
 		fmt.Fprintln(os.Stderr, "In ledger mode, history must remain strictly linear and append-only.")
 		fmt.Fprintln(os.Stderr, "Use 'cosm revert <hash>' to append a compensating reversal commit.")
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 
 	blobStore, graphEngine, err := openStorage()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Storage error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 	defer graphEngine.Close()
 
@@ -978,7 +988,8 @@ func runReset(args []string) {
 	targetManifest, err := universeMgr.ResetHead(*universeID, targetHash, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error resetting universe head: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 
 	if effectiveWriteDisk {
@@ -2264,6 +2275,11 @@ func runStack(args []string) {
 	sub := args[0]
 	switch sub {
 	case "list":
+		fs := flag.NewFlagSet("stack list", flag.ExitOnError)
+		format := fs.String("format", "text", "Output format (text, json)")
+		fs.StringVar(format, "f", "text", "Output format (shorthand)")
+		_ = fs.Parse(args[1:])
+
 		if len(stackMgr.ListStack()) == 0 {
 			universes := universeMgr.ListUniverses()
 			order := 0
@@ -2283,8 +2299,14 @@ func runStack(args []string) {
 			}
 			_ = stackMgr.SaveToFile(stackFilePath)
 		}
-		fmt.Println("🥞 Jujutsu-Style Stacked Proposals & Change Chains:")
 		stack := stackMgr.ListStack()
+		if *format == "json" {
+			data, _ := json.MarshalIndent(stack, "", "  ")
+			fmt.Println(string(data))
+			return
+		}
+
+		fmt.Println("🥞 Jujutsu-Style Stacked Proposals & Change Chains:")
 		if len(stack) == 0 {
 			fmt.Println("   (No stacked changes active. Create one with 'cosm stack create')")
 			return

@@ -218,11 +218,18 @@ declare module 'vscode' {
     dispose(): void;
   }
 
+  export interface SourceControlActionButton {
+    command: Command;
+    description?: string;
+    enabled: boolean;
+  }
+
   export interface SourceControl {
     readonly id: string;
     readonly label: string;
     readonly rootUri?: Uri;
     readonly inputBox: SourceControlInputBox;
+    actionButton?: SourceControlActionButton;
     statusBarCommands?: Command[];
     acceptInputCommand?: Command;
     createResourceGroup(id: string, label: string): SourceControlResourceGroup;

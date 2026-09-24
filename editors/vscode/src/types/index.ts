@@ -133,6 +133,13 @@ export interface ShipResult {
   healthy?: boolean;
 }
 
+export interface WorkingTreeLens {
+  status?: string;
+  projected_files_count?: number;
+  drifted_files?: string[];
+  [key: string]: any;
+}
+
 export interface CosmStatus {
   status: string;
   universe_id: string;
@@ -143,6 +150,7 @@ export interface CosmStatus {
   clean?: boolean;
   staged_files?: string[];
   modified_files?: string[];
+  working_tree_lens?: WorkingTreeLens;
 }
 
 export interface ProposalRecord {
@@ -159,6 +167,9 @@ export interface StackRecord {
   parent_change_id?: string;
   title?: string;
   status?: string;
+  manifest_hash?: string;
+  order_index?: number;
+  author_did?: string;
 }
 
 export interface ASTTreeEdge {

@@ -187,8 +187,8 @@ cosm proposal merge <proposal_id>
 ### 13. `cosm stack`
 Manages Jujutsu-style stacked proposals and executes automatic AST-level rebasing across dependent proposal chains.
 ```bash
-# List all active stacked changes and auto-rebase statuses
-cosm stack list
+# List all active stacked changes and auto-rebase statuses (supports text or -format json / -f json)
+cosm stack list [-format json|-f json]
 
 # Register a stacked proposal change
 cosm stack create -c <change_id> -u <universe_id> [-p <parent_change_id>] [--title "<title>"]
@@ -196,6 +196,7 @@ cosm stack create -c <change_id> -u <universe_id> [-p <parent_change_id>] [--tit
 # Auto-evolve and rebase descendant changes onto updated parent AST root
 cosm stack evolve -c <parent_change_id>
 ```
+* `list`: Display active proposals in stack order. Flags: `-format <text|json>`, `-f <text|json>`.
 * `-c <change_id>`: Unique change identifier (e.g. `c/auth-model`).
 * `-u <universe_id>`: Underlying micro-universe ID backing the proposal.
 * `-p <parent_change_id>`: Parent change ID or base branch (default: `universe-main`).

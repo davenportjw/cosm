@@ -21,7 +21,7 @@ import {
 export interface CommitOptions {
   universe?: string;
   intent: string;
-  prompt: string;
+  prompt?: string;
   agent?: string;
   model?: string;
   sessionId?: string;
@@ -141,7 +141,11 @@ export class CosmClient {
           merkle_root: parsed.merkle_root || '',
           components_count: parsed.components_count || 0,
           cross_edges_count: parsed.cross_edges_count || 0,
-          components: parsed.components || []
+          components: parsed.components || [],
+          clean: parsed.working_tree_lens?.status === 'clean',
+          working_tree_lens: parsed.working_tree_lens,
+          staged_files: parsed.staged_files,
+          modified_files: parsed.modified_files
         };
       }
     } catch {
@@ -236,7 +240,10 @@ export class CosmClient {
    * Commits staged AST symbols with causal lineage and updates universe head.
    */
   public async commit(options: CommitOptions): Promise<{ merkle_root: string; message: string }> {
-    const args = ['commit', '-i', options.intent, '-p', options.prompt];
+    const args = ['commit', '-i', options.intent];
+    if (options.prompt && options.prompt.trim().length > 0) {
+      args.push('-p', options.prompt);
+    }
     if (options.universe) {
       args.push('-u', options.universe);
     }
@@ -536,27 +543,93 @@ export class CosmClient {
   }
 
   /**
+   * Creates a Jujutsu-style stacked proposal.
+   */
+  public async createStack(options: { changeId: string; universeId: string; parentId?: string; title?: string }): Promise<string> {
+    const args = ['stack', 'create', '-c', options.changeId, '-u', options.universeId];
+    if (options.parentId) {
+      args.push('-p', options.parentId);
+    }
+    if (options.title) {
+      args.push('--title', options.title);
+    }
+    return this.execCosm(args);
+  }
+
+  /**
+   * Evolves/rebases descendants in a proposal stack.
+   */
+  public async evolveStack(parentChangeId: string): Promise<string> {
+    return this.execCosm(['stack', 'evolve', '-c', parentChangeId]);
+  }
+
+  /**
    * Retrieves stacked proposals (Jujutsu-style stacked changes).
    */
   public async listStack(): Promise<StackRecord[]> {
+    let output = '';
     try {
-      const output = await this.execCosm(['stack', 'list']);
-      const records: StackRecord[] = [];
-      const lines = output.split('\n');
-      for (const line of lines) {
-        const match = line.match(/\*\s*([^\s]+)\s*(?:\[([^\]]+)\])?(?:\s*-\s*([^\n]+))?/);
-        if (match) {
-          records.push({
-            change_id: match[1].trim(),
-            universe_id: match[2] ? match[2].trim() : 'universe-main',
-            title: match[3] ? match[3].trim() : ''
-          });
+      output = await this.execCosm(['stack', 'list', '-format', 'json']);
+      const trimmed = output.trim();
+      if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+        const jsonStart = trimmed.search(/[\[{]/);
+        const parsed = JSON.parse(trimmed.substring(jsonStart));
+        if (Array.isArray(parsed)) {
+          return parsed as StackRecord[];
+        } else if (parsed && typeof parsed === 'object') {
+          return [parsed as StackRecord];
         }
       }
-      return records;
+    } catch {
+      // JSON attempt failed, fallback to text parsing
+    }
+
+    try {
+      const text = output && !output.trim().startsWith('[') && !output.trim().startsWith('{')
+        ? output
+        : await this.execCosm(['stack', 'list']);
+      return this.parseTextStack(text);
     } catch {
       return [];
     }
+  }
+
+  private parseTextStack(text: string): StackRecord[] {
+    const records: StackRecord[] = [];
+    const lines = text.split(/\r?\n/);
+    let currentRecord: Partial<StackRecord> | null = null;
+
+    const headerRegex = /\[(\d+)\]\s*🔹\s*([^\s]+)\s*\(Universe:\s*([^,]+),\s*Head:\s*([^\)]+)\)/;
+    const parentRegex = /Parent:\s*([^\s|]+)/;
+
+    for (const line of lines) {
+      const headerMatch = line.match(headerRegex);
+      if (headerMatch) {
+        if (currentRecord && currentRecord.change_id && currentRecord.universe_id) {
+          records.push(currentRecord as StackRecord);
+        }
+        currentRecord = {
+          order_index: parseInt(headerMatch[1], 10),
+          change_id: headerMatch[2].trim(),
+          universe_id: headerMatch[3].trim(),
+          manifest_hash: headerMatch[4].trim()
+        };
+        continue;
+      }
+
+      if (currentRecord) {
+        const parentMatch = line.match(parentRegex);
+        if (parentMatch) {
+          currentRecord.parent_change_id = parentMatch[1].trim();
+        }
+      }
+    }
+
+    if (currentRecord && currentRecord.change_id && currentRecord.universe_id) {
+      records.push(currentRecord as StackRecord);
+    }
+
+    return records;
   }
 
   /**
