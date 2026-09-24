@@ -149,9 +149,10 @@ To validate Cosm as a viable replacement for Git, we built the **Cosm Camping Ap
   - Branched `universe-feat-vip-discount` from `universe-main` in 0ms.
   - Surgically mutated `services/campsite::main.(Server).HandleHealth` using `cosm ast edit` (deduplicating 42 sibling symbols).
   - Formed a Universe Proposal (`cosm proposal create`) and merged it back into `universe-main` (`cosm proposal merge`).
-- **Target Compilation & Shipping**:
+- **Target Compilation, Shipping & Deployment**:
   - `cosm ship -t target:local-preview` verified pure DAG hydration and local container preview.
-  - Deployed to Google Cloud Run (`davenport-boutique` in `us-central1`) via Cloud Build.
+  - **Zero-Cloud Local Deployment**: Executed `./deploy/deploy_local.sh` for non-blocking daemon execution, automated PID tracking, built-in in-memory concurrency storage, and automated health checks (`http://localhost:8080/health`) with zero GCP credentials.
+  - **Production Cloud Deployment**: Deployed containerized target to Google Cloud Run (`davenport-boutique` in `us-central1`) via `./deploy/deploy_cloudrun.sh`.
 
 ### Bootstrapping from Git: Compiling the Camping App into Cosm
 
@@ -172,10 +173,13 @@ cosm commit -u universe-main -i "Compile camping app into cosm"
 # 4. Verify AST Merkle root and working tree lens
 cosm status
 
-# 5. Compile and run preview
+# 5. Compile and deploy locally (Zero-Cloud daemon with health probing)
 cosm ship
+./deploy/deploy_local.sh
+
+# Or run interactively via standard Go toolchain
 go run ./cmd/server
 ```
 
-Alternatively, run `./compile_into_cosm.sh` to execute the automated compilation sequence.
+Alternatively, run `./compile_into_cosm.sh` to execute the automated compilation sequence, followed by `./deploy/deploy_local.sh` for immediate zero-cloud local deployment.
 

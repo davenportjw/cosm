@@ -54,14 +54,19 @@ cosm ast tree
 ### Ship & Run
 
 ```bash
-# Ship directly from the AST Merkle-DAG to an ephemeral preview sandbox
+# 1. Ship directly from the AST Merkle-DAG to an ephemeral preview sandbox
 cosm ship
 
-# Run tests and launch the local server
+# 2. Run unit and concurrency tests
 go test -v ./...
+
+# 3. One-command automated local deployment (daemon mode with health probing)
+./deploy/deploy_local.sh
+
+# Or run interactively in the foreground via standard Go toolchain
 go run ./cmd/server
 ```
-Navigate to `http://localhost:8080` to interact with the live Alpine Escapes reservation system!
+Navigate to `http://localhost:8080` to interact with the live Alpine Escapes reservation system! To stop the local daemon, run `./deploy/deploy_local.sh stop`.
 
 ---
 
@@ -223,19 +228,41 @@ The Camping App consists of 45 polyglot AST components spanning 3 architectural 
 | :--- | :--- | :--- | :--- |
 | **Backend Core & Domain Engines** | Go | `cmd/server/`, `internal/weather/`, `internal/sos/`, `internal/astronomy/`, `internal/sync/`, `internal/telemetry/`, `internal/profile/`, `internal/ranger/`, `internal/outfitter/`, `internal/backcountry/`, `internal/environmental/`, `internal/pms/`, `internal/lease/` | HTTP handlers, booking transactions, NFDRS fire safety, SAR emergency beacons, ALPR gate cache, outfitter lockers |
 | **Database Schemas & Migrations** | SQL | `migrations/001_*.sql` through `008_emergency_sos_beacon.sql` | Table definitions, foreign key constraints, spatial/status indexes |
-| **Cloud Infrastructure & Packaging** | HCL (Terraform) & Dockerfile | `deploy/main.tf`, `Dockerfile` | Cloud Run v2 service, Memorystore for Redis, IAM bindings, multi-stage Alpine build |
+| **Cloud Infrastructure & Packaging** | HCL (Terraform), Bash & Dockerfile | `deploy/deploy_local.sh`, `deploy/deploy_cloudrun.sh`, `deploy/main.tf`, `Dockerfile` | Automated zero-cloud local deployment daemon, Cloud Run v2 service deployment, Memorystore for Redis, IAM bindings, multi-stage Alpine build |
 
 ---
 
 ## 5. Running the Application
 
-Because the materialized working tree lens is maintained in sync with the AST DAG, all standard Go development commands work out of the box:
+Because the materialized working tree lens is maintained in sync with the AST DAG, developers and autonomous agents can run and test the application using three distinct options:
+
+### Option 1: Automated Local Deployment (Zero-Cloud)
+Run the automated local deployment script to compile, daemonize, and health-check the application on localhost with zero external cloud dependencies:
+
+```bash
+# Start server in daemon mode with automated PID tracking and HTTP health probe:
+./deploy/deploy_local.sh
+
+# Check daemon status and health:
+./deploy/deploy_local.sh status
+
+# Stop daemon:
+./deploy/deploy_local.sh stop
+```
+
+- **Daemon Mode & PID Tracking**: Spawns the compiled server in the background and writes the active process ID to `.server.pid`, enabling non-blocking automated workflows.
+- **Automated Health Probing**: Polls `http://localhost:8080/health` with exponential backoff until HTTP 200 OK is confirmed before returning.
+- **Pure-Go In-Memory Store**: Activates the built-in mutex-isolated memory store when `DATABASE_URL` is omitted—providing complete reservation concurrency control without requiring a PostgreSQL instance.
+- **Zero-GCP Setup**: 100% offline-ready; does not require `gcloud` CLI, Google Cloud credentials, or project permissions.
+
+### Option 2: Direct Go Toolchain (`go run ./cmd/server`)
+For interactive development, active debugging, or viewing live server stdout directly in your terminal:
 
 ```bash
 # Run unit and concurrency tests
 go test -v ./...
 
-# Run the local server
+# Run the server interactively in the foreground
 go run ./cmd/server
 ```
 
@@ -243,7 +270,18 @@ Once running, navigate to `http://localhost:8080` to experience:
 - Campsite search and live inventory filtering
 - Real-time HTMX booking and reservation management
 - Simulated concurrency contention tests
-- Health probe at `/health`
+- Health probe at `http://localhost:8080/health`
+
+### Option 3: Google Cloud Run Deployment (`./deploy/deploy_cloudrun.sh`)
+For multi-region public staging or serverless cloud evaluation:
+
+```bash
+# Build container and deploy to Google Cloud Run:
+./deploy/deploy_cloudrun.sh
+```
+
+- **Production Serverless Target**: Deploys the multi-stage container to Google Cloud Run in project `davenport-boutique` (`us-central1`).
+- **Live Health Probing**: Automatically fetches an identity token via `gcloud auth print-identity-token` and probes the public HTTPS `/health` endpoint.
 
 ---
 
@@ -288,7 +326,27 @@ For an in-depth walkthrough of each command, wire DTO schemas, and the 11 fricti
 
 ---
 
-## 7. Interactive Agent Demo Playbook & Production Cloud Run Service
+## 7. Interactive Agent Demo Playbook, Deployment Options & Production Cloud Run Service
+
+> [!IMPORTANT]
+> ### Deployment Targets: Local Deployment vs. Google Cloud Run
+> 
+> Alpine Escapes provides two first-class deployment targets suited for different development phases and environments:
+> 
+> | Deployment Target | Command | Environment | Prerequisites | Use Case |
+> | :--- | :--- | :--- | :--- | :--- |
+> | **Local Deployment** | `./deploy/deploy_local.sh` | Localhost (port 8080) | Go 1.22+ (Zero GCP setup) | Offline development, local testing, rapid iteration |
+> | **Google Cloud Run** | `./deploy/deploy_cloudrun.sh` | Serverless GCP (`davenport-boutique`) | `gcloud`, GCP Project permissions | Public demo, multi-region production, live staging |
+> 
+> **When to Choose Local Deployment (`./deploy/deploy_local.sh`)**:
+> - **Zero-Cloud & Offline Execution**: Running on developer workstations, air-gapped environments, or machines without Google Cloud credentials.
+> - **Fast Iteration Loops**: Instant binary compilation, daemonized background execution, and automated health checks in under 3 seconds.
+> - **Automated Testing & Agent Verification**: Hermetic test harnesses, subagents, and rating evaluations that exercise HTTP endpoints without network latency or cloud quota consumption.
+> 
+> **When to Choose Google Cloud Run (`./deploy/deploy_cloudrun.sh`)**:
+> - **Production & Live Demos**: Publicly accessible HTTPS service URL for customer demonstrations and stakeholder reviews.
+> - **Infrastructure Parity Verification**: Validating multi-stage Alpine Docker container packaging, Terraform configurations (`deploy/main.tf`), and Google Cloud IAM bindings.
+> - **Multi-Agent Staging Mesh**: Coordinating with external cloud webhooks or services running in Google Cloud.
 
 ### 🚀 Live Cloud Run Service
 Alpine Escapes is fully deployed to Google Cloud Run in `davenport-boutique` (`us-central1`):

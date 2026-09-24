@@ -3,6 +3,7 @@
 .env
 .env.*
 *.log
+*.pid
 bin/
 dist/
 tmp/

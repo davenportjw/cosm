@@ -7,6 +7,10 @@
 
 ## 1. What is Cosm? (Mental Model)
 
+> [!NOTE]
+> **First-Class Local Deployment Option**:
+> While Alpine Escapes is live on Google Cloud Run, it can be deployed 100% locally with zero cloud dependencies using `./deploy/deploy_local.sh`. This provides an automated daemon, PID tracking, and health checks on `http://localhost:8080`—ideal for offline development, local agent evaluations, CI pipelines, and environments without Google Cloud credentials.
+
 Cosm is an **AI-Native Polyglot AST Source Control & Target Compilation System**. Unlike legacy VCS (Git) which tracks unstructured flat text lines and file diffs:
 
 1. **AST Merkle-DAG**: Code is stored as language-aware semantic AST symbol nodes (FunctionDecl, StructDecl, InterfaceDecl, RouteBinding, HCL blocks) in `.cosm/objects/` with custom Write-Ahead Log (WAL) graphs in `.cosm/graph.db`.
@@ -159,8 +163,14 @@ Two features have already been developed, committed into Cosm AST micro-universe
 ../../bin/cosm blast-radius weather.EvaluateFireSafety
 ```
 
-**Probe the Live Cloud Run Endpoint:**
+**Probe the Endpoint (Local vs. Cloud Run):**
+
 ```bash
+# Option A: Local Deployment Probe (Zero-Cloud / Offline)
+curl -s "http://localhost:8080/health"
+curl -s "http://localhost:8080/api/v1/weather/campsite?campsite_id=c1&format=json"
+
+# Option B: Google Cloud Run Live Probe (Serverless Production)
 TOKEN=$(gcloud auth print-identity-token)
 curl -s -H "Authorization: Bearer ${TOKEN}" \
   "https://cosm-camping-app-txgsracloq-uc.a.run.app/api/v1/weather/campsite?campsite_id=c1&format=json"
@@ -183,8 +193,19 @@ curl -s -H "Authorization: Bearer ${TOKEN}" \
 ../../bin/cosm proposal list
 ```
 
-**Probe Live Distress Dispatching on Cloud Run:**
+**Probe Live Distress Dispatching (Local vs. Cloud Run):**
+
 ```bash
+# Option A: Local Deployment Probes (Zero-Cloud / Offline)
+# Trigger an emergency beacon:
+curl -s -X POST \
+  -d "location=Enchantments Pass Mile 11&latitude=47.4892&longitude=-120.7812&distress_type=INJURY&description=Fall on scree&format=json" \
+  "http://localhost:8080/api/v1/sos/beacon"
+
+# Inspect active Search & Rescue dispatch queue:
+curl -s "http://localhost:8080/api/v1/sos/active"
+
+# Option B: Google Cloud Run Live Probes (Serverless Production)
 TOKEN=$(gcloud auth print-identity-token)
 # Trigger an emergency beacon:
 curl -s -X POST -H "Authorization: Bearer ${TOKEN}" \
@@ -451,11 +472,40 @@ When `c/bear-bundles` is modified or updated, run `stack evolve` to cascade chan
 
 ---
 
-## 8. Cloud Deployment Verification
+## 8. Deployment Options & Verification (Local vs. Cloud Run)
 
-Whenever code changes are finalized and merged to `universe-main`:
+Whenever code changes are finalized and merged to `universe-main`, verify deployment using either target:
+
+### Option A: Local Deployment (Zero-Cloud & Automated Daemon)
+Ideal for offline development, rapid local verification, CI pipelines, and autonomous agent test harness execution without GCP credentials:
+
+```bash
+# 1. Launch local server daemon with automated PID tracking and health probe:
+./deploy/deploy_local.sh
+
+# 2. Check daemon status and health:
+./deploy/deploy_local.sh status
+
+# 3. Verify local health endpoint directly:
+curl -s http://localhost:8080/health
+
+# 4. Stop the local server daemon when finished:
+./deploy/deploy_local.sh stop
+```
+- **Local Service URL**: **`http://localhost:8080`**
+- **Health Endpoint**: **`http://localhost:8080/health`**
+- **Process & Logs**: PID tracked in `.server.pid`, logs streamed to `.server.log`
+
+### Option B: Google Cloud Run Deployment (Serverless Production)
+For public demonstration, multi-region staging, and production infrastructure parity:
+
 ```bash
 # Run the automated build, deploy, and live HTTP health probe:
 ./deploy/deploy_cloudrun.sh
 ```
-Deployed service URL: **`https://cosm-camping-app-txgsracloq-uc.a.run.app`**
+- **Deployed Service URL**: **`https://cosm-camping-app-txgsracloq-uc.a.run.app`**
+- **Health Endpoint**: **`https://cosm-camping-app-txgsracloq-uc.a.run.app/health`**
+
+> [!NOTE]
+> **Evaluation & Testing Recommendation**:
+> For offline evaluation, unit/integration verification, and autonomous agent benchmarking (`cosm-agent-harness`), agents should use **`./deploy/deploy_local.sh`**. This guarantees zero cloud dependency stalls, eliminates token or authentication friction, and runs with sub-second feedback loops. Use `./deploy/deploy_cloudrun.sh` when publishing live demonstration endpoints or testing production container builds.
