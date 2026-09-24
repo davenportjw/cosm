@@ -27,10 +27,20 @@ cosm <command> [arguments] [flags]
 ### 1. `cosm init`
 Initializes a new `.cosm/` repository structure in the current directory and prepares the initial universe head.
 ```bash
-cosm init [-u <universe_id>]
+cosm init [-u <universe_id>] [--ledger]
 ```
 * **Exit Code 0**: Successfully initialized repository.
 * **Exit Code 1**: Directory permissions error or already initialized.
+* `--ledger`: Initializes the workspace in strict append-only Ledger Mode, writing `"ledger_mode": true` to `.cosm/config.json`. Enforces strict linear Merkle-DAG progression ($C_{N+1} = \text{Commit}(\text{Parent} = C_N, \dots)$); destructive history rewinds, head resets, and `cosm reset` are strictly prohibited.
+* **Workspace Configuration (`.cosm/config.json`)**:
+  ```json
+  {
+    "ledger_mode": true,
+    "default_universe": "universe-main",
+    "created_at": "2026-09-23T20:00:00Z"
+  }
+  ```
+  Persists repository-level settings, default micro-universe targets, and strict audit invariants across all agent sessions.
 * **Onboarding Guidance**: Displays explicit next steps for both the **AST-First Paradigm** (`cosm ast create`) and the **Filesystem Staging Lens** (`cosm add .`).
 
 ---
@@ -272,10 +282,15 @@ cosm dashboard
 ---
 
 ### 19. `cosm git`
-Git compatibility proxy translating Git CLI commands (`status`, `log`, `diff`, `push`, `pull`) into AST Merkle queries.
+Git compatibility proxy translating Git CLI commands (`status`, `log`, `diff`, `push`, `pull`, `revert`, `reset`, `init-bridge`) into AST Merkle queries.
 ```bash
-cosm git <status|log|diff|push|pull> [args...]
+cosm git <status|log|diff|push|pull|revert|reset|init-bridge> [args...]
 ```
+* `cosm git status`: Reports clean working tree or unstaged modified files against active universe manifest.
+* `cosm git log`: Displays commit ancestry, author, date, and commit messages.
+* `cosm git revert [-m <message>] [-u <universe>] <commit>`: Reverts specified commit by appending a forward compensating commit through the Git shim interceptor.
+* `cosm git reset [--hard] [-u <universe>] <commit>`: Resets universe head to target commit. When `--hard` is specified, also synchronizes workspace files on disk.
+* `cosm git init-bridge [-d <dir>] [-u <universe>]`: Initializes synthetic `.git` bridge for external IDE compatibility.
 
 ---
 
@@ -460,6 +475,49 @@ cosm git init-bridge [-d <dir>] [-u <universe>]
 ```
 * **Synthetic Objects**: Converts active AST manifest components and symbols into virtual loose Git commit and tree objects with SHA-1 addressing.
 * **Workspace Isolation**: Configures `.git/info/exclude` to ignore `.cosm/` storage engine files.
+
+---
+
+### 34. `cosm undo`
+Unrolls the most recent commit(s), restores the micro-universe head pointer to the previous commit manifest, reverses applied Oplog events, and synchronizes the Plane 2 disk working tree.
+```bash
+cosm undo [count] [-u <universe>] [-w|--write-disk=true|false]
+```
+* `count` (optional, default: `1`): Number of commits to unroll sequentially.
+* `-u, --universe <universe>`: Target micro-universe (default: `universe-main`).
+* `-w, --write-disk` (default: `true`): Automatically synchronizes workspace files on disk to match the restored commit manifest. Deleted files introduced in the undone commits are cleanly unlinked from disk; modified files are restored to their previous content. Set `--write-disk=false` for headless DAG-only operations.
+* **Standard Mode vs. Ledger Mode Behavior**:
+  * **Standard Mode**: Directly unrolls the universe head pointer to the parent manifest hash and decrements the active commit sequence.
+  * **Ledger Mode (`--ledger`)**: Rather than unrolling history or deleting commits, `cosm undo` appends a forward compensating commit ($C_{N+1}$) whose tree matches the parent state ($C_{N-1}$), recording an `ActionRevertManifest` (`"REVERT_MANIFEST"`) event in the Oplog to preserve an immutable cryptographic audit trail.
+
+---
+
+### 35. `cosm revert` (alias: `cosm rollback`)
+Appends a forward compensating commit that reverses the AST symbol mutations of a specified target commit while preserving linear history, full causal lineage, and subsequent commits.
+```bash
+cosm revert <target_hash> [-u <universe>] [-i|--intent <msg>] [-w|--write-disk=true|false]
+cosm rollback <target_hash> [-u <universe>] [-i|--intent <msg>] [-w|--write-disk=true|false]
+```
+* `<target_hash>`: 64-character SHA-256 Merkle root hash or prefix of the commit to revert.
+* `-u, --universe <universe>`: Target micro-universe (default: `universe-main`).
+* `-i, --intent <msg>`: Causal intent description for the compensating commit (e.g. `"Revert broken auth middleware"`).
+* `-w, --write-disk` (default: `true`): Automatically synchronizes modified and removed components to the workspace disk.
+* **Non-Destructive Linearity**: Reversal never deletes or rewrites historical commits. It computes the inverse AST delta of the target commit, applies it against the current universe head ($H_{\text{current}}$), logs an `ActionRevertManifest` (`"REVERT_MANIFEST"`) event in `.cosm/graph.db`, and advances the head pointer to the new compensating commit ($C_{\text{new}}$).
+
+---
+
+### 36. `cosm reset`
+Repositions the active micro-universe head pointer directly to a specified target commit hash.
+```bash
+cosm reset [--hard|--soft] <target_hash> [-u <universe>] [-w|--write-disk=true|false]
+```
+* `<target_hash>`: Target commit Merkle root hash or prefix to reposition the head pointer to.
+* `--hard`: Moves the universe head pointer and synchronizes workspace files on disk to match the target commit manifest (equivalent to `-w`).
+* `--soft`: Moves the universe head pointer only, leaving the Plane 2 disk working tree files untouched.
+* `-u, --universe <universe>`: Target micro-universe (default: `universe-main`).
+* `-w, --write-disk` (default: `false` unless `--hard` is passed): Updates workspace files on disk.
+* **Strict Ledger Mode Invariant**: `cosm reset` is **strictly prohibited** in repositories initialized with `--ledger` (or with `"ledger_mode": true` in `.cosm/config.json`). Any attempt to execute `cosm reset` in ledger mode fails immediately with exit code 1 (`ErrLedgerLinearityViolation`), preventing destructive history modification or timeline tampering. In ledger mode, use `cosm revert` to reverse changes via forward compensating commits.
+
 
 
 

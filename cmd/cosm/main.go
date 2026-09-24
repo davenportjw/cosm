@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -46,9 +47,12 @@ Usage:
   cosm <command> [arguments] [flags]
 
 Core Commands:
-  init                             Initialize a new .cosm/ repository in current directory
+  init [--ledger]                  Initialize a new .cosm/ repository in current directory (optional strict append-only Ledger Mode)
   add <files...>                   Parse Go/HCL/TS/Python files into AST symbol nodes & stage to store
   commit -i <intent>               Commit active manifest & update universe head
+  undo [count] [-w]                Undo most recent commit(s) (head unroll in standard mode, compensating commit in ledger mode)
+  revert <hash> [-i <intent>] [-w] Revert commit by appending compensating reversal commit (alias: rollback)
+  reset [--hard|--soft] <hash> [-w] Move universe head directly to target commit (prohibited in ledger mode)
   log [-u <universe>] [-n <limit>] Show universe Merkle commit history, causal lineage & symbol diffs
   status                           Show working tree AST status vs active universe head
   topology                         Render multi-domain topology graph (ASCII / Mermaid)
@@ -65,7 +69,7 @@ Core Commands:
   import -d <dir>                  Recursively scan and ingest code files into active universe
   export -d <dir>                  Reconstitute and write entire universe AST back to disk
   dashboard                        Launch interactive terminal dashboard (TUI)
-  git <status|log|diff|push>       Local Git compatibility shim (for IDEs and local Git tooling)
+  git <status|log|diff|push|revert|reset> Local Git compatibility shim (for IDEs and local Git tooling)
 
 IDE & Machine Interfaces:
   mcp [-d <dir>] [-u <universe>]   Start Model Context Protocol (MCP) JSON-RPC 2.0 stdio server
@@ -122,6 +126,15 @@ func main() {
 
 	case "commit":
 		runCommit(args)
+
+	case "undo":
+		runUndo(args)
+
+	case "revert", "rollback":
+		runRevert(args)
+
+	case "reset":
+		runReset(args)
 
 	case "log":
 		runLog(args)
@@ -222,6 +235,7 @@ func runInit(args []string) {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	universeID := fs.String("u", "universe-main", "Initial universe ID")
 	fs.StringVar(universeID, "universe", "universe-main", "Initial universe ID (alias)")
+	ledger := fs.Bool("ledger", false, "Initialize in strict append-only Ledger Mode")
 	_ = fs.Parse(args)
 
 	cosmDir := ".cosm"
@@ -229,6 +243,13 @@ func runInit(args []string) {
 		fmt.Fprintf(os.Stderr, "Error creating .cosm/objects: %v\n", err)
 		os.Exit(1)
 	}
+
+	cfg := &storage.WorkspaceConfig{
+		LedgerMode:      *ledger,
+		DefaultUniverse: *universeID,
+		CreatedAt:       time.Now().UTC(),
+	}
+	_ = storage.SaveConfig(cosmDir, cfg)
 
 	blobStore, err := storage.NewBlobStore(filepath.Join(cosmDir, "objects"))
 	if err != nil {
@@ -244,6 +265,7 @@ func runInit(args []string) {
 	defer graphEngine.Close()
 
 	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
+	universeMgr.SetLedgerMode(*ledger)
 	_, _ = universeMgr.CreateUniverse(*universeID, "")
 
 	// Customer Zero invariant: Auto-commit an initial empty WorkspaceManifestNode
@@ -261,6 +283,9 @@ func runInit(args []string) {
 
 	fmt.Println("✨ Initialized empty Cosm repository in .cosm/")
 	fmt.Printf("   Active Universe: %s (Merkle Root: %s)\n", *universeID, initialHash[:min(12, len(initialHash))])
+	if *ledger {
+		fmt.Println("  Ledger Mode: ENABLED (strictly linear, append-only audit trail; head resets prohibited, reversals append compensating commits)")
+	}
 	fmt.Println()
 	fmt.Println("Next Steps (Two paths to build):")
 	fmt.Println("1. Native AST Inception (Agent / AST-First Paradigm):")
@@ -674,6 +699,295 @@ func runCommit(args []string) {
 	if *traceID != "" {
 		fmt.Printf("   Trace:  %s\n", *traceID)
 	}
+}
+
+// isWorkspaceLedgerMode returns true if cliFlag is true, or os.Getenv("COSM_LEDGER_MODE") == "true",
+// or storage.IsLedgerMode(cosmDir).
+func isWorkspaceLedgerMode(cosmDir string, cliFlag bool) bool {
+	if cliFlag {
+		return true
+	}
+	if os.Getenv("COSM_LEDGER_MODE") == "true" {
+		return true
+	}
+	return storage.IsLedgerMode(cosmDir)
+}
+
+// cleanEmptyParents recursively removes empty parent directories up to, but not including, rootDir.
+func cleanEmptyParents(rootDir, dir string) {
+	cleanRoot, err := filepath.Abs(rootDir)
+	if err != nil {
+		cleanRoot = filepath.Clean(rootDir)
+	}
+	curr, err := filepath.Abs(dir)
+	if err != nil {
+		curr = filepath.Clean(dir)
+	}
+
+	for curr != cleanRoot && curr != "." && curr != "/" && strings.HasPrefix(curr, cleanRoot) {
+		entries, err := os.ReadDir(curr)
+		if err != nil || len(entries) > 0 {
+			break
+		}
+		if err := os.Remove(curr); err != nil {
+			break
+		}
+		curr = filepath.Dir(curr)
+	}
+}
+
+// syncWorkspaceDisk synchronizes the on-disk workspace with targetManifest.
+// It removes files present in prevManifest but missing in targetManifest, and writes
+// files present in targetManifest.
+// Returns the number of files restored, the number of files removed, and any error encountered.
+func syncWorkspaceDisk(
+	rootDir string,
+	targetManifest *core.WorkspaceManifestNode,
+	prevManifest *core.WorkspaceManifestNode,
+	blobStore *storage.BlobStore,
+) (int, int, error) {
+	hydrator := materialize.NewHydrator()
+
+	// Try to open graphEngine if available in workspace for resolving component Merkle hashes
+	var graphEngine *storage.GraphEngine
+	cosmDir := filepath.Join(rootDir, ".cosm")
+	if _, err := os.Stat(cosmDir); err != nil {
+		cosmDir = ".cosm"
+	}
+	if ge, err := storage.NewGraphEngine(filepath.Join(cosmDir, "graph.db")); err == nil {
+		graphEngine = ge
+		defer ge.Close()
+	}
+
+	var targetFiles map[string][]byte
+	if targetManifest != nil {
+		compMap, symMap := loadManifestState(blobStore, graphEngine, targetManifest)
+		var err error
+		targetFiles, err = hydrator.HydrateWorkspace(targetManifest, compMap, symMap)
+		if err != nil {
+			return 0, 0, fmt.Errorf("hydrating target manifest: %w", err)
+		}
+	} else {
+		targetFiles = make(map[string][]byte)
+	}
+
+	removed := 0
+	if prevManifest != nil {
+		compMap, symMap := loadManifestState(blobStore, graphEngine, prevManifest)
+		prevFiles, err := hydrator.HydrateWorkspace(prevManifest, compMap, symMap)
+		if err == nil {
+			for relPath := range prevFiles {
+				if _, exists := targetFiles[relPath]; !exists {
+					fullPath := filepath.Join(rootDir, relPath)
+					if _, statErr := os.Stat(fullPath); statErr == nil {
+						if rmErr := os.Remove(fullPath); rmErr == nil {
+							removed++
+							cleanEmptyParents(rootDir, filepath.Dir(fullPath))
+						}
+					}
+				}
+			}
+		}
+	}
+
+	restored := 0
+	for relPath, content := range targetFiles {
+		fullPath := filepath.Join(rootDir, relPath)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+			return restored, removed, fmt.Errorf("creating parent directory for %s: %w", relPath, err)
+		}
+		if err := os.WriteFile(fullPath, content, 0644); err != nil {
+			return restored, removed, fmt.Errorf("writing file %s: %w", relPath, err)
+		}
+		restored++
+	}
+
+	return restored, removed, nil
+}
+
+func runUndo(args []string) {
+	fs := flag.NewFlagSet("undo", flag.ExitOnError)
+	universeID := fs.String("u", "universe-main", "Universe ID")
+	fs.StringVar(universeID, "universe", "universe-main", "Universe ID (alias)")
+	writeDisk := fs.Bool("w", true, "Update workspace files on disk")
+	fs.BoolVar(writeDisk, "write-disk", true, "Update workspace files on disk (alias)")
+	ledgerFlag := fs.Bool("ledger", false, "Enforce ledger mode check")
+	_ = fs.Parse(args)
+
+	count := 1
+	if len(fs.Args()) > 0 {
+		if c, err := strconv.Atoi(fs.Args()[0]); err == nil && c > 0 {
+			count = c
+		}
+	}
+
+	blobStore, graphEngine, err := openStorage()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Storage error: %v\n", err)
+		os.Exit(1)
+	}
+	defer graphEngine.Close()
+
+	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
+	isLedger := isWorkspaceLedgerMode(".cosm", *ledgerFlag)
+	universeMgr.SetLedgerMode(isLedger)
+
+	prevManifest, _ := universeMgr.GetUniverseManifest(*universeID)
+
+	lineage := core.LineageEnvelope{
+		UserID:           os.Getenv("USER"),
+		SessionID:        "cosm-cli",
+		ExecutingAgentID: "cosm-cli",
+		Intent:           "Undo commit",
+		Timestamp:        time.Now().UTC(),
+	}
+
+	var lastManifest *core.WorkspaceManifestNode
+	var totalUndone int
+	for i := 0; i < count; i++ {
+		curHead, _ := universeMgr.GetUniverseManifest(*universeID)
+		if curHead == nil && !isLedger {
+			break
+		}
+		manifest, undoneEvents, err := universeMgr.UndoLastCommit(*universeID, isLedger, lineage)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error undoing commit: %v\n", err)
+			os.Exit(1)
+		}
+		lastManifest = manifest
+		totalUndone += len(undoneEvents)
+	}
+
+	if *writeDisk && lastManifest != nil {
+		if _, _, sErr := syncWorkspaceDisk(".", lastManifest, prevManifest, blobStore); sErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to sync workspace disk: %v\n", sErr)
+		}
+	}
+
+	if isLedger {
+		hash := ""
+		if lastManifest != nil {
+			hash = lastManifest.MerkleRootHash
+		}
+		fmt.Printf("✓ [ledger mode] Appended compensating revert commit: %s (restored to parent state)\n", hash)
+	} else {
+		headHash := "initial empty state"
+		if lastManifest != nil && lastManifest.MerkleRootHash != "" {
+			headHash = lastManifest.MerkleRootHash
+		}
+		fmt.Printf("✓ Undid commit in universe '%s': head restored to %s (events undone: %d)\n", *universeID, headHash, totalUndone)
+	}
+}
+
+func runRevert(args []string) {
+	fs := flag.NewFlagSet("revert", flag.ExitOnError)
+	universeID := fs.String("u", "universe-main", "Universe ID")
+	fs.StringVar(universeID, "universe", "universe-main", "Universe ID (alias)")
+	intent := fs.String("i", "", "Reversal intent message")
+	fs.StringVar(intent, "intent", "", "Reversal intent message (alias)")
+	writeDisk := fs.Bool("w", true, "Update workspace files on disk")
+	fs.BoolVar(writeDisk, "write-disk", true, "Update workspace files on disk (alias)")
+	_ = fs.Parse(args)
+
+	if len(fs.Args()) < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: cosm revert <target_hash> [-u <universe>] [-i <intent>] [-w]\n")
+		os.Exit(1)
+	}
+	targetHash := fs.Args()[0]
+
+	blobStore, graphEngine, err := openStorage()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Storage error: %v\n", err)
+		os.Exit(1)
+	}
+	defer graphEngine.Close()
+
+	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
+	prevManifest, _ := universeMgr.GetUniverseManifest(*universeID)
+
+	lineage := core.LineageEnvelope{
+		UserID:           os.Getenv("USER"),
+		SessionID:        "cosm-cli",
+		ExecutingAgentID: "cosm-cli",
+		Intent:           *intent,
+		Timestamp:        time.Now().UTC(),
+	}
+
+	newManifest, err := universeMgr.RevertCommit(*universeID, targetHash, *intent, lineage)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reverting commit: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *writeDisk {
+		if _, _, sErr := syncWorkspaceDisk(".", newManifest, prevManifest, blobStore); sErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to sync workspace disk: %v\n", sErr)
+		}
+	}
+
+	fmt.Printf("✓ Reverted commit %s in universe '%s'\n", targetHash, *universeID)
+	fmt.Printf("  New commit Merkle root: %s\n", newManifest.MerkleRootHash)
+	fmt.Printf("  Intent: %s\n", newManifest.Lineage.Intent)
+}
+
+func runRollback(args []string) {
+	runRevert(args)
+}
+
+func runReset(args []string) {
+	fs := flag.NewFlagSet("reset", flag.ExitOnError)
+	hard := fs.Bool("hard", false, "Reset head and synchronize workspace files on disk")
+	soft := fs.Bool("soft", false, "Reset head only, preserving workspace files")
+	universeID := fs.String("u", "universe-main", "Universe ID")
+	fs.StringVar(universeID, "universe", "universe-main", "Universe ID (alias)")
+	writeDisk := fs.Bool("w", false, "Update workspace files on disk")
+	fs.BoolVar(writeDisk, "write-disk", false, "Update workspace files on disk (alias)")
+	ledgerFlag := fs.Bool("ledger", false, "Enforce ledger mode check")
+	_ = fs.Parse(args)
+
+	_ = soft
+	effectiveWriteDisk := *writeDisk
+	if *hard {
+		effectiveWriteDisk = true
+	}
+
+	if len(fs.Args()) < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: cosm reset [--hard|--soft] <target_hash> [-u <universe>] [-w]\n")
+		os.Exit(1)
+	}
+	targetHash := fs.Args()[0]
+
+	isLedger := isWorkspaceLedgerMode(".cosm", *ledgerFlag)
+	if isLedger {
+		fmt.Fprintln(os.Stderr, "❌ Error: 'reset' is prohibited in ledger mode.")
+		fmt.Fprintln(os.Stderr, "In ledger mode, history must remain strictly linear and append-only.")
+		fmt.Fprintln(os.Stderr, "Use 'cosm revert <hash>' to append a compensating reversal commit.")
+		os.Exit(1)
+	}
+
+	blobStore, graphEngine, err := openStorage()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Storage error: %v\n", err)
+		os.Exit(1)
+	}
+	defer graphEngine.Close()
+
+	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
+	prevManifest, _ := universeMgr.GetUniverseManifest(*universeID)
+
+	targetManifest, err := universeMgr.ResetHead(*universeID, targetHash, false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resetting universe head: %v\n", err)
+		os.Exit(1)
+	}
+
+	if effectiveWriteDisk {
+		if _, _, sErr := syncWorkspaceDisk(".", targetManifest, prevManifest, blobStore); sErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to sync workspace disk: %v\n", sErr)
+		}
+	}
+
+	fmt.Printf("✓ Reset universe '%s' head to %s\n", *universeID, targetManifest.MerkleRootHash)
 }
 
 // CommitLogEntry details a committed Merkle manifest in a universe's history.
@@ -3105,7 +3419,7 @@ func runDashboard(args []string) {
 
 func runGit(args []string) {
 	if len(args) == 0 {
-		fmt.Println("Usage: cosm git <status|log|diff|push>")
+		fmt.Println("Usage: cosm git <status|log|diff|push|revert|reset>")
 		return
 	}
 
@@ -3142,6 +3456,54 @@ func runGit(args []string) {
 		for _, e := range entries {
 			fmt.Printf("commit %s\nAuthor: %s\nDate:   %s\n\n    %s\n\n", e.CommitHash, e.Author, e.Date.Format(time.RFC1123), e.Message)
 		}
+	case "revert":
+		fs := flag.NewFlagSet("git revert", flag.ExitOnError)
+		msg := fs.String("m", "", "Commit message")
+		universeID := fs.String("u", "universe-main", "Universe ID")
+		_ = fs.Parse(args[1:])
+		if len(fs.Args()) < 1 {
+			fmt.Println("Usage: cosm git revert [-m <message>] [-u <universe>] <commit>")
+			return
+		}
+		commitHash := fs.Args()[0]
+		opts := gitshim.GitCommitOptions{
+			Message:   *msg,
+			UserID:    os.Getenv("USER"),
+			SessionID: "git-shim-cli",
+		}
+		commit, err := interceptor.Revert(*universeID, commitHash, opts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "git revert error: %v\n", err)
+			return
+		}
+		shortHash := commit.CommitHash
+		if len(shortHash) > 7 {
+			shortHash = shortHash[:7]
+		}
+		fmt.Printf("[%s %s] %s\n", *universeID, shortHash, commit.Message)
+	case "reset":
+		fs := flag.NewFlagSet("git reset", flag.ExitOnError)
+		hard := fs.Bool("hard", false, "Reset working tree and head")
+		universeID := fs.String("u", "universe-main", "Universe ID")
+		_ = fs.Parse(args[1:])
+		if len(fs.Args()) < 1 {
+			fmt.Println("Usage: cosm git reset [--hard] [-u <universe>] <commit>")
+			return
+		}
+		commitHash := fs.Args()[0]
+		prevManifest, _ := universeMgr.GetUniverseManifest(*universeID)
+		err := interceptor.Reset(*universeID, commitHash, *hard, nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "git reset error: %v\n", err)
+			return
+		}
+		if *hard {
+			targetManifest, mErr := universeMgr.GetUniverseManifest(*universeID)
+			if mErr == nil {
+				_, _, _ = syncWorkspaceDisk(".", targetManifest, prevManifest, blobStore)
+			}
+		}
+		fmt.Printf("HEAD is now at %s\n", commitHash)
 	case "init-bridge":
 		fs := flag.NewFlagSet("git init-bridge", flag.ExitOnError)
 		universeID := fs.String("u", "universe-main", "Universe ID")
@@ -3347,12 +3709,15 @@ func loadManifestState(
 	for _, cID := range manifest.Components {
 		var compData []byte
 		var err error
-		if node, gErr := graphEngine.GetNode(cID); gErr == nil && node != nil {
-			compData, err = blobStore.Get(node.MerkleHash)
-		} else {
+		if graphEngine != nil {
+			if node, gErr := graphEngine.GetNode(cID); gErr == nil && node != nil {
+				compData, err = blobStore.Get(node.MerkleHash)
+			}
+		}
+		if compData == nil {
 			compData, err = blobStore.Get(cID)
 		}
-		if err == nil {
+		if err == nil && compData != nil {
 			var comp core.ComponentNode
 			if e := json.Unmarshal(compData, &comp); e == nil {
 				compMap[comp.ComponentID] = &comp
@@ -3360,9 +3725,12 @@ func loadManifestState(
 				for _, sID := range comp.SymbolNodes {
 					var sData []byte
 					var sErr error
-					if sNode, sgErr := graphEngine.GetNode(sID); sgErr == nil && sNode != nil {
-						sData, sErr = blobStore.Get(sNode.MerkleHash)
-					} else {
+					if graphEngine != nil {
+						if sNode, sgErr := graphEngine.GetNode(sID); sgErr == nil && sNode != nil {
+							sData, sErr = blobStore.Get(sNode.MerkleHash)
+						}
+					}
+					if sData == nil {
 						sData, sErr = blobStore.Get(sID)
 					}
 					if sErr == nil {

@@ -743,3 +743,446 @@ func TestUniverseManagerBranchingAndCommits(t *testing.T) {
 		t.Fatalf("main head was not updated after merge")
 	}
 }
+
+// -----------------------------------------------------------------------------
+// SCM Undo, Revert, Reset, and Ledger Mode Unit Tests
+// -----------------------------------------------------------------------------
+
+func TestStorageConfig_LedgerModePersistence(t *testing.T) {
+	tmpDir := createTempDir(t)
+	cosmDir := filepath.Join(tmpDir, ".cosm")
+
+	// 1. LoadConfig on non-existent config should return default with LedgerMode: false
+	cfg, err := storage.LoadConfig(cosmDir)
+	if err != nil {
+		t.Fatalf("expected LoadConfig to succeed on missing config, got: %v", err)
+	}
+	if cfg.LedgerMode {
+		t.Fatalf("expected default LedgerMode to be false, got: %v", cfg.LedgerMode)
+	}
+	if cfg.DefaultUniverse != "universe-main" {
+		t.Fatalf("expected default DefaultUniverse 'universe-main', got: %s", cfg.DefaultUniverse)
+	}
+
+	// Helper check
+	if storage.IsLedgerMode(cosmDir) {
+		t.Fatalf("expected IsLedgerMode to be false for non-existent config")
+	}
+
+	// 2. SaveConfig with LedgerMode: true
+	cfg.LedgerMode = true
+	cfg.DefaultUniverse = "universe-ledger"
+	if err := storage.SaveConfig(cosmDir, cfg); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	// Verify file was written
+	if !storage.IsLedgerMode(cosmDir) {
+		t.Fatalf("expected IsLedgerMode to return true after saving")
+	}
+
+	// 3. Reload from disk
+	reloaded, err := storage.LoadConfig(cosmDir)
+	if err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+	if !reloaded.LedgerMode {
+		t.Fatalf("expected reloaded LedgerMode to be true")
+	}
+	if reloaded.DefaultUniverse != "universe-ledger" {
+		t.Fatalf("expected reloaded DefaultUniverse 'universe-ledger', got: %s", reloaded.DefaultUniverse)
+	}
+
+	// 4. Toggle LedgerMode back to false
+	reloaded.LedgerMode = false
+	if err := storage.SaveConfig(cosmDir, reloaded); err != nil {
+		t.Fatalf("failed to update config: %v", err)
+	}
+	if storage.IsLedgerMode(cosmDir) {
+		t.Fatalf("expected IsLedgerMode to return false after toggle")
+	}
+
+	// 5. Test corrupt config error
+	_ = os.WriteFile(filepath.Join(cosmDir, "config.json"), []byte("{corrupted json"), 0644)
+	if _, err := storage.LoadConfig(cosmDir); err == nil {
+		t.Fatalf("expected error loading corrupted config")
+	}
+	if storage.IsLedgerMode(cosmDir) {
+		t.Fatalf("expected IsLedgerMode to be false on corrupted config")
+	}
+}
+
+func TestUniverseManager_RevertCommit(t *testing.T) {
+	tmpDir := createTempDir(t)
+	bs, err := storage.NewBlobStore(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to create blob store: %v", err)
+	}
+	ge, err := storage.NewGraphEngine(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to create graph engine: %v", err)
+	}
+	defer ge.Close()
+
+	um := storage.NewUniverseManager(ge, bs)
+	universeID := "universe-main"
+
+	// 1. Initial commit (Commit 1)
+	m1 := &core.WorkspaceManifestNode{
+		WorkspaceID: "ws-" + universeID,
+		UniverseID:  universeID,
+		Components:  []string{"comp-core"},
+		CrossEdges:  nil,
+		Lineage: core.LineageEnvelope{
+			Intent: "Initial commit with core component",
+		},
+	}
+	hash1, err := um.CommitManifest(universeID, m1)
+	if err != nil {
+		t.Fatalf("failed to commit m1: %v", err)
+	}
+
+	// 2. Second commit (Commit 2) adding auth
+	m2 := &core.WorkspaceManifestNode{
+		WorkspaceID: "ws-" + universeID,
+		UniverseID:  universeID,
+		Components:  []string{"comp-core", "comp-auth"},
+		CrossEdges: []core.CrossBoundaryEdge{
+			{SourceNodeID: "comp-auth", TargetNodeID: "comp-core", Type: core.EdgeCalls},
+		},
+		Lineage: core.LineageEnvelope{
+			Intent: "Add auth component",
+		},
+	}
+	hash2, err := um.CommitManifest(universeID, m2)
+	if err != nil {
+		t.Fatalf("failed to commit m2: %v", err)
+	}
+
+	// Verify head is currently hash2
+	head, _ := um.GetUniverse(universeID)
+	if head.HeadManifestHash != hash2 {
+		t.Fatalf("expected head to be hash2 (%s), got: %s", hash2, head.HeadManifestHash)
+	}
+
+	// 3. Revert Commit 2 (should restore commit 1 state: comp-core only)
+	lineage := core.LineageEnvelope{
+		UserPrompt: "Revert broken auth component",
+	}
+	revertedM2, err := um.RevertCommit(universeID, m2.MerkleRootHash, "", lineage)
+	if err != nil {
+		t.Fatalf("failed to revert commit 2: %v", err)
+	}
+
+	if len(revertedM2.Components) != 1 || revertedM2.Components[0] != "comp-core" {
+		t.Fatalf("expected reverted manifest to have ['comp-core'], got: %v", revertedM2.Components)
+	}
+	if len(revertedM2.CrossEdges) != 0 {
+		t.Fatalf("expected 0 cross edges in reverted manifest, got: %d", len(revertedM2.CrossEdges))
+	}
+	if revertedM2.Lineage.Intent != "Revert: Add auth component" {
+		t.Fatalf("expected intent 'Revert: Add auth component', got: %s", revertedM2.Lineage.Intent)
+	}
+	if revertedM2.Lineage.Trace.Attributes["reverted_commit"] != m2.MerkleRootHash {
+		t.Fatalf("expected trace attribute reverted_commit to match m2 hash")
+	}
+
+	// Verify head pointer is updated to the revert manifest
+	headAfterRevert, _ := um.GetUniverse(universeID)
+	revertedHeadManifest, err := um.GetUniverseManifest(universeID)
+	if err != nil {
+		t.Fatalf("failed to get universe manifest after revert: %v", err)
+	}
+	if headAfterRevert.HeadManifestHash == hash2 || headAfterRevert.HeadManifestHash == hash1 {
+		t.Fatalf("revert should generate a brand new commit blob hash, got: %s", headAfterRevert.HeadManifestHash)
+	}
+	if len(revertedHeadManifest.Components) != 1 || revertedHeadManifest.Components[0] != "comp-core" {
+		t.Fatalf("expected active manifest components to be ['comp-core'], got: %v", revertedHeadManifest.Components)
+	}
+
+	// 4. Test Revert with short prefix
+	m3 := &core.WorkspaceManifestNode{
+		WorkspaceID: "ws-" + universeID,
+		UniverseID:  universeID,
+		Components:  []string{"comp-core", "comp-cache"},
+		Lineage: core.LineageEnvelope{
+			Intent: "Add cache component",
+		},
+	}
+	_, err = um.CommitManifest(universeID, m3)
+	if err != nil {
+		t.Fatalf("failed to commit m3: %v", err)
+	}
+
+	// Revert m3 using first 8 characters of its MerkleRootHash
+	prefix := m3.MerkleRootHash[:8]
+	revertedM3, err := um.RevertCommit(universeID, prefix, "Custom Revert Intent", lineage)
+	if err != nil {
+		t.Fatalf("failed to revert using short prefix %s: %v", prefix, err)
+	}
+	if revertedM3.Lineage.Intent != "Custom Revert Intent" {
+		t.Fatalf("expected custom intent, got: %s", revertedM3.Lineage.Intent)
+	}
+	if len(revertedM3.Components) != 1 || revertedM3.Components[0] != "comp-core" {
+		t.Fatalf("expected components to revert to ['comp-core'], got: %v", revertedM3.Components)
+	}
+
+	// 5. Test Revert of initial commit (should restore empty manifest)
+	revertedInitial, err := um.RevertCommit(universeID, m1.MerkleRootHash, "Revert initial", lineage)
+	if err != nil {
+		t.Fatalf("failed to revert initial commit: %v", err)
+	}
+	if len(revertedInitial.Components) != 0 {
+		t.Fatalf("expected empty components after reverting initial commit, got: %v", revertedInitial.Components)
+	}
+}
+
+func TestUniverseManager_ResetHead_StandardVsLedger(t *testing.T) {
+	tmpDir := createTempDir(t)
+	bs, err := storage.NewBlobStore(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to create blob store: %v", err)
+	}
+	ge, err := storage.NewGraphEngine(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to create graph engine: %v", err)
+	}
+	defer ge.Close()
+
+	um := storage.NewUniverseManager(ge, bs)
+	universeID := "main"
+
+	// Commit 1
+	m1 := &core.WorkspaceManifestNode{
+		WorkspaceID: "ws-" + universeID,
+		UniverseID:  universeID,
+		Components:  []string{"c1"},
+		Lineage:     core.LineageEnvelope{Intent: "Commit 1"},
+	}
+	hash1, err := um.CommitManifest(universeID, m1)
+	if err != nil {
+		t.Fatalf("failed to commit m1: %v", err)
+	}
+
+	// Commit 2
+	m2 := &core.WorkspaceManifestNode{
+		WorkspaceID: "ws-" + universeID,
+		UniverseID:  universeID,
+		Components:  []string{"c1", "c2"},
+		Lineage:     core.LineageEnvelope{Intent: "Commit 2"},
+	}
+	hash2, err := um.CommitManifest(universeID, m2)
+	if err != nil {
+		t.Fatalf("failed to commit m2: %v", err)
+	}
+
+	// 1. Standard Mode Reset to Commit 1
+	resetManifest, err := um.ResetHead(universeID, hash1, false)
+	if err != nil {
+		t.Fatalf("failed to reset head in standard mode: %v", err)
+	}
+	if len(resetManifest.Components) != 1 || resetManifest.Components[0] != "c1" {
+		t.Fatalf("expected reset manifest to have ['c1'], got: %v", resetManifest.Components)
+	}
+
+	head, _ := um.GetUniverse(universeID)
+	if head.HeadManifestHash != hash1 {
+		t.Fatalf("expected head to be reset to %s, got %s", hash1, head.HeadManifestHash)
+	}
+
+	// 2. Standard Mode Reset back to Commit 2
+	_, err = um.ResetHead(universeID, hash2, false)
+	if err != nil {
+		t.Fatalf("failed to reset head to hash2: %v", err)
+	}
+	head, _ = um.GetUniverse(universeID)
+	if head.HeadManifestHash != hash2 {
+		t.Fatalf("expected head to be %s, got %s", hash2, head.HeadManifestHash)
+	}
+
+	// 3. Ledger Mode Reset via parameter: should fail with ErrLedgerLinearityViolation
+	_, err = um.ResetHead(universeID, hash1, true)
+	if err != storage.ErrLedgerLinearityViolation {
+		t.Fatalf("expected ErrLedgerLinearityViolation when isLedgerMode=true, got: %v", err)
+	}
+
+	// 4. Ledger Mode Reset via UniverseManager state: should also fail
+	um.SetLedgerMode(true)
+	if !um.IsLedgerMode() {
+		t.Fatalf("expected IsLedgerMode to be true")
+	}
+	_, err = um.ResetHead(universeID, hash1, false)
+	if err != storage.ErrLedgerLinearityViolation {
+		t.Fatalf("expected ErrLedgerLinearityViolation when um.IsLedgerMode()=true, got: %v", err)
+	}
+
+	// Head must remain unchanged at hash2
+	head, _ = um.GetUniverse(universeID)
+	if head.HeadManifestHash != hash2 {
+		t.Fatalf("head should remain unchanged at hash2, got: %s", head.HeadManifestHash)
+	}
+
+	// 5. Test invalid hash in standard mode
+	um.SetLedgerMode(false)
+	_, err = um.ResetHead(universeID, "0000000000000000000000000000000000000000000000000000000000000000", false)
+	if err == nil {
+		t.Fatalf("expected error resetting to non-existent hash")
+	}
+}
+
+func TestUniverseManager_Undo_StandardVsLedger(t *testing.T) {
+	tmpDir := createTempDir(t)
+	bs, err := storage.NewBlobStore(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to create blob store: %v", err)
+	}
+	ge, err := storage.NewGraphEngine(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to create graph engine: %v", err)
+	}
+	defer ge.Close()
+
+	um := storage.NewUniverseManager(ge, bs)
+
+	// -------------------------------------------------------------
+	// Part A: Standard Mode (Oplog Unroll)
+	// -------------------------------------------------------------
+	universeID := "std-universe"
+	m1 := &core.WorkspaceManifestNode{
+		WorkspaceID: "ws-" + universeID,
+		UniverseID:  universeID,
+		Components:  []string{"c1"},
+		Lineage:     core.LineageEnvelope{Intent: "Commit 1"},
+	}
+	hash1, err := um.CommitManifest(universeID, m1)
+	if err != nil {
+		t.Fatalf("failed to commit m1: %v", err)
+	}
+
+	m2 := &core.WorkspaceManifestNode{
+		WorkspaceID: "ws-" + universeID,
+		UniverseID:  universeID,
+		Components:  []string{"c1", "c2"},
+		Lineage:     core.LineageEnvelope{Intent: "Commit 2"},
+	}
+	hash2, err := um.CommitManifest(universeID, m2)
+	if err != nil {
+		t.Fatalf("failed to commit m2: %v", err)
+	}
+
+	// Undo Commit 2 in standard mode
+	restored, undoneEvents, err := um.UndoLastCommit(universeID, false, core.LineageEnvelope{})
+	if err != nil {
+		t.Fatalf("failed to undo commit 2: %v", err)
+	}
+	if len(undoneEvents) == 0 {
+		t.Fatalf("expected undone events to be non-empty")
+	}
+	if restored == nil || len(restored.Components) != 1 || restored.Components[0] != "c1" {
+		t.Fatalf("expected restored manifest to have ['c1'], got: %v", restored)
+	}
+
+	head, _ := um.GetUniverse(universeID)
+	if head.HeadManifestHash != hash1 {
+		t.Fatalf("expected head to be restored to hash1 (%s), got %s", hash1, head.HeadManifestHash)
+	}
+
+	// Undo Commit 1 in standard mode (initial commit)
+	restored1, undoneEvents1, err := um.UndoLastCommit(universeID, false, core.LineageEnvelope{})
+	if err != nil {
+		t.Fatalf("failed to undo initial commit: %v", err)
+	}
+	if len(undoneEvents1) == 0 {
+		t.Fatalf("expected undone events for initial commit")
+	}
+	if restored1 != nil {
+		t.Fatalf("expected restored manifest to be nil after undoing initial commit, got: %v", restored1)
+	}
+
+	headAfterInitialUndo, _ := um.GetUniverse(universeID)
+	if headAfterInitialUndo.HeadManifestHash != "" {
+		t.Fatalf("expected head manifest hash to be empty, got: %s", headAfterInitialUndo.HeadManifestHash)
+	}
+
+	// Attempting undo on empty universe should return error
+	_, _, err = um.UndoLastCommit(universeID, false, core.LineageEnvelope{})
+	if err == nil {
+		t.Fatalf("expected error undoing when no commits exist")
+	}
+
+	// -------------------------------------------------------------
+	// Part B: Ledger Mode (Strictly Append-Only Revert)
+	// -------------------------------------------------------------
+	ledgerUni := "ledger-universe"
+	um.SetLedgerMode(true)
+
+	lm1 := &core.WorkspaceManifestNode{
+		WorkspaceID: "ws-" + ledgerUni,
+		UniverseID:  ledgerUni,
+		Components:  []string{"alpha"},
+		Lineage:     core.LineageEnvelope{Intent: "Ledger commit 1"},
+	}
+	_, err = um.CommitManifest(ledgerUni, lm1)
+	if err != nil {
+		t.Fatalf("failed to commit lm1: %v", err)
+	}
+
+	lm2 := &core.WorkspaceManifestNode{
+		WorkspaceID: "ws-" + ledgerUni,
+		UniverseID:  ledgerUni,
+		Components:  []string{"alpha", "beta"},
+		Lineage:     core.LineageEnvelope{Intent: "Ledger commit 2"},
+	}
+	_, err = um.CommitManifest(ledgerUni, lm2)
+	if err != nil {
+		t.Fatalf("failed to commit lm2: %v", err)
+	}
+
+	eventsBefore, _ := ge.Oplog().GetEvents(ledgerUni, 0, 0)
+	countBefore := len(eventsBefore)
+
+	// In ledger mode, UndoLastCommit creates a compensating commit
+	lineage := core.LineageEnvelope{UserPrompt: "Compensate commit 2"}
+	revertResult, undoneEvs, err := um.UndoLastCommit(ledgerUni, true, lineage)
+	if err != nil {
+		t.Fatalf("failed to undo in ledger mode: %v", err)
+	}
+	if undoneEvs != nil {
+		t.Fatalf("expected nil undone events in ledger mode, got %d", len(undoneEvs))
+	}
+	if revertResult == nil {
+		t.Fatalf("expected non-nil revert manifest")
+	}
+	if len(revertResult.Components) != 1 || revertResult.Components[0] != "alpha" {
+		t.Fatalf("expected components to revert to ['alpha'], got: %v", revertResult.Components)
+	}
+	if revertResult.Lineage.Intent != "Undo: Revert to previous ledger state" {
+		t.Fatalf("expected intent 'Undo: Revert to previous ledger state', got: %s", revertResult.Lineage.Intent)
+	}
+
+	// Verify events were appended (never deleted)
+	eventsAfter, _ := ge.Oplog().GetEvents(ledgerUni, 0, 0)
+	if len(eventsAfter) <= countBefore {
+		t.Fatalf("expected event count to increase in ledger mode (before: %d, after: %d)", countBefore, len(eventsAfter))
+	}
+
+	// Attempting to undo the initial commit in ledger mode should return "cannot undo initial commit"
+	singleUni := "single-universe"
+	sm1 := &core.WorkspaceManifestNode{
+		WorkspaceID: "ws-" + singleUni,
+		UniverseID:  singleUni,
+		Components:  []string{"single-comp"},
+		Lineage:     core.LineageEnvelope{Intent: "Initial only"},
+	}
+	_, err = um.CommitManifest(singleUni, sm1)
+	if err != nil {
+		t.Fatalf("failed to commit single manifest: %v", err)
+	}
+
+	_, _, err = um.UndoLastCommit(singleUni, true, lineage)
+	if err == nil || err.Error() != "cannot undo initial commit" {
+		t.Fatalf("expected 'cannot undo initial commit', got: %v", err)
+	}
+
+	_ = hash2
+}

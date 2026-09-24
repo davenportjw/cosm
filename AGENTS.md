@@ -76,6 +76,12 @@ This document establishes durable conventions, architectural invariants, environ
 # Initialize a new Cosm repository (.cosm/)
 cosm init [--universe universe-main]
 
+# Reversal and History Operations
+cosm undo [count] [-u universe-main] [-w]
+cosm revert <target_hash> [-u universe-main] [-i "Revert description"] [-w]  # alias: cosm rollback
+cosm reset [--hard] <target_hash> [-u universe-main] [-w]
+cosm init --ledger [-u universe-main]  # Strict linear append-only audit mode
+
 # --- Paradigm A: Direct AST Inception (Agent / AST-First, No Files Required) ---
 # Incept component directly into the DAG with auto-scaffolding
 cosm ast create -c <component_name> --lang <go|python|typescript|sql> [-w]

@@ -306,6 +306,53 @@ cosm ast tree -u universe-main --format json
 
 ---
 
+### Agent CLI Reversal, History & Ledger Operations
+
+Autonomous agents executing self-healing loops, rollbacks, and history navigation can invoke the following CLI operations:
+
+#### 1. Undo Recent Mutations (`cosm undo`)
+Reverses the most recent commit(s) and synchronizes workspace files on disk:
+```bash
+cosm undo [count] [-u <universe>] [-w|--write-disk=true|false]
+```
+- **Arguments**: `[count]` specifies the number of commits to unroll (default: `1`).
+- `-u, --universe <universe>`: Target micro-universe (default: `universe-main`).
+- `-w, --write-disk` (default: `true`): Updates disk files to match restored manifest.
+- **Mode Semantics**:
+  - In standard mode: unrolls universe head pointer and reverses Oplog events.
+  - In ledger mode: automatically creates and appends a forward compensating revert commit with full causal lineage.
+- **Exit Code**: `0` on success, `1` on error.
+
+#### 2. Revert Specific Commit (`cosm revert` / `cosm rollback`)
+Appends a forward compensating commit that inverts the changes of a specified commit hash:
+```bash
+cosm revert <target_hash> [-u <universe>] [-i|--intent <msg>] [-w|--write-disk=true|false]
+cosm rollback <target_hash> [-u <universe>] [-i|--intent <msg>] [-w|--write-disk=true|false]
+```
+- `<target_hash>`: Commit Merkle root hash or prefix to reverse.
+- `-i, --intent <msg>`: Causal intent description stamped in `LineageEnvelope`.
+- `-w, --write-disk` (default: `true`): Synchronizes workspace files on disk.
+- **Audit Invariant**: Preserves 100% linear history, appending `ActionRevertManifest` to `.cosm/graph.db`.
+
+#### 3. Reposition Head Pointer (`cosm reset`)
+Moves the active micro-universe head pointer directly to a specified target commit hash:
+```bash
+cosm reset [--hard|--soft] <target_hash> [-u <universe>] [-w|--write-disk=true|false]
+```
+- `--hard`: Moves head pointer and synchronizes workspace disk files.
+- `--soft`: Moves head pointer only, preserving disk working tree.
+- **Strict Ledger Mode Invariant**: `cosm reset` is strictly prohibited in repositories initialized with `--ledger` (or `"ledger_mode": true` in `.cosm/config.json`). Fails immediately with exit code `1` and `ErrLedgerLinearityViolation`. In ledger mode, agents must use `cosm revert` to maintain append-only provenance.
+
+#### 4. Strict Ledger Initialization (`cosm init --ledger`)
+Initializes the workspace with strict linear append-only constraints:
+```bash
+cosm init --ledger [-u <universe>]
+```
+- Writes `"ledger_mode": true` into `.cosm/config.json`.
+- Prohibits destructive history rewrites, ensuring all future commits strictly satisfy $C_{N+1} = \text{Commit}(\text{Parent} = C_N, \dots)$.
+
+---
+
 ## 2. Ephemeral Preview Sandbox Endpoints (`pkg/target/sandbox.go`)
 
 When launching ephemeral preview sandboxes (`cosm ship` or `pkg/target/sandbox.go`), local HTTP preview servers bind to loopback sockets and serve:

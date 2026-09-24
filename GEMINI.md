@@ -50,3 +50,19 @@ The following specialized skills are available in `.agents/skills/`:
 - `polyglot-codecs-guide`: Adding and testing language codecs, hydrators, and cross-boundary contracts.
 - `shipping-and-validation`: Target preview sidecar, Terraform validation, and `uv` runner.
 - `topocosm-cloud-deploy`: Deploy Topocosm Hub to Google Cloud (Cloud Run, GCS CAS, Memorystore for Redis, Cloud Pub/Sub, Secret Manager) and perform zero-downtime updates, canary traffic routing, rollback, and Day-2 cloud operations.
+
+---
+
+## 4. Key CLI Commands
+
+```bash
+# Initialize a new Cosm repository (.cosm/)
+cosm init [--universe universe-main]
+
+# Reversal and History Operations
+cosm undo [count] [-u universe-main] [-w]
+cosm revert <target_hash> [-u universe-main] [-i "Revert description"] [-w]  # alias: cosm rollback
+cosm reset [--hard] <target_hash> [-u universe-main] [-w]
+cosm init --ledger [-u universe-main]  # Strict linear append-only audit mode
+```
+

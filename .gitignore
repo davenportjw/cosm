@@ -12,7 +12,7 @@ scratch/
 # ------------------------------------------------------------------------------
 /cosm
 /cosm-agent-harness
-server
+/server
 *.exe
 *.exe~
 *.dll

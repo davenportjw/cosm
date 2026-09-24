@@ -1,6 +1,8 @@
 package gitshim
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -92,26 +94,7 @@ func (i *GitShimInterceptor) Status(universeID string, workingTree map[string][]
 	}
 
 	// Fetch head components and symbols
-	compMap := make(map[string]*core.ComponentNode)
-	symMap := make(map[string]*core.ASTSymbolNode)
-	for _, cHash := range manifest.Components {
-		data, err := i.blobStore.Get(cHash)
-		if err == nil {
-			var comp core.ComponentNode
-			if e := json.Unmarshal(data, &comp); e == nil {
-				compMap[comp.ComponentID] = &comp
-				for _, sHash := range comp.SymbolNodes {
-					sData, sErr := i.blobStore.Get(sHash)
-					if sErr == nil {
-						var sym core.ASTSymbolNode
-						if se := json.Unmarshal(sData, &sym); se == nil {
-							symMap[sym.NodeID] = &sym
-						}
-					}
-				}
-			}
-		}
-	}
+	compMap, symMap := i.loadManifestNodes(manifest)
 
 	hydrated, err := i.hydrator.HydrateWorkspace(manifest, compMap, symMap)
 	if err != nil {
@@ -140,26 +123,7 @@ func (i *GitShimInterceptor) Diff(universeID string, workingTree map[string][]by
 		return "", fmt.Errorf("failed to get head manifest: %w", err)
 	}
 
-	compMap := make(map[string]*core.ComponentNode)
-	symMap := make(map[string]*core.ASTSymbolNode)
-	for _, cHash := range manifest.Components {
-		data, err := i.blobStore.Get(cHash)
-		if err == nil {
-			var comp core.ComponentNode
-			if e := json.Unmarshal(data, &comp); e == nil {
-				compMap[comp.ComponentID] = &comp
-				for _, sHash := range comp.SymbolNodes {
-					sData, sErr := i.blobStore.Get(sHash)
-					if sErr == nil {
-						var sym core.ASTSymbolNode
-						if se := json.Unmarshal(sData, &sym); se == nil {
-							symMap[sym.NodeID] = &sym
-						}
-					}
-				}
-			}
-		}
-	}
+	compMap, symMap := i.loadManifestNodes(manifest)
 
 	hydrated, err := i.hydrator.HydrateWorkspace(manifest, compMap, symMap)
 	if err != nil {
@@ -201,26 +165,7 @@ func (i *GitShimInterceptor) Commit(
 		Timestamp:           time.Now().UTC(),
 	}
 
-	compMap := make(map[string]*core.ComponentNode)
-	symMap := make(map[string]*core.ASTSymbolNode)
-	for _, cHash := range manifest.Components {
-		data, err := i.blobStore.Get(cHash)
-		if err == nil {
-			var comp core.ComponentNode
-			if e := json.Unmarshal(data, &comp); e == nil {
-				compMap[comp.ComponentID] = &comp
-				for _, sHash := range comp.SymbolNodes {
-					sData, sErr := i.blobStore.Get(sHash)
-					if sErr == nil {
-						var sym core.ASTSymbolNode
-						if se := json.Unmarshal(sData, &sym); se == nil {
-							symMap[sym.NodeID] = &sym
-						}
-					}
-				}
-			}
-		}
-	}
+	compMap, symMap := i.loadManifestNodes(manifest)
 
 	_, err := i.universeMgr.CommitManifest(universeID, manifest)
 	if err != nil {
@@ -245,11 +190,18 @@ func (i *GitShimInterceptor) Log(universeID string) ([]*GitLogEntry, error) {
 
 	entries := make([]*GitLogEntry, 0)
 	for _, evt := range events {
-		if evt.Action == storage.ActionCommitManifest {
+		if evt.Action == storage.ActionCommitManifest || evt.Action == storage.ActionRevertManifest {
 			author := "cosm-agent <agent@cosm.local>"
 			msg := fmt.Sprintf("Commit event %d", evt.EventID)
+			if evt.Action == storage.ActionRevertManifest {
+				msg = fmt.Sprintf("Revert event %d", evt.EventID)
+			}
+			shortUUID := evt.EventUUID
+			if len(shortUUID) > 12 {
+				shortUUID = shortUUID[:12]
+			}
 			entries = append(entries, &GitLogEntry{
-				CommitHash: fmt.Sprintf("sha1-%s", evt.EventUUID[:12]),
+				CommitHash: fmt.Sprintf("sha1-%s", shortUUID),
 				Author:     author,
 				Date:       time.UnixMilli(evt.TimestampMs),
 				Message:    msg,
@@ -263,4 +215,191 @@ func (i *GitShimInterceptor) Log(universeID string) ([]*GitLogEntry, error) {
 		return entries[i].Date.After(entries[j].Date)
 	})
 	return entries, nil
+}
+
+// Revert creates an inverse commit that undoes the changes of the specified commit.
+func (i *GitShimInterceptor) Revert(
+	universeID string,
+	commitHash string,
+	opts GitCommitOptions,
+) (*SyntheticGitCommit, error) {
+	targetManifestHash, err := i.resolveCommitHash(universeID, commitHash)
+	if err != nil {
+		return nil, err
+	}
+
+	lineage := core.LineageEnvelope{
+		UserID:              opts.UserID,
+		UserPrompt:          opts.UserPrompt,
+		SessionID:           opts.SessionID,
+		OrchestratorAgentID: opts.OrchestratorAgentID,
+		ExecutingAgentID:    opts.ExecutingAgentID,
+		LLMVersion:          opts.LLMVersion,
+		Intent:              opts.Message,
+		Timestamp:           time.Now().UTC(),
+	}
+
+	revertedManifest, err := i.universeMgr.RevertCommit(universeID, targetManifestHash, opts.Message, lineage)
+	if err != nil {
+		return nil, err
+	}
+
+	compMap, symMap := i.loadManifestNodes(revertedManifest)
+	parentCommitHash := ""
+	commit, _, _, err := i.adapter.SynthesizeObjectsFromManifest(revertedManifest, compMap, symMap, parentCommitHash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to synthesize git commit: %w", err)
+	}
+
+	return commit, nil
+}
+
+// Reset points the universe head to the target commit manifest.
+func (i *GitShimInterceptor) Reset(
+	universeID string,
+	commitHash string,
+	hard bool,
+	workingTree map[string][]byte,
+) error {
+	if i.universeMgr.IsLedgerMode() {
+		return storage.ErrLedgerLinearityViolation
+	}
+
+	targetManifestHash, err := i.resolveCommitHash(universeID, commitHash)
+	if err != nil {
+		return err
+	}
+
+	manifest, err := i.universeMgr.ResetHead(universeID, targetManifestHash, false)
+	if err != nil {
+		return err
+	}
+
+	if hard && workingTree != nil {
+		compMap, symMap := i.loadManifestNodes(manifest)
+		hydrated, err := i.hydrator.HydrateWorkspace(manifest, compMap, symMap)
+		if err != nil {
+			hydrated = make(map[string][]byte)
+		}
+
+		for k := range workingTree {
+			if _, exists := hydrated[k]; !exists {
+				delete(workingTree, k)
+			}
+		}
+		for k, v := range hydrated {
+			workingTree[k] = v
+		}
+	}
+
+	return nil
+}
+
+// resolveCommitHash resolves a commit hash (synthetic sha1, short hex prefix, or Merkle root hash)
+// to the target manifest hash.
+func (i *GitShimInterceptor) resolveCommitHash(universeID string, commitHash string) (string, error) {
+	if commitHash == "" {
+		return "", fmt.Errorf("target commit '%s' not found in universe '%s'", commitHash, universeID)
+	}
+
+	events, err := i.graphEngine.Oplog().GetEvents(universeID, 0, 0)
+	if err == nil {
+		for j := len(events) - 1; j >= 0; j-- {
+			evt := events[j]
+			var shortUUID string
+			if len(evt.EventUUID) >= 12 {
+				shortUUID = fmt.Sprintf("sha1-%s", evt.EventUUID[:12])
+			} else if len(evt.EventUUID) > 0 {
+				shortUUID = fmt.Sprintf("sha1-%s", evt.EventUUID)
+			}
+
+			var bHash string
+			if evt.Payload != "" {
+				sum := sha256.Sum256([]byte(evt.Payload))
+				bHash = hex.EncodeToString(sum[:])
+			}
+
+			matches := evt.EntityID == commitHash ||
+				evt.Payload == commitHash ||
+				(len(evt.EntityID) > 0 && strings.HasPrefix(evt.EntityID, commitHash)) ||
+				(shortUUID != "" && strings.HasPrefix(shortUUID, commitHash)) ||
+				evt.EventUUID == commitHash ||
+				(len(evt.EventUUID) > 0 && strings.HasPrefix(evt.EventUUID, commitHash)) ||
+				(strings.HasPrefix(commitHash, "sha1-") && strings.HasPrefix(evt.EventUUID, strings.TrimPrefix(commitHash, "sha1-"))) ||
+				bHash == commitHash ||
+				(len(bHash) > 0 && strings.HasPrefix(bHash, commitHash))
+
+			if matches {
+				if evt.EntityID != "" {
+					return evt.EntityID, nil
+				}
+				if evt.Payload != "" {
+					var m core.WorkspaceManifestNode
+					if err := json.Unmarshal([]byte(evt.Payload), &m); err == nil && m.MerkleRootHash != "" {
+						return m.MerkleRootHash, nil
+					}
+					return evt.Payload, nil
+				}
+			}
+		}
+	}
+
+	if has, _ := i.blobStore.Has(commitHash); has {
+		return commitHash, nil
+	}
+	if len(commitHash) < 64 {
+		if hashes, err := i.blobStore.List(); err == nil {
+			for _, h := range hashes {
+				if strings.HasPrefix(h, commitHash) {
+					return h, nil
+				}
+			}
+		}
+	}
+
+	return "", fmt.Errorf("target commit '%s' not found in universe '%s'", commitHash, universeID)
+}
+
+// loadManifestNodes retrieves components and symbols referenced in a workspace manifest.
+func (i *GitShimInterceptor) loadManifestNodes(manifest *core.WorkspaceManifestNode) (map[string]*core.ComponentNode, map[string]*core.ASTSymbolNode) {
+	compMap := make(map[string]*core.ComponentNode)
+	symMap := make(map[string]*core.ASTSymbolNode)
+	if manifest == nil {
+		return compMap, symMap
+	}
+
+	for _, cHash := range manifest.Components {
+		data, err := i.blobStore.Get(cHash)
+		if err != nil && i.graphEngine != nil {
+			if compRec, recErr := i.graphEngine.GetNode(cHash); recErr == nil && compRec != nil && compRec.MerkleHash != "" {
+				data, err = i.blobStore.Get(compRec.MerkleHash)
+			}
+		}
+		if err == nil {
+			var comp core.ComponentNode
+			if e := json.Unmarshal(data, &comp); e == nil {
+				compCopy := comp
+				compMap[compCopy.ComponentID] = &compCopy
+				compMap[cHash] = &compCopy
+				for _, sHash := range compCopy.SymbolNodes {
+					sData, sErr := i.blobStore.Get(sHash)
+					if sErr != nil && i.graphEngine != nil {
+						if symRec, recErr := i.graphEngine.GetNode(sHash); recErr == nil && symRec != nil && symRec.MerkleHash != "" {
+							sData, sErr = i.blobStore.Get(symRec.MerkleHash)
+						}
+					}
+					if sErr == nil {
+						var sym core.ASTSymbolNode
+						if se := json.Unmarshal(sData, &sym); se == nil {
+							symCopy := sym
+							symMap[symCopy.NodeID] = &symCopy
+							symMap[sHash] = &symCopy
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return compMap, symMap
 }

@@ -20,6 +20,7 @@ const (
 	ActionSetUniverseHead = "SET_UNIVERSE_HEAD"
 	ActionRecordLineage   = "RECORD_LINEAGE"
 	ActionCommitManifest  = "COMMIT_MANIFEST"
+	ActionRevertManifest  = "REVERT_MANIFEST"
 )
 
 // EntityType constants
@@ -381,11 +382,53 @@ func (o *OplogEngine) applyUndoOperation(ev *OplogEvent) error {
 	case ActionSetUniverseHead:
 		// Inverse: restore previous head
 		var oldHead UniverseHeadRecord
-		if err := json.Unmarshal([]byte(ev.UndoPayload), &oldHead); err != nil {
-			return err
-		}
-		if oldHead.UniverseID != "" {
+		if err := json.Unmarshal([]byte(ev.UndoPayload), &oldHead); err == nil && oldHead.UniverseID != "" {
 			return o.graphEngine.PutUniverseHead(oldHead)
+		}
+		if ev.UndoPayload != "" {
+			var hashStr string
+			if err := json.Unmarshal([]byte(ev.UndoPayload), &hashStr); err != nil {
+				hashStr = ev.UndoPayload
+			}
+			headRec := UniverseHeadRecord{
+				UniverseID:       ev.UniverseID,
+				HeadManifestHash: hashStr,
+				Status:           "active",
+				UpdatedAt:        time.Now().UTC(),
+			}
+			if existing, err := o.graphEngine.GetUniverseHead(ev.UniverseID); err == nil && existing != nil {
+				headRec.CreatedAt = existing.CreatedAt
+				headRec.ParentUniverseID = existing.ParentUniverseID
+				if existing.Status != "" {
+					headRec.Status = existing.Status
+				}
+			}
+			return o.graphEngine.PutUniverseHead(headRec)
+		}
+		return nil
+
+	case ActionCommitManifest, ActionRevertManifest:
+		if ev.UndoPayload != "" {
+			oldHead := UniverseHeadRecord{
+				UniverseID:       ev.UniverseID,
+				HeadManifestHash: ev.UndoPayload,
+				Status:           "active",
+				UpdatedAt:        time.Now().UTC(),
+			}
+			if existing, err := o.graphEngine.GetUniverseHead(ev.UniverseID); err == nil && existing != nil {
+				oldHead.CreatedAt = existing.CreatedAt
+				oldHead.ParentUniverseID = existing.ParentUniverseID
+				if existing.Status != "" {
+					oldHead.Status = existing.Status
+				}
+			}
+			return o.graphEngine.PutUniverseHead(oldHead)
+		} else {
+			if existing, err := o.graphEngine.GetUniverseHead(ev.UniverseID); err == nil && existing != nil {
+				existing.HeadManifestHash = ""
+				existing.UpdatedAt = time.Now().UTC()
+				return o.graphEngine.PutUniverseHead(*existing)
+			}
 		}
 		return nil
 

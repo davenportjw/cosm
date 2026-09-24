@@ -481,17 +481,69 @@ Cosm strictly bifurcates storage-level physical synchronization from semantic gr
 ### Event-Sourced Oplog Engine (`pkg/storage/oplog.go`)
 Every transaction logs reversible `OplogEvent` records supporting deterministic replay, rollbacks, and undo trees:
 ```go
+// Action constants for Oplog events
+const (
+    ActionCreateNode      = "CREATE_NODE"
+    ActionDeleteNode      = "DELETE_NODE"
+    ActionUpdateNode      = "UPDATE_NODE"
+    ActionAddEdge         = "ADD_EDGE"
+    ActionRemoveEdge      = "REMOVE_EDGE"
+    ActionCreateUniverse  = "CREATE_UNIVERSE"
+    ActionSetUniverseHead = "SET_UNIVERSE_HEAD"
+    ActionRecordLineage   = "RECORD_LINEAGE"
+    ActionCommitManifest  = "COMMIT_MANIFEST"
+    ActionRevertManifest  = "REVERT_MANIFEST"
+)
+
 type OplogEvent struct {
     EventID      uint64      `json:"event_id"`      // Monotonically increasing counter
     EventUUID    string      `json:"event_uuid"`    // Globally unique ID
     UniverseID   string      `json:"universe_id"`   // Target micro-universe
-    Action       OplogAction `json:"action"`        // CREATE_NODE, DELETE_NODE, ADD_EDGE, etc.
+    Action       OplogAction `json:"action"`        // Oplog action (e.g. COMMIT_MANIFEST, REVERT_MANIFEST)
     EntityID     string      `json:"entity_id"`     // NodeID or Edge composite key
     Payload      string      `json:"payload"`       // Forward change payload
     UndoPayload  string      `json:"undo_payload"`  // Inverse payload for instant rollback
     TimestampMs  int64       `json:"timestamp_ms"`
 }
 ```
+
+The `ActionRevertManifest` (`"REVERT_MANIFEST"`) action records compensating commit operations in both ledger and standard modes, recording the previous manifest hash in `Payload` and the inverted delta in `UndoPayload`, enabling bidirectional traversal of reversal history.
+
+---
+
+### Workspace Configuration & Strict Ledger Mode (`.cosm/config.json`)
+
+Repository-level configuration and mode invariants are persisted in `.cosm/config.json` upon initialization (`cosm init`):
+
+```json
+{
+  "ledger_mode": true,
+  "default_universe": "universe-main",
+  "created_at": "2026-09-23T20:00:00Z"
+}
+```
+
+#### Go Type Definition (`pkg/storage/config.go`)
+```go
+type WorkspaceConfig struct {
+    LedgerMode      bool                   `json:"ledger_mode"`
+    DefaultUniverse string                 `json:"default_universe"`
+    CreatedAt       time.Time              `json:"created_at"`
+    Targets         map[string]interface{} `json:"targets,omitempty"`
+}
+```
+
+#### Strict Linearity Invariants (`--ledger`)
+When initialized with `--ledger`, Cosm enforces financial-grade audit durability and append-only DAG linearity:
+1. **Strict Monotonic Succession**:
+   Every universe manifest commit must be an explicit, direct linear successor of the current universe head:
+   $$C_{N+1} = \text{Commit}(\text{Parent} = C_N, \text{Manifest} = M_{N+1}, \text{Lineage} = L_{N+1})$$
+2. **Prohibition of Head Pointer Resets**:
+   Arbitrary repositioning of the micro-universe head (`cosm reset`, `UniverseManager.ResetHead`) is strictly prohibited and returns `ErrLedgerLinearityViolation`. History can never be rewritten or truncated.
+3. **Non-Destructive Compensating Reversals**:
+   Undoing or reverting changes (`cosm revert`, `cosm rollback`, `cosm undo`) never modifies past commits. Instead, it computes an inverse AST delta $\Delta^{-1}$ and synthesizes a new forward compensating commit $C_{N+1}$ where:
+   $$\text{State}(C_{N+1}) = \text{State}(C_{N-1})$$
+   The reversal operation is appended to the WAL and recorded as an `ActionRevertManifest` event, guaranteeing 100% audit-trail completeness.
 
 ---
 
