@@ -5,6 +5,7 @@ import { StackRecord } from '../types';
 
 export class StackedChangeTreeItem extends vscode.TreeItem {
   public readonly record?: StackRecord;
+  public readonly change?: StackRecord;
 
   constructor(
     record?: StackRecord,
@@ -26,6 +27,7 @@ export class StackedChangeTreeItem extends vscode.TreeItem {
 
     super(label, vscode.TreeItemCollapsibleState.None);
     this.record = record;
+    this.change = record;
 
     if (isActive) {
       this.iconPath = new vscode.ThemeIcon('pass-filled');

@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 import {
   CosmStatus,
   UniverseRecord,
+  CommitLogEntry,
   ResolvedSymbol,
   FullTopologyGraph,
   TopologyNode,
@@ -183,19 +184,26 @@ export class CosmClient {
   /**
    * Lists all active micro-universes in the workspace.
    */
-  public async listUniverses(): Promise<UniverseRecord[]> {
+  public async listUniverses(): Promise<Array<{ universe_id: string; head_manifest_hash: string; status: string }>> {
     try {
       const output = await this.execCosm(['universe', 'list', '-format', 'json']);
       const jsonStart = output.indexOf('[');
       if (jsonStart !== -1) {
-        return JSON.parse(output.substring(jsonStart));
+        const parsed = JSON.parse(output.substring(jsonStart));
+        if (Array.isArray(parsed)) {
+          return parsed.map((item: any) => ({
+            universe_id: item.universe_id || item.UniverseID || '',
+            head_manifest_hash: item.head_manifest_hash || item.HeadManifestHash || '',
+            status: item.status || item.Status || 'active'
+          }));
+        }
       }
     } catch {
       // Fallback to text parsing
     }
 
     const text = await this.execCosm(['universe', 'list']);
-    const list: UniverseRecord[] = [];
+    const list: Array<{ universe_id: string; head_manifest_hash: string; status: string }> = [];
     const lines = text.split('\n');
     for (const line of lines) {
       const match = line.match(/\*\s*([^\s]+)\s*\(Head:\s*([^,\)]+)(?:,\s*Status:\s*([^\)]+))?\)/);
@@ -208,6 +216,55 @@ export class CosmClient {
       }
     }
     return list;
+  }
+
+  /**
+   * Switches active micro-universe in Cosm CLI.
+   */
+  public async switchUniverse(universeId: string): Promise<string> {
+    return this.execCosm(['universe', 'switch', universeId]);
+  }
+
+  /**
+   * Merges a source micro-universe into a target micro-universe.
+   */
+  public async mergeUniverse(
+    sourceUniverse: string,
+    targetUniverse: string = 'universe-main',
+    strategy: string = 'union'
+  ): Promise<{ target_universe: string; head_hash: string }> {
+    const output = await this.execCosm([
+      'universe',
+      'merge',
+      sourceUniverse,
+      '-t',
+      targetUniverse,
+      '-s',
+      strategy
+    ]);
+    const headMatch = output.match(/Head:\s*([a-f0-9]+)/i);
+    const targetMatch = output.match(/into\s*['"]([^'"]+)['"]/i);
+    return {
+      target_universe: targetMatch ? targetMatch[1] : targetUniverse,
+      head_hash: headMatch ? headMatch[1] : ''
+    };
+  }
+
+  /**
+   * Retrieves commit log history for a universe as structured CommitLogEntry array.
+   */
+  public async getLog(universe?: string, limit: number = 20): Promise<CommitLogEntry[]> {
+    const args = ['log', ...(universe ? ['-u', universe] : []), '-n', limit.toString(), '-format', 'json'];
+    try {
+      const output = await this.execCosm(args);
+      const jsonStart = output.indexOf('[');
+      if (jsonStart !== -1) {
+        return JSON.parse(output.substring(jsonStart)) as CommitLogEntry[];
+      }
+    } catch {
+      // Fallback: return empty array on failure
+    }
+    return [];
   }
 
   /**
@@ -225,13 +282,17 @@ export class CosmClient {
   /**
    * Stages one or more polyglot files/directories into AST symbols.
    */
-  public async stageFiles(files: string[], intent?: string, prompt?: string): Promise<string> {
+  public async stageFiles(files: string[], intent?: string, prompt?: string, universe?: string): Promise<string> {
     const args = ['add', ...files];
     if (intent) {
       args.push('--intent', intent);
     }
     if (prompt) {
       args.push('--prompt', prompt);
+    }
+    args.push('--allow-secrets');
+    if (universe) {
+      args.push('-u', universe);
     }
     return this.execCosm(args);
   }

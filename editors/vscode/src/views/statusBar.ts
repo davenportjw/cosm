@@ -63,7 +63,7 @@ export class CosmStatusBar implements vscode.Disposable {
    */
   public async showUniversePicker(): Promise<void> {
     interface QuickPickActionItem extends vscode.QuickPickItem {
-      action: 'switch' | 'create' | 'stack' | 'topology' | 'ship' | 'blast' | 'refresh';
+      action: 'switch' | 'create' | 'merge' | 'log' | 'stack' | 'topology' | 'ship' | 'blast' | 'refresh';
       universeId?: string;
     }
 
@@ -101,6 +101,18 @@ export class CosmStatusBar implements vscode.Disposable {
       label: '$(add) Create New Micro-Universe...',
       description: 'Zero-copy branch from current head',
       action: 'create'
+    });
+
+    items.push({
+      label: '$(git-merge) Merge Micro-Universe into Target...',
+      description: 'AST Component & Cross-Edge Union Merge or Fast-Forward',
+      action: 'merge'
+    });
+
+    items.push({
+      label: '$(history) View Commit History & Log...',
+      description: 'View micro-universe commit lineage and pedigree',
+      action: 'log'
     });
 
     items.push({
@@ -146,9 +158,20 @@ export class CosmStatusBar implements vscode.Disposable {
         if (selected.universeId && selected.universeId !== this.activeUniverse) {
           this.setActiveUniverse(selected.universeId);
           this.scmProvider.setActiveUniverse(selected.universeId);
+          try {
+            await this.client.switchUniverse(selected.universeId);
+          } catch {}
           await this.update();
           vscode.window.showInformationMessage(`Switched to micro-universe: ${selected.universeId}`);
         }
+        break;
+
+      case 'merge':
+        await vscode.commands.executeCommand('cosm.mergeUniverse');
+        break;
+
+      case 'log':
+        await vscode.commands.executeCommand('cosm.showLog');
         break;
 
       case 'create':

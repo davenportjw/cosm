@@ -5,6 +5,7 @@ import { CosmClient } from '../client/cosmClient';
 import {
   CosmStatus,
   UniverseRecord,
+  CommitLogEntry,
   ResolvedSymbol,
   FullTopologyGraph,
   BlastRadiusReport,
@@ -1231,6 +1232,8 @@ describe('Cosm VS Code Extension Test Suite', () => {
       assert.strictEqual(activeItem.command?.command, 'cosm.switchUniverse');
       assert.deepStrictEqual(activeItem.command?.arguments, ['universe-main']);
       assert.strictEqual(activeItem.record?.change_id, 'c/auth-jwt');
+      assert.strictEqual(activeItem.change?.change_id, 'c/auth-jwt');
+      assert.strictEqual(activeItem.change?.universe_id, 'universe-main');
 
       // Item 1: Inactive in u/api-routes
       const childItem = items[1];
@@ -1245,6 +1248,8 @@ describe('Cosm VS Code Extension Test Suite', () => {
       assert.strictEqual(childItem.command?.command, 'cosm.switchUniverse');
       assert.deepStrictEqual(childItem.command?.arguments, ['u/api-routes']);
       assert.strictEqual(childItem.record?.change_id, 'c/api-routes');
+      assert.strictEqual(childItem.change?.change_id, 'c/api-routes');
+      assert.strictEqual(childItem.change?.universe_id, 'u/api-routes');
     });
 
     it('should return empty array for element children and identity for getTreeItem', async () => {
@@ -1288,7 +1293,7 @@ describe('Cosm VS Code Extension Test Suite', () => {
       assert.strictEqual((items[0].iconPath as any)?.id, 'error');
     });
 
-    it('should contribute cosm.createStack, cosm.evolveStack, and cosm.refreshStack in package.json', () => {
+    it('should contribute cosm.createStack, cosm.evolveStack, cosm.refreshStack, cosm.mergeUniverse, and cosm.showLog in package.json', () => {
       const pkgPath = path.resolve(__dirname, '../../package.json');
       const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
 
@@ -1296,6 +1301,8 @@ describe('Cosm VS Code Extension Test Suite', () => {
       const createStack = commands.find(c => c.command === 'cosm.createStack');
       const evolveStack = commands.find(c => c.command === 'cosm.evolveStack');
       const refreshStack = commands.find(c => c.command === 'cosm.refreshStack');
+      const mergeUniverse = commands.find(c => c.command === 'cosm.mergeUniverse');
+      const showLog = commands.find(c => c.command === 'cosm.showLog');
 
       assert.ok(createStack, 'cosm.createStack command must be declared');
       assert.strictEqual(createStack.title, 'Cosm: Create Stacked Change (Jujutsu-style)');
@@ -1308,6 +1315,14 @@ describe('Cosm VS Code Extension Test Suite', () => {
       assert.ok(refreshStack, 'cosm.refreshStack command must be declared');
       assert.strictEqual(refreshStack.title, 'Cosm: Refresh Stacked Proposals');
       assert.strictEqual(refreshStack.icon, '$(refresh)');
+
+      assert.ok(mergeUniverse, 'cosm.mergeUniverse command must be declared');
+      assert.strictEqual(mergeUniverse.title, 'Cosm: Merge Micro-Universe (AST Union / Fast-Forward)');
+      assert.strictEqual(mergeUniverse.icon, '$(git-merge)');
+
+      assert.ok(showLog, 'cosm.showLog command must be declared');
+      assert.strictEqual(showLog.title, 'Cosm: View Micro-Universe Commit History & Log');
+      assert.strictEqual(showLog.icon, '$(history)');
     });
 
     it('should contribute cosm.scmView with name Cosm Stacks (Jujutsu-style) in package.json', () => {
@@ -1333,20 +1348,25 @@ describe('Cosm VS Code Extension Test Suite', () => {
       assert.strictEqual(commitMenu.group, 'navigation@1');
       assert.strictEqual(commitMenu.when, 'scmProvider == cosm');
 
+      const mergeUniverseMenu = scmTitleMenus.find(m => m.command === 'cosm.mergeUniverse');
+      assert.ok(mergeUniverseMenu, 'cosm.mergeUniverse must be in scm/title');
+      assert.strictEqual(mergeUniverseMenu.group, 'navigation@2');
+      assert.strictEqual(mergeUniverseMenu.when, 'scmProvider == cosm');
+
+      const showLogMenu = scmTitleMenus.find(m => m.command === 'cosm.showLog');
+      assert.ok(showLogMenu, 'cosm.showLog must be in scm/title');
+      assert.strictEqual(showLogMenu.group, 'navigation@3');
+      assert.strictEqual(showLogMenu.when, 'scmProvider == cosm');
+
       const createStackMenu = scmTitleMenus.find(m => m.command === 'cosm.createStack');
       assert.ok(createStackMenu, 'cosm.createStack must be in scm/title');
-      assert.strictEqual(createStackMenu.group, 'navigation@2');
+      assert.strictEqual(createStackMenu.group, 'navigation@4');
       assert.strictEqual(createStackMenu.when, 'scmProvider == cosm');
 
       const refreshSCMMenu = scmTitleMenus.find(m => m.command === 'cosm.refreshSCM');
       assert.ok(refreshSCMMenu, 'cosm.refreshSCM must be in scm/title');
-      assert.strictEqual(refreshSCMMenu.group, 'navigation@3');
+      assert.strictEqual(refreshSCMMenu.group, 'navigation@5');
       assert.strictEqual(refreshSCMMenu.when, 'scmProvider == cosm');
-
-      const switchUniverseMenu = scmTitleMenus.find(m => m.command === 'cosm.switchUniverse');
-      assert.ok(switchUniverseMenu, 'cosm.switchUniverse must be in scm/title');
-      assert.strictEqual(switchUniverseMenu.group, 'navigation@4');
-      assert.strictEqual(switchUniverseMenu.when, 'scmProvider == cosm');
     });
 
     it('should configure inline groups in scm/resourceGroup/context and scm/resourceState/context in package.json', () => {
@@ -1393,24 +1413,28 @@ describe('Cosm VS Code Extension Test Suite', () => {
       // view/title
       const viewTitleMenus: any[] = pkg.contributes.menus['view/title'];
       const stackViewTitle = viewTitleMenus.filter(m => m.when === 'view == cosm.scmView');
-      assert.strictEqual(stackViewTitle.length, 3);
+      assert.strictEqual(stackViewTitle.length, 4);
+
+      const mergeUniverse = stackViewTitle.find(m => m.command === 'cosm.mergeUniverse');
+      assert.ok(mergeUniverse);
+      assert.strictEqual(mergeUniverse.group, 'navigation@1');
 
       const createStack = stackViewTitle.find(m => m.command === 'cosm.createStack');
       assert.ok(createStack);
-      assert.strictEqual(createStack.group, 'navigation@1');
+      assert.strictEqual(createStack.group, 'navigation@2');
 
       const evolveStack = stackViewTitle.find(m => m.command === 'cosm.evolveStack');
       assert.ok(evolveStack);
-      assert.strictEqual(evolveStack.group, 'navigation@2');
+      assert.strictEqual(evolveStack.group, 'navigation@3');
 
       const refreshStack = stackViewTitle.find(m => m.command === 'cosm.refreshStack');
       assert.ok(refreshStack);
-      assert.strictEqual(refreshStack.group, 'navigation@3');
+      assert.strictEqual(refreshStack.group, 'navigation@4');
 
       // view/item/context
       const viewItemMenus: any[] = pkg.contributes.menus['view/item/context'];
       const stackViewItem = viewItemMenus.filter(m => m.when === 'view == cosm.scmView && viewItem == stackedChange');
-      assert.strictEqual(stackViewItem.length, 2);
+      assert.strictEqual(stackViewItem.length, 3);
 
       const switchUniv = stackViewItem.find(m => m.command === 'cosm.switchUniverse');
       assert.ok(switchUniv);
@@ -1419,6 +1443,300 @@ describe('Cosm VS Code Extension Test Suite', () => {
       const evolveItem = stackViewItem.find(m => m.command === 'cosm.evolveStack');
       assert.ok(evolveItem);
       assert.strictEqual(evolveItem.group, 'inline@2');
+
+      const mergeItem = stackViewItem.find(m => m.command === 'cosm.mergeUniverse');
+      assert.ok(mergeItem);
+      assert.strictEqual(mergeItem.group, 'inline@3');
+    });
+  });
+
+  describe('10. Universe Operations, SCM Auto-Staging, and Commit Log Integration', () => {
+    it('should validate CommitLogEntry interface properties', () => {
+      const entry: CommitLogEntry = {
+        commit_hash: '9f83ac0124fe',
+        universe_id: 'universe-main',
+        author: 'cosm-agent',
+        agent_did: 'did:key:z6MkuSLtNTGy',
+        llm_version: 'gemini-3.8-flash',
+        timestamp: '2026-09-23T20:00:00Z',
+        intent: 'feat(core): implement zero-copy AST merge',
+        user_prompt: 'Merge u/feature into universe-main',
+        parent_hash: '8a12bc9043de',
+        components: ['pkg/core/merge.go', 'pkg/ast/node.go']
+      };
+
+      assert.strictEqual(entry.commit_hash, '9f83ac0124fe');
+      assert.strictEqual(entry.universe_id, 'universe-main');
+      assert.strictEqual(entry.components.length, 2);
+      assert.strictEqual(entry.llm_version, 'gemini-3.8-flash');
+    });
+
+    it('should execute switchUniverse with expected arguments', async () => {
+      const client = new CosmClient(process.cwd());
+      let passedArgs: string[] = [];
+      (client as any).execCosm = async (args: string[]) => {
+        passedArgs = args;
+        return 'Switched to universe u/auth-v2';
+      };
+
+      const result = await client.switchUniverse('u/auth-v2');
+      assert.strictEqual(result, 'Switched to universe u/auth-v2');
+      assert.deepStrictEqual(passedArgs, ['universe', 'switch', 'u/auth-v2']);
+    });
+
+    it('should execute mergeUniverse and parse head hash and target universe', async () => {
+      const client = new CosmClient(process.cwd());
+      let passedArgs: string[] = [];
+      (client as any).execCosm = async (args: string[]) => {
+        passedArgs = args;
+        return "🔀 Successfully merged 'u/feature' into 'universe-main' (New Head: 4a3e810bcde89f0123456789abcdef0123456789)";
+      };
+
+      const res = await client.mergeUniverse('u/feature', 'universe-main', 'union');
+      assert.deepStrictEqual(passedArgs, ['universe', 'merge', 'u/feature', '-t', 'universe-main', '-s', 'union']);
+      assert.strictEqual(res.target_universe, 'universe-main');
+      assert.strictEqual(res.head_hash, '4a3e810bcde89f0123456789abcdef0123456789');
+    });
+
+    it('should execute getLog and parse JSON commit log entries', async () => {
+      const client = new CosmClient(process.cwd());
+      let passedArgs: string[] = [];
+      const sampleLogs: CommitLogEntry[] = [
+        {
+          commit_hash: 'c1',
+          universe_id: 'universe-main',
+          author: 'dev',
+          timestamp: '2026-09-23T20:00:00Z',
+          intent: 'initial commit',
+          components: ['main.go']
+        }
+      ];
+
+      (client as any).execCosm = async (args: string[]) => {
+        passedArgs = args;
+        return JSON.stringify(sampleLogs);
+      };
+
+      const logs = await client.getLog('universe-main', 10);
+      assert.deepStrictEqual(passedArgs, ['log', '-u', 'universe-main', '-n', '10', '-format', 'json']);
+      assert.strictEqual(logs.length, 1);
+      assert.strictEqual(logs[0].commit_hash, 'c1');
+    });
+
+    it('should handle getLog failure gracefully by returning empty array', async () => {
+      const client = new CosmClient(process.cwd());
+      (client as any).execCosm = async () => {
+        throw new Error('log command failed');
+      };
+
+      const logs = await client.getLog();
+      assert.deepStrictEqual(logs, []);
+    });
+
+    it('should parse listUniverses JSON first with fallback to regex line matching', async () => {
+      const client = new CosmClient(process.cwd());
+
+      // 1. JSON success
+      (client as any).execCosm = async (args: string[]) => {
+        if (args.includes('-format')) {
+          return JSON.stringify([
+            { universe_id: 'universe-main', head_manifest_hash: 'hash1', status: 'active' },
+            { universe_id: 'u/feature', head_manifest_hash: 'hash2', status: 'merged' }
+          ]);
+        }
+        return '';
+      };
+      const jsonRes = await client.listUniverses();
+      assert.strictEqual(jsonRes.length, 2);
+      assert.strictEqual(jsonRes[0].universe_id, 'universe-main');
+      assert.strictEqual(jsonRes[1].status, 'merged');
+
+      // 2. Fallback to text
+      (client as any).execCosm = async (args: string[]) => {
+        if (args.includes('-format')) {
+          throw new Error('JSON format unsupported');
+        }
+        return '* universe-main (Head: abc123def456, Status: active)\n* u/dev (Head: fedcba987654)';
+      };
+      const textRes = await client.listUniverses();
+      assert.strictEqual(textRes.length, 2);
+      assert.strictEqual(textRes[0].universe_id, 'universe-main');
+      assert.strictEqual(textRes[0].head_manifest_hash, 'abc123def456');
+      assert.strictEqual(textRes[1].universe_id, 'u/dev');
+      assert.strictEqual(textRes[1].status, 'active');
+    });
+
+    it('should append --allow-secrets and -u in stageFiles', async () => {
+      const client = new CosmClient(process.cwd());
+      let passedArgs: string[] = [];
+      (client as any).execCosm = async (args: string[]) => {
+        passedArgs = args;
+        return 'Staged';
+      };
+
+      await client.stageFiles(['pkg/core/engine.go'], 'intent test', 'prompt test', 'u/feature');
+      assert.ok(passedArgs.includes('--allow-secrets'));
+      assert.ok(passedArgs.includes('-u'));
+      const uIndex = passedArgs.indexOf('-u');
+      assert.strictEqual(passedArgs[uIndex + 1], 'u/feature');
+      assert.ok(passedArgs.includes('--intent'));
+      assert.ok(passedArgs.includes('--prompt'));
+    });
+
+    it('should safely collect modified files and return boolean status in SCMProvider.stageAll', async () => {
+      const client = new CosmClient(process.cwd());
+      let stagedFiles: string[] = [];
+      let targetUniverse: string | undefined;
+      (client as any).stageFiles = async (files: string[], _i?: string, _p?: string, universe?: string) => {
+        stagedFiles = files;
+        targetUniverse = universe;
+        return 'Staged';
+      };
+
+      const mockContext = { subscriptions: [], extensionPath: process.cwd() } as any;
+      const provider = new CosmSCMProvider(client, mockContext);
+      provider.setActiveUniverse('u/custom-branch');
+      (provider as any).modifiedGroup.resourceStates = [
+        { resourceUri: { fsPath: path.resolve(process.cwd(), 'src/a.ts') } },
+        { resourceUri: { fsPath: path.resolve(process.cwd(), 'src/b.ts') } }
+      ];
+
+      const success = await provider.stageAll();
+      assert.strictEqual(success, true);
+      assert.strictEqual(targetUniverse, 'u/custom-branch');
+      assert.strictEqual(stagedFiles.length, 2);
+
+      // On failure
+      (client as any).stageFiles = async () => {
+        throw new Error('disk failure');
+      };
+      const failed = await provider.stageAll();
+      assert.strictEqual(failed, false);
+    });
+
+    it('should auto-stage modified files and execute commit with activeUniverse', async () => {
+      const client = new CosmClient(process.cwd());
+      let commitOptions: any = null;
+      (client as any).commit = async (options: any) => {
+        commitOptions = options;
+        return { merkle_root: 'abcdef1234567890abcdef', message: 'Committed' };
+      };
+
+      const mockContext = { subscriptions: [], extensionPath: process.cwd() } as any;
+      const provider = new CosmSCMProvider(client, mockContext);
+      provider.setActiveUniverse('u/dev-branch');
+      (provider as any).scm.inputBox.value = 'feat: auto-stage commit test';
+      (provider as any).stagedGroup.resourceStates = [];
+      (provider as any).modifiedGroup.resourceStates = [
+        { resourceUri: { fsPath: path.resolve(process.cwd(), 'main.go') } }
+      ];
+
+      let stageAllCalled = false;
+      provider.stageAll = async () => {
+        stageAllCalled = true;
+        (provider as any).stagedGroup.resourceStates = [
+          { resourceUri: { fsPath: path.resolve(process.cwd(), 'main.go') } }
+        ];
+        return true;
+      };
+
+      await provider.commit();
+      assert.ok(stageAllCalled, 'stageAll should be called when stagedGroup is empty');
+      assert.ok(commitOptions);
+      assert.strictEqual(commitOptions.universe, 'u/dev-branch');
+      assert.strictEqual(commitOptions.intent, 'feat: auto-stage commit test');
+      assert.strictEqual((provider as any).scm.inputBox.value, '');
+    });
+
+    it('should support cosm.mergeUniverse argument resolution from string and tree item', async () => {
+      const client = new CosmClient(process.cwd());
+      let calledSource: string | undefined;
+      let calledTarget: string | undefined;
+      let calledStrategy: string | undefined;
+
+      (client as any).mergeUniverse = async (source: string, target?: string, strategy?: string) => {
+        calledSource = source;
+        calledTarget = target;
+        calledStrategy = strategy;
+        return {
+          source_universe: source,
+          target_universe: target || 'universe-main',
+          head_hash: 'abc1234567890def',
+          status: 'merged'
+        };
+      };
+
+      // 1. Direct string invocation
+      const res1 = await client.mergeUniverse('u/feature-1', 'universe-main', 'union');
+      assert.strictEqual(calledSource, 'u/feature-1');
+      assert.strictEqual(calledTarget, 'universe-main');
+      assert.strictEqual(calledStrategy, 'union');
+      assert.strictEqual(res1.target_universe, 'universe-main');
+      assert.strictEqual(res1.head_hash, 'abc1234567890def');
+
+      // 2. Tree item with .change.universe_id
+      const treeItemWithChange = {
+        change: {
+          change_id: 'c/api-routes',
+          universe_id: 'u/api-universe',
+          status: 'Active'
+        }
+      };
+      const sourceFromChange = treeItemWithChange.change.universe_id;
+      const res2 = await client.mergeUniverse(sourceFromChange, 'universe-main', 'fast-forward');
+      assert.strictEqual(calledSource, 'u/api-universe');
+      assert.strictEqual(calledTarget, 'universe-main');
+      assert.strictEqual(calledStrategy, 'fast-forward');
+      assert.strictEqual(res2.head_hash, 'abc1234567890def');
+    });
+
+    it('should format commit log entries properly in showLog flow', async () => {
+      const client = new CosmClient(process.cwd());
+      const sampleEntries: CommitLogEntry[] = [
+        {
+          commit_hash: '9f83ac0124fe',
+          universe_id: 'universe-main',
+          author: 'cosm-agent',
+          timestamp: '2026-09-23T20:15:00Z',
+          intent: 'feat: AST-native Merkle DAG union merge',
+          components: ['pkg/core/engine.go', 'pkg/storage/graphengine.go'],
+          user_prompt: 'Integrate AST union merge'
+        }
+      ];
+
+      (client as any).execCosm = async () => JSON.stringify(sampleEntries);
+
+      const entries = await client.getLog('universe-main', 30);
+      assert.strictEqual(entries.length, 1);
+
+      const entry = entries[0];
+      const shortHash = entry.commit_hash.substring(0, 8);
+      const label = `$(git-commit) ${shortHash} - ${entry.intent}`;
+      const description = `(${entry.universe_id}) by ${entry.author}`;
+      const compCount = entry.components.length;
+      const detail = `${new Date(entry.timestamp).toLocaleString()} | ${compCount} components | Prompt: ${entry.user_prompt}`;
+
+      assert.strictEqual(label, '$(git-commit) 9f83ac01 - feat: AST-native Merkle DAG union merge');
+      assert.strictEqual(description, '(universe-main) by cosm-agent');
+      assert.ok(detail.includes('2 components'));
+      assert.ok(detail.includes('Prompt: Integrate AST union merge'));
+    });
+
+    it('should synchronize activeUniverse across SCMProvider, StatusBar, and Client when switching', async () => {
+      const client = new CosmClient(process.cwd());
+      let switchedTo: string | undefined;
+      (client as any).switchUniverse = async (univ: string) => {
+        switchedTo = univ;
+        return `Switched to micro-universe '${univ}'`;
+      };
+
+      const mockContext = { subscriptions: [], extensionPath: process.cwd() } as any;
+      const provider = new CosmSCMProvider(client, mockContext);
+      provider.setActiveUniverse('u/new-universe');
+      assert.strictEqual(provider.getActiveUniverse(), 'u/new-universe');
+
+      await client.switchUniverse('u/new-universe');
+      assert.strictEqual(switchedTo, 'u/new-universe');
     });
   });
 });

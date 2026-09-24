@@ -89,7 +89,7 @@ export class CosmSCMProvider implements vscode.Disposable {
 
   public setActiveUniverse(universeId: string): void {
     this.activeUniverse = universeId;
-    this.refresh();
+    void this.refresh();
   }
 
   /**
@@ -257,7 +257,7 @@ export class CosmSCMProvider implements vscode.Disposable {
           return;
         }
         const filesToStage = states.map(s => path.relative(this.client.getWorkspaceRoot(), s.resourceUri.fsPath));
-        await this.client.stageFiles(filesToStage);
+        await this.client.stageFiles(filesToStage, undefined, undefined, this.activeUniverse);
         vscode.window.showInformationMessage(`✓ Staged ${filesToStage.length} AST Component(s)`);
         await this.refresh();
         return;
@@ -273,7 +273,7 @@ export class CosmSCMProvider implements vscode.Disposable {
 
       if (targetPath) {
         const relPath = path.relative(this.client.getWorkspaceRoot(), targetPath);
-        await this.client.stageFiles([relPath]);
+        await this.client.stageFiles([relPath], undefined, undefined, this.activeUniverse);
         vscode.window.showInformationMessage(`✓ Staged AST Component: ${path.basename(relPath)}`);
         await this.refresh();
         return;
@@ -288,20 +288,26 @@ export class CosmSCMProvider implements vscode.Disposable {
   /**
    * Stages all modified files or the entire workspace into the Cosm store.
    */
-  public async stageAll(): Promise<void> {
+  public async stageAll(): Promise<boolean> {
     try {
-      if (this.modifiedGroup.resourceStates.length > 0) {
-        const files = this.modifiedGroup.resourceStates.map(r =>
-          path.relative(this.client.getWorkspaceRoot(), r.resourceUri.fsPath)
-        );
-        await this.client.stageFiles(files.length > 0 ? files : ['.']);
-      } else {
-        await this.client.stageFiles(['.']);
+      const files: string[] = [];
+      if (this.modifiedGroup.resourceStates && Array.isArray(this.modifiedGroup.resourceStates)) {
+        for (const r of this.modifiedGroup.resourceStates) {
+          if (r?.resourceUri?.fsPath) {
+            const rel = path.relative(this.client.getWorkspaceRoot(), r.resourceUri.fsPath);
+            if (rel && !files.includes(rel)) {
+              files.push(rel);
+            }
+          }
+        }
       }
+      await this.client.stageFiles(files.length > 0 ? files : ['.'], undefined, undefined, this.activeUniverse);
       vscode.window.showInformationMessage('✓ Staged all AST components');
       await this.refresh();
+      return true;
     } catch (err: any) {
       vscode.window.showErrorMessage(`Staging all failed: ${err.message}`);
+      return false;
     }
   }
 
@@ -348,7 +354,11 @@ export class CosmSCMProvider implements vscode.Disposable {
 
     if (this.stagedGroup.resourceStates.length === 0) {
       if (this.modifiedGroup.resourceStates.length > 0) {
-        await this.stageAll();
+        const staged = await this.stageAll();
+        if (!staged || this.stagedGroup.resourceStates.length === 0) {
+          vscode.window.showWarningMessage('Staging failed or no changes to commit.');
+          return;
+        }
       } else {
         vscode.window.showInformationMessage('No changes to commit, working tree clean.');
         return;

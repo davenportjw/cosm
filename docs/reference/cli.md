@@ -165,10 +165,14 @@ cosm ship [-u|--universe <universe>] [-t|--target <target_profile>]
 Manages zero-copy micro-universes.
 ```bash
 cosm universe list
+cosm universe switch <universe_id>
+cosm switch <universe_id>
 cosm universe create <new_universe_id> -p <parent_universe_id>
 cosm universe diff --source <u1> --target <u2>
 cosm universe merge --source <source_u> --target <target_u>
 ```
+* `cosm universe switch <universe_id>` (alias: `cosm switch <universe_id>`): Sets the active default micro-universe in `.cosm/config.json`.
+* `cosm universe list`: Lists known micro-universes with their head Merkle roots and status, marking the active default universe with `*` and `[ACTIVE]`.
 
 ---
 

@@ -124,18 +124,202 @@ function registerCommands(
   stackedChanges: CosmStackedChangesProvider,
   workspaceRoot: string
 ): void {
+  async function switchMicroUniverse(target: string) {
+    scm.setActiveUniverse(target);
+    statusBar.setActiveUniverse(target);
+    try {
+      await client.switchUniverse(target);
+    } catch (err) {
+      // ignore if CLI switch fails
+    }
+    await statusBar.update();
+    astTree.refresh(target);
+    stackedChanges.refresh();
+  }
+
   // Command: cosm.switchUniverse
   context.subscriptions.push(
-    vscode.commands.registerCommand('cosm.switchUniverse', async (targetUniverse?: string) => {
+    vscode.commands.registerCommand('cosm.switchUniverse', async (targetUniverse?: any) => {
+      let target: string | undefined;
       if (typeof targetUniverse === 'string' && targetUniverse.trim()) {
-        scm.setActiveUniverse(targetUniverse.trim());
-        await statusBar.update();
-        vscode.window.showInformationMessage(`Switched to micro-universe '${targetUniverse.trim()}'.`);
+        target = targetUniverse.trim();
+      } else if (targetUniverse?.change && typeof targetUniverse.change.universe_id === 'string') {
+        target = targetUniverse.change.universe_id.trim();
+      } else if (targetUniverse?.record && typeof targetUniverse.record.universe_id === 'string') {
+        target = targetUniverse.record.universe_id.trim();
+      } else if (targetUniverse && typeof targetUniverse.universe_id === 'string') {
+        target = targetUniverse.universe_id.trim();
+      }
+
+      if (target) {
+        await switchMicroUniverse(target);
+        vscode.window.showInformationMessage(`Switched to micro-universe '${target}'.`);
       } else {
         await statusBar.showUniversePicker();
       }
-      astTree.refresh(statusBar.getActiveUniverse());
-      stackedChanges.refresh();
+    })
+  );
+
+  // Command: cosm.mergeUniverse
+  context.subscriptions.push(
+    vscode.commands.registerCommand('cosm.mergeUniverse', async (sourceArg?: any) => {
+      let sourceUniverse: string | undefined;
+      if (typeof sourceArg === 'string' && sourceArg.trim()) {
+        sourceUniverse = sourceArg.trim();
+      } else if (sourceArg?.change && typeof sourceArg.change.universe_id === 'string') {
+        sourceUniverse = sourceArg.change.universe_id.trim();
+      } else if (sourceArg?.record && typeof sourceArg.record.universe_id === 'string') {
+        sourceUniverse = sourceArg.record.universe_id.trim();
+      } else if (sourceArg && typeof sourceArg.universe_id === 'string') {
+        sourceUniverse = sourceArg.universe_id.trim();
+      }
+
+      const active = statusBar.getActiveUniverse();
+
+      if (!sourceUniverse) {
+        let universes: Array<{ universe_id: string; head_manifest_hash: string; status: string }> = [];
+        try {
+          universes = await client.listUniverses();
+        } catch {
+          // fallback
+        }
+
+        const items = universes.map(u => ({
+          label: u.universe_id,
+          description: `Head: ${u.head_manifest_hash ? u.head_manifest_hash.substring(0, 8) : 'root'} (${u.status})`,
+          picked: u.universe_id === active && active !== 'universe-main'
+        }));
+
+        if (items.length === 0) {
+          items.push({
+            label: active,
+            description: 'Current micro-universe',
+            picked: true
+          });
+        } else if (active !== 'universe-main') {
+          items.sort((a, b) => (a.label === active ? -1 : b.label === active ? 1 : 0));
+        }
+
+        const selectedSource = await vscode.window.showQuickPick(items, {
+          title: 'Cosm: Merge Micro-Universe - Select Source',
+          placeHolder: active !== 'universe-main'
+            ? `Select source micro-universe to merge from (Default: ${active})`
+            : 'Select source micro-universe to merge from'
+        });
+        if (!selectedSource) return;
+        sourceUniverse = selectedSource.label;
+      }
+
+      // Prompt user for targetUniverse with QuickPick
+      let allUniverses: Array<{ universe_id: string; head_manifest_hash: string; status: string }> = [];
+      try {
+        allUniverses = await client.listUniverses();
+      } catch {
+        // fallback
+      }
+
+      const targetItems: Array<{ label: string; description: string; picked?: boolean }> = [];
+      const seen = new Set<string>();
+
+      if (sourceUniverse !== 'universe-main') {
+        targetItems.push({
+          label: 'universe-main',
+          description: 'Main production universe (Default target)',
+          picked: true
+        });
+        seen.add('universe-main');
+      }
+
+      for (const u of allUniverses) {
+        if (!seen.has(u.universe_id) && u.universe_id !== sourceUniverse) {
+          targetItems.push({
+            label: u.universe_id,
+            description: `Head: ${u.head_manifest_hash ? u.head_manifest_hash.substring(0, 8) : 'root'} (${u.status})`,
+            picked: false
+          });
+          seen.add(u.universe_id);
+        }
+      }
+
+      if (targetItems.length === 0) {
+        targetItems.push({
+          label: 'universe-main',
+          description: 'Main production universe',
+          picked: true
+        });
+      }
+
+      const selectedTarget = await vscode.window.showQuickPick(targetItems, {
+        title: `Cosm: Merge '${sourceUniverse}' - Select Target Micro-Universe`,
+        placeHolder: "Select target micro-universe (Default: 'universe-main')"
+      });
+      if (!selectedTarget) return;
+      const targetUniverse = selectedTarget.label;
+
+      // Prompt user for strategy with QuickPick
+      const strategyItems = [
+        { label: 'union', description: 'AST Component & Cross-Edge Union Merge (CRDT-style)', picked: true },
+        { label: 'fast-forward', description: 'Fast-forward target universe head to source manifest' }
+      ];
+
+      const selectedStrategy = await vscode.window.showQuickPick(strategyItems, {
+        title: `Cosm: Merge '${sourceUniverse}' into '${targetUniverse}' - Strategy`,
+        placeHolder: 'Select AST merge strategy'
+      });
+      if (!selectedStrategy) return;
+      const strategy = selectedStrategy.label;
+
+      try {
+        const result = await client.mergeUniverse(sourceUniverse, targetUniverse, strategy);
+        const headShort = result.head_hash ? result.head_hash.substring(0, 12) : 'updated';
+        vscode.window.showInformationMessage(
+          `🔀 Merged '${sourceUniverse}' into '${targetUniverse}' (Head: ${headShort}...)`
+        );
+        await scm.refresh();
+        await statusBar.update();
+        astTree.refresh(statusBar.getActiveUniverse());
+        stackedChanges.refresh();
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Merge universe failed: ${err.message}`);
+      }
+    })
+  );
+
+  // Command: cosm.showLog
+  context.subscriptions.push(
+    vscode.commands.registerCommand('cosm.showLog', async () => {
+      const active = statusBar.getActiveUniverse();
+      try {
+        const entries = await client.getLog(active, 30);
+        if (!entries || entries.length === 0) {
+          vscode.window.showInformationMessage(`No commits found for micro-universe '${active}'.`);
+          return;
+        }
+
+        const items = entries.map(entry => {
+          const shortHash = entry.commit_hash ? entry.commit_hash.substring(0, 8) : 'root';
+          const author = entry.author || 'unknown';
+          const universeId = entry.universe_id || active;
+          const intent = entry.intent || 'AST commit';
+          const compCount = entry.components ? entry.components.length : 0;
+          const dateStr = entry.timestamp ? new Date(entry.timestamp).toLocaleString() : '';
+          const promptSuffix = entry.user_prompt ? ' | Prompt: ' + entry.user_prompt : '';
+
+          return {
+            label: `$(git-commit) ${shortHash} - ${intent}`,
+            description: `(${universeId}) by ${author}`,
+            detail: `${dateStr} | ${compCount} components${promptSuffix}`,
+            entry
+          };
+        });
+
+        await vscode.window.showQuickPick(items, {
+          title: `Cosm Commit Log: ${active}`,
+          placeHolder: `Cosm Commit Log for [${active}] (${entries.length} commits)`
+        });
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Failed to retrieve commit log: ${err.message}`);
+      }
     })
   );
 

@@ -194,6 +194,18 @@
         "title": "Cosm: Refresh Stacked Proposals",
         "category": "Cosm",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "cosm.mergeUniverse",
+        "title": "Cosm: Merge Micro-Universe (AST Union / Fast-Forward)",
+        "category": "Cosm",
+        "icon": "$(git-merge)"
+      },
+      {
+        "command": "cosm.showLog",
+        "title": "Cosm: View Micro-Universe Commit History & Log",
+        "category": "Cosm",
+        "icon": "$(history)"
       }
     ],
     "menus": {
@@ -219,18 +231,23 @@
           "when": "view == cosm.topologyTreeView"
         },
         {
-          "command": "cosm.createStack",
+          "command": "cosm.mergeUniverse",
           "group": "navigation@1",
           "when": "view == cosm.scmView"
         },
         {
-          "command": "cosm.evolveStack",
+          "command": "cosm.createStack",
           "group": "navigation@2",
           "when": "view == cosm.scmView"
         },
         {
-          "command": "cosm.refreshStack",
+          "command": "cosm.evolveStack",
           "group": "navigation@3",
+          "when": "view == cosm.scmView"
+        },
+        {
+          "command": "cosm.refreshStack",
+          "group": "navigation@4",
           "when": "view == cosm.scmView"
         }
       ],
@@ -264,6 +281,11 @@
           "command": "cosm.evolveStack",
           "group": "inline@2",
           "when": "view == cosm.scmView && viewItem == stackedChange"
+        },
+        {
+          "command": "cosm.mergeUniverse",
+          "group": "inline@3",
+          "when": "view == cosm.scmView && viewItem == stackedChange"
         }
       ],
       "scm/title": [
@@ -273,18 +295,23 @@
           "when": "scmProvider == cosm"
         },
         {
-          "command": "cosm.createStack",
+          "command": "cosm.mergeUniverse",
           "group": "navigation@2",
           "when": "scmProvider == cosm"
         },
         {
-          "command": "cosm.refreshSCM",
+          "command": "cosm.showLog",
           "group": "navigation@3",
           "when": "scmProvider == cosm"
         },
         {
-          "command": "cosm.switchUniverse",
+          "command": "cosm.createStack",
           "group": "navigation@4",
+          "when": "scmProvider == cosm"
+        },
+        {
+          "command": "cosm.refreshSCM",
+          "group": "navigation@5",
           "when": "scmProvider == cosm"
         },
         {

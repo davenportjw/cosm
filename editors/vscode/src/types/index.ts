@@ -105,6 +105,20 @@ export interface UniverseRecord {
   updated_at?: string;
 }
 
+export interface CommitLogEntry {
+  commit_hash: string;
+  universe_id: string;
+  author: string;
+  agent_did?: string;
+  llm_version?: string;
+  timestamp: string;
+  intent: string;
+  user_prompt?: string;
+  parent_hash?: string;
+  components: string[];
+  symbol_changes?: string[];
+}
+
 export interface BlastRadiusReport {
   summary: string;
   total_direct_nodes: number;

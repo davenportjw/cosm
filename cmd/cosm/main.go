@@ -62,7 +62,8 @@ Core Commands:
   blast-radius <agent>             Audit blast radius & affected downstream code across domains
   view <node_id>                   Reconstitute & view syntax-highlighted code with lineage provenance
   ship                             Run sidecar build, validate Terraform, compile, and launch preview
-  universe <list|create|diff|merge> Manage micro-universes and branches
+  universe <list|create|diff|merge|switch> Manage micro-universes and branches
+  switch <universe>                Switch active micro-universe
   proposal <create|list|view|review|merge> Manage, view, and critique AI-native PRs and proposals
   stack <list|create|evolve>       Manage Jujutsu-style stacked proposals & auto-evolution
   peer <status|sync>               Distributed P2P swarm mesh replication & sparse AST sync
@@ -161,6 +162,9 @@ func main() {
 
 	case "universe", "branch":
 		runUniverse(args)
+
+	case "switch":
+		runUniverse(append([]string{"switch"}, args...))
 
 	case "proposal", "pr":
 		runProposal(args)
@@ -312,7 +316,8 @@ func runAdd(args []string) {
 
 func runAddE(args []string) error {
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
-	universeID := fs.String("u", "universe-main", "Active micro-universe ID")
+	universeID := fs.String("u", "", "Active micro-universe ID")
+	fs.StringVar(universeID, "universe", "", "Active micro-universe ID (alias)")
 	agentID := fs.String("a", "cosm-user-agent", "Agent ID")
 	prompt := fs.String("p", "", "User prompt")
 	intent := fs.String("i", "Staged changes", "Intent")
@@ -332,6 +337,21 @@ func runAddE(args []string) error {
 	allowSecrets := fs.Bool("allow-secrets", false, "Allow staging files containing detected credentials or plaintext secrets")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	var uSpecified bool
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "u" || f.Name == "universe" {
+			uSpecified = true
+		}
+	})
+	if !uSpecified || *universeID == "" {
+		cfg, _ := storage.LoadConfig(".cosm")
+		if cfg != nil && cfg.DefaultUniverse != "" {
+			*universeID = cfg.DefaultUniverse
+		} else {
+			*universeID = "universe-main"
+		}
 	}
 	_ = universeID
 
@@ -557,8 +577,8 @@ func runAddE(args []string) error {
 
 func runCommit(args []string) {
 	fs := flag.NewFlagSet("commit", flag.ExitOnError)
-	universeID := fs.String("u", "universe-main", "Universe ID")
-	fs.StringVar(universeID, "universe", "universe-main", "Universe ID (alias)")
+	universeID := fs.String("u", "", "Universe ID")
+	fs.StringVar(universeID, "universe", "", "Universe ID (alias)")
 	intent := fs.String("i", "Manual commit", "Commit message / intent")
 	fs.StringVar(intent, "intent", "Manual commit", "Commit message / intent (alias)")
 	prompt := fs.String("p", "", "Originating user prompt")
@@ -580,6 +600,21 @@ func runCommit(args []string) {
 	fs.StringVar(traceID, "trace", "", "Alias for --trace-id")
 	spanID := fs.String("span-id", "", "W3C Span ID")
 	_ = fs.Parse(args)
+
+	var uSpecified bool
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "u" || f.Name == "universe" {
+			uSpecified = true
+		}
+	})
+	if !uSpecified || *universeID == "" {
+		cfg, _ := storage.LoadConfig(".cosm")
+		if cfg != nil && cfg.DefaultUniverse != "" {
+			*universeID = cfg.DefaultUniverse
+		} else {
+			*universeID = "universe-main"
+		}
+	}
 
 	blobStore, graphEngine, err := openStorage()
 	if err != nil {
@@ -1018,12 +1053,27 @@ type CommitLogEntry struct {
 
 func runLog(args []string) {
 	fs := flag.NewFlagSet("log", flag.ExitOnError)
-	universeID := fs.String("u", "universe-main", "Universe ID")
-	fs.StringVar(universeID, "universe", "universe-main", "Universe ID")
+	universeID := fs.String("u", "", "Universe ID")
+	fs.StringVar(universeID, "universe", "", "Universe ID")
 	limit := fs.Int("n", 20, "Number of commits to display")
 	fs.IntVar(limit, "limit", 20, "Number of commits to display")
 	format := fs.String("format", "terminal", "Output format (terminal, json)")
 	_ = fs.Parse(args)
+
+	var uSpecified bool
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "u" || f.Name == "universe" {
+			uSpecified = true
+		}
+	})
+	if !uSpecified || *universeID == "" {
+		cfg, _ := storage.LoadConfig(".cosm")
+		if cfg != nil && cfg.DefaultUniverse != "" {
+			*universeID = cfg.DefaultUniverse
+		} else {
+			*universeID = "universe-main"
+		}
+	}
 
 	blobStore, graphEngine, err := openStorage()
 	if err != nil {
@@ -1034,20 +1084,16 @@ func runLog(args []string) {
 
 	universeMgr := storage.NewUniverseManager(graphEngine, blobStore)
 
-	// Fetch event WAL records from oplog
-	events, err := graphEngine.Oplog().GetEvents(*universeID, 0, 0)
-	if err != nil || len(events) == 0 {
-		events, _ = graphEngine.Oplog().GetEvents("", 0, 0)
-	}
-
-	var commitEntries []CommitLogEntry
+	commitEntries := []CommitLogEntry{}
 	seenCommits := make(map[string]bool)
 
+	// Fetch commit events strictly for *universeID
+	events, _ := graphEngine.Oplog().GetEvents(*universeID, 0, 0)
 	for _, ev := range events {
 		if ev.Action != storage.ActionCommitManifest {
 			continue
 		}
-		if ev.UniverseID != *universeID && ev.UniverseID != "" {
+		if ev.UniverseID != *universeID {
 			continue
 		}
 		if seenCommits[ev.EntityID] {
@@ -1059,23 +1105,47 @@ func runLog(args []string) {
 		commitEntries = append(commitEntries, entry)
 	}
 
-	// If no commit events were found in the oplog for this universe, inspect head manifest
+	// If no commit events were found for this universe, inspect parent universe up to branch point
 	if len(commitEntries) == 0 {
 		headRec, hErr := universeMgr.GetUniverse(*universeID)
-		if hErr == nil && headRec != nil && headRec.HeadManifestHash != "" {
-			allEvts, _ := graphEngine.Oplog().GetEvents("", 0, 0)
-			for _, ev := range allEvts {
-				if ev.Action == storage.ActionCommitManifest && ev.EntityID == headRec.HeadManifestHash {
-					entry := buildCommitLogEntry(blobStore, graphEngine, ev.EntityID, ev.UndoPayload, ev.Payload, *universeID, ev.TimestampMs)
-					commitEntries = append(commitEntries, entry)
+		if hErr == nil && headRec != nil && headRec.ParentUniverseID != "" {
+			parentID := headRec.ParentUniverseID
+			branchPoint := headRec.HeadManifestHash
+			for parentID != "" {
+				pEvents, _ := graphEngine.Oplog().GetEvents(parentID, 0, 0)
+				for _, ev := range pEvents {
+					if ev.Action != storage.ActionCommitManifest || ev.UniverseID != parentID {
+						continue
+					}
+					if seenCommits[ev.EntityID] {
+						continue
+					}
 					seenCommits[ev.EntityID] = true
+
+					entry := buildCommitLogEntry(blobStore, graphEngine, ev.EntityID, ev.UndoPayload, ev.Payload, ev.UniverseID, ev.TimestampMs)
+					commitEntries = append(commitEntries, entry)
+					if branchPoint != "" && ev.EntityID == branchPoint {
+						break
+					}
+				}
+				if len(commitEntries) > 0 {
+					break
+				}
+				pRec, pErr := universeMgr.GetUniverse(parentID)
+				if pErr == nil && pRec != nil && pRec.ParentUniverseID != "" {
+					parentID = pRec.ParentUniverseID
+					branchPoint = pRec.HeadManifestHash
+				} else {
+					if !seenCommits[branchPoint] && branchPoint != "" {
+						entry := buildCommitLogEntry(blobStore, graphEngine, branchPoint, "", "", parentID, headRec.UpdatedAt.UnixMilli())
+						commitEntries = append(commitEntries, entry)
+					}
 					break
 				}
 			}
-			if !seenCommits[headRec.HeadManifestHash] {
-				entry := buildCommitLogEntry(blobStore, graphEngine, headRec.HeadManifestHash, "", "", *universeID, headRec.UpdatedAt.UnixMilli())
-				commitEntries = append(commitEntries, entry)
-			}
+		} else if headRec != nil && headRec.HeadManifestHash != "" && !seenCommits[headRec.HeadManifestHash] {
+			entry := buildCommitLogEntry(blobStore, graphEngine, headRec.HeadManifestHash, "", "", *universeID, headRec.UpdatedAt.UnixMilli())
+			commitEntries = append(commitEntries, entry)
 		}
 	}
 
@@ -1228,10 +1298,26 @@ func buildCommitLogEntry(
 
 func runStatus(args []string) {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
-	universeID := fs.String("u", "universe-main", "Universe ID")
+	universeID := fs.String("u", "", "Universe ID")
+	fs.StringVar(universeID, "universe", "", "Universe ID (alias)")
 	format := fs.String("format", "text", "Output format (text, json)")
 	fs.StringVar(format, "f", "text", "Alias for --format")
 	_ = fs.Parse(args)
+
+	var uSpecified bool
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "u" || f.Name == "universe" {
+			uSpecified = true
+		}
+	})
+	if !uSpecified || *universeID == "" {
+		cfg, _ := storage.LoadConfig(".cosm")
+		if cfg != nil && cfg.DefaultUniverse != "" {
+			*universeID = cfg.DefaultUniverse
+		} else {
+			*universeID = "universe-main"
+		}
+	}
 
 	blobStore, graphEngine, err := openStorage()
 	if err != nil {
@@ -1749,7 +1835,7 @@ func shortHash(s string) string {
 
 func runUniverse(args []string) {
 	if len(args) == 0 {
-		fmt.Println("Usage: cosm universe <list|create|diff|merge> [flags]")
+		fmt.Println("Usage: cosm universe <list|create|diff|merge|switch> [flags]")
 		return
 	}
 	blobStore, graphEngine, err := openStorage()
@@ -1775,10 +1861,46 @@ func runUniverse(args []string) {
 			return
 		}
 
+		cfg, _ := storage.LoadConfig(".cosm")
+		activeUniverse := "universe-main"
+		if cfg != nil && cfg.DefaultUniverse != "" {
+			activeUniverse = cfg.DefaultUniverse
+		}
+
 		fmt.Println("🌌 Active Micro-Universes:")
 		for _, u := range universes {
-			fmt.Printf("  * %s (Head: %s, Status: %s)\n", u.UniverseID, shortHash(u.HeadManifestHash), u.Status)
+			if u.UniverseID == activeUniverse {
+				fmt.Printf("  * %s (Head: %s, Status: %s) [ACTIVE]\n", u.UniverseID, shortHash(u.HeadManifestHash), u.Status)
+			} else {
+				fmt.Printf("    %s (Head: %s, Status: %s)\n", u.UniverseID, shortHash(u.HeadManifestHash), u.Status)
+			}
 		}
+	case "switch":
+		fs := flag.NewFlagSet("universe switch", flag.ExitOnError)
+		_ = fs.Parse(args[1:])
+		if fs.NArg() == 0 {
+			fmt.Println("Please specify a target universe ID. Example: cosm universe switch u/test-ast")
+			return
+		}
+		targetUniv := fs.Arg(0)
+		rec, err := universeMgr.GetUniverse(targetUniv)
+		if err != nil || rec == nil {
+			fmt.Fprintf(os.Stderr, "Micro-universe '%s' not found: %v\n", targetUniv, err)
+			return
+		}
+		cfg, err := storage.LoadConfig(".cosm")
+		if err != nil || cfg == nil {
+			cfg = &storage.WorkspaceConfig{
+				DefaultUniverse: targetUniv,
+			}
+		} else {
+			cfg.DefaultUniverse = targetUniv
+		}
+		if err := storage.SaveConfig(".cosm", cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
+			return
+		}
+		fmt.Printf("🌌 Switched to micro-universe '%s' (Head: %s)\n", targetUniv, shortHash(rec.HeadManifestHash))
 	case "create":
 		fs := flag.NewFlagSet("universe create", flag.ExitOnError)
 		parent := fs.String("p", "universe-main", "Parent universe ID")

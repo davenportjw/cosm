@@ -697,3 +697,69 @@ func main() {
 	}
 }
 
+func TestMicroUniverseSwitchAndActiveIndicator(t *testing.T) {
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd failed: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir failed: %v", err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
+
+	// 1. Initialize repository
+	runInit([]string{})
+
+	// 2. Commit a file in universe-main
+	if err := os.WriteFile("service.go", []byte("package service\nfunc Run() {}\n"), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	runAdd([]string{"service.go"})
+	runCommit([]string{"-i", "initial commit on universe-main"})
+
+	// Verify universe-main is active by default
+	cfg, err := storage.LoadConfig(".cosm")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.DefaultUniverse != "universe-main" {
+		t.Fatalf("expected DefaultUniverse to be 'universe-main', got '%s'", cfg.DefaultUniverse)
+	}
+
+	// 3. Create micro-universe u/test-ast branched from universe-main
+	runUniverse([]string{"create", "u/test-ast", "-p", "universe-main"})
+
+	// 4. Switch to u/test-ast
+	runUniverse([]string{"switch", "u/test-ast"})
+
+	// 5. Verify config has updated default_universe
+	cfgAfterSwitch, err := storage.LoadConfig(".cosm")
+	if err != nil {
+		t.Fatalf("LoadConfig after switch failed: %v", err)
+	}
+	if cfgAfterSwitch.DefaultUniverse != "u/test-ast" {
+		t.Fatalf("expected DefaultUniverse to be 'u/test-ast', got '%s'", cfgAfterSwitch.DefaultUniverse)
+	}
+
+	// 6. Test switch back to universe-main using top-level main alias syntax
+	runUniverse([]string{"switch", "universe-main"})
+	cfgMain, _ := storage.LoadConfig(".cosm")
+	if cfgMain.DefaultUniverse != "universe-main" {
+		t.Fatalf("expected DefaultUniverse to be 'universe-main', got '%s'", cfgMain.DefaultUniverse)
+	}
+
+	// Switch back to u/test-ast
+	runUniverse([]string{"switch", "u/test-ast"})
+
+	// 7. Test status without -u uses default universe u/test-ast
+	runStatus([]string{})
+
+	// 8. Test log for u/test-ast traverses parent commits without error
+	runLog([]string{"-u", "u/test-ast"})
+
+	// 9. Switch back to universe-main
+	runUniverse([]string{"switch", "universe-main"})
+}
+
+

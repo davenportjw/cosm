@@ -445,6 +445,7 @@ func TestDocExamples_MarkdownCommandExtractorAndValidator(t *testing.T) {
 		"ship":              true,
 		"universe":          true,
 		"branch":            true,
+		"switch":            true,
 		"proposal":          true,
 		"pr":                true,
 		"stack":             true,
